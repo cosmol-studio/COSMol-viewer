@@ -21,7 +21,7 @@ members = [
 cosmol_viewer = { version = "0.2.7", path = "cosmol_viewer"}
 cosmol_viewer_core = { version = "0.2.7", path = "crates/core" }
 
-pyo3 = { version = "0.28.0", features = ["extension-module", "abi3-py310"] }
+pyo3 = { version = "0.28.2", features = ["extension-module", "abi3-py310"] }
 eframe = { version = "0.33.3", features = ["wayland","x11","glow"], default-features = false }
 egui-winit = { version = "0.33.3", features = ["wayland","x11"], default-features = false }
 egui_extras = { version = "0.33.3", default-features = false }
