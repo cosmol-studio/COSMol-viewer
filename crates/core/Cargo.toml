@@ -15,7 +15,7 @@ base64.workspace = true
 thiserror.workspace = true
 image.workspace = true
 
-glam = { version = "0.31.0" , features = ["serde", "bytemuck"] }
+glam = { version = "0.31.1" , features = ["serde", "bytemuck"] }
 dashmap = "6.1.0"
 regex = "1.12.3"
 na_seq = "0.3.14"
@@ -26,7 +26,7 @@ kiddo = "5.2.4"
 compile-time = "0.2.0"
 
 [build-dependencies]
-resvg = "0.46.0"
+resvg = "0.47.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 egui-winit.workspace = true

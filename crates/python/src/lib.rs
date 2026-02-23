@@ -17,7 +17,7 @@ mod shapes;
 
 #[derive(Clone)]
 #[gen_stub_pyclass]
-#[pyclass]
+#[pyclass(from_py_object)]
 #[doc = r#"
     A container for handling frame-based animations in the viewer.
 "#]
@@ -118,7 +118,7 @@ impl Animation {
 
 #[derive(Clone)]
 #[gen_stub_pyclass]
-#[pyclass]
+#[pyclass(from_py_object)]
 #[doc = r#"
     A 3D scene container for visualizing molecular or geometric shapes.
 

@@ -11,7 +11,7 @@ serde_json.workspace = true
 base64.workspace = true
 eframe.workspace = true
 pyo3.workspace = true
-pyo3-stub-gen = { version = "0.18.0", default-features = false }
+pyo3-stub-gen = { version = "0.19.0", default-features = false }
 
 [lib]
 name = "cosmol_viewer"

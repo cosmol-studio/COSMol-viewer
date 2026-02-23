@@ -8,7 +8,7 @@ use pyo3::{PyRefMut, pyclass, pymethods};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
 #[gen_stub_pyclass]
-#[pyclass(name = "Sphere")]
+#[pyclass(name = "Sphere", from_py_object)]
 #[derive(Clone)]
 #[doc = r#"
     A sphere shape in the scene.
@@ -63,7 +63,7 @@ impl PySphere {
 }
 
 #[gen_stub_pyclass]
-#[pyclass(name = "Stick")]
+#[pyclass(name = "Stick", from_py_object)]
 #[derive(Clone)]
 #[doc = r#"
     A cylindrical stick (or capsule) connecting two points.
@@ -124,7 +124,7 @@ impl PyStick {
 }
 
 #[gen_stub_pyclass]
-#[pyclass(name = "Molecule")]
+#[pyclass(name = "Molecule", from_py_object)]
 #[derive(Clone)]
 #[doc = r#"
     A molecular shape object.
@@ -187,7 +187,7 @@ impl PyMolecule {
 }
 
 #[gen_stub_pyclass]
-#[pyclass(name = "Protein")]
+#[pyclass(name = "Protein", from_py_object)]
 #[derive(Clone)]
 #[doc = r#"
     A protein shape object.
