@@ -108,7 +108,7 @@ cargo run --example render_protein
 
 # Documentation
 
-Please check out our documentation at [here](https://cosmol-repl.github.io/COSMol-viewer/).
+Please check out our documentation at [here](https://cosmol-studio.github.io/COSMol-viewer/).
 
 ---
 
