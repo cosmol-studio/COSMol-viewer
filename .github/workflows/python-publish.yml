@@ -8,6 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
+  id-token: write # Required for OIDC
   contents: read
 
 jobs:
@@ -27,7 +28,11 @@ jobs:
         run: |
           cargo binstall -y wasm-pack --force
           wasm-pack build ./crates/wasm --target web --out-dir ./pkg --release
-          wasm-pack publish ./crates/wasm --target web --pkg-dir ./pkg
+        if: ${{ startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
+      # - name: publish to npm registry
+      #   run: |
+      #     cd ./crates/wasm/pkg
+      #     npm publish --access public
       - name: build pyi
         working-directory: crates/python
         run: |
