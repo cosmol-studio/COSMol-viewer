@@ -14,11 +14,14 @@ use crate::parser::utils::{Residue, SecondaryStructure};
 use glam::Vec3;
 use kiddo::{KdTree, SquaredEuclidean};
 use na_seq::AminoAcid;
+use rayon::prelude::*;
+use std::sync::atomic::AtomicU8;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 type Point3 = [f64; 3];
 
 // 氢键矩阵：O(1) 访问，内存友好
-type HBondMatrix = Vec<Vec<bool>>;
+type HBondMatrix = Vec<Vec<AtomicBool>>;
 
 // 残基坐标缓存（带氢）
 #[derive(Clone)]
@@ -96,8 +99,8 @@ impl SecondaryStructureCalculator {
         self.find_turns(5, &mut flags, &hbonds, n_res);
         self.mark_helices(5, &mut flags, n_res);
 
-        let helices = self.collect_helix_regions(&flags, n_res);
-        // SecondaryStructureCalculator::extend_helix_ends(&mut helices, &flags, n_res);
+        let mut helices = self.collect_helix_regions(&flags, n_res);
+        SecondaryStructureCalculator::extend_helix_ends(&mut helices, &flags, n_res);
         let strands = self.find_strands(&hbonds, n_res); // 也用 matrix 版
 
         self.assign_ss_labels(n_res, &helices, &strands, &mut flags)
@@ -164,7 +167,9 @@ impl SecondaryStructureCalculator {
 
     fn find_hydrogen_bonds(&self, residues: &[Residue]) -> HBondMatrix {
         let n = residues.len();
-        let mut matrix = vec![vec![false; n]; n];
+        let matrix: Vec<Vec<AtomicBool>> = (0..n)
+            .map(|_| (0..n).map(|_| AtomicBool::new(false)).collect())
+            .collect();
         let mut coords = Vec::with_capacity(n);
 
         // Step 1: 构建坐标缓存 + KDTree（只放 N 原子）
@@ -190,7 +195,7 @@ impl SecondaryStructureCalculator {
         }
 
         // Step 2: 只搜索 10Å 内的 N 原子（关键加速！）
-        for i in 0..n {
+        (0..n).into_par_iter().for_each(|i| {
             let query_point = coords[i].n;
             let neighbors = tree.within::<SquaredEuclidean>(&query_point, 400.0); // 20² = 400
 
@@ -209,7 +214,7 @@ impl SecondaryStructureCalculator {
                     }
                     let energy = self.calc_hbond_energy(coords[i].c, coords[i].o, coords[j].n, h);
                     if energy < self.hbond_cutoff as f64 {
-                        matrix[j][i] = true;
+                        matrix[j][i].store(true, Ordering::Relaxed);
                     }
                 }
 
@@ -222,11 +227,11 @@ impl SecondaryStructureCalculator {
                     }
                     let energy = self.calc_hbond_energy(coords[j].c, coords[j].o, coords[i].n, h);
                     if energy < self.hbond_cutoff as f64 {
-                        matrix[i][j] = true;
+                        matrix[i][j].store(true, Ordering::Relaxed);
                     }
                 }
             }
-        }
+        });
 
         matrix
     }
@@ -261,7 +266,7 @@ impl SecondaryStructureCalculator {
 
         for i in 0..n_res.saturating_sub(n) {
             let j = i + n;
-            if hbonds[i][j] || hbonds[j][i] {
+            if hbonds[i][j].load(Ordering::Relaxed) || hbonds[j][i].load(Ordering::Relaxed) {
                 flags[i] |= acceptor;
                 flags[j] |= donor;
                 // 删: for k in 1..n { flags[i + k] |= ... }  // GAP 多余
@@ -304,54 +309,73 @@ impl SecondaryStructureCalculator {
     // ──────────────────────────────────────────────────────────────
     fn find_strands(&self, hbonds: &HBondMatrix, n_res: usize) -> Vec<(usize, usize)> {
         // 0 = none, 1 = 'P' (parallel), 2 = 'A' (antiparallel)
-        let mut bridge_type = vec![vec![0u8; n_res]; n_res];
+        let bridge_type: Vec<Vec<AtomicU8>> = (0..n_res)
+            .map(|_| (0..n_res).map(|_| AtomicU8::new(0)).collect())
+            .collect();
 
         // Step 1: 标记所有单桥（一次遍历）
-        for i in 0..n_res {
+        (0..n_res).into_par_iter().for_each(|i| {
             for j in (i + 2)..n_res {
                 // ── 平行桥（两种方向都要判断！）──
                 let mut is_parallel = false;
 
-                // 方向 1: i-1 → j   且   j → i+1
-                if i > 0 && j + 1 < n_res && hbonds[i - 1][j] && hbonds[j][i + 1] {
+                // 方向 1: i-1 ← j   且   j ← i+1   (NH j → CO (i-1)) && (NH (i+1) → CO j)
+                if i > 0
+                    && i + 1 < n_res
+                    && hbonds[j][i - 1].load(Ordering::Relaxed)
+                    && hbonds[i + 1][j].load(Ordering::Relaxed)
+                {
                     is_parallel = true;
                 }
 
-                // 方向 2: j-1 → i   且   i → j+1
-                if j > 0 && i + 1 < n_res && j + 1 < n_res && hbonds[j - 1][i] && hbonds[i][j + 1] {
+                // 方向 2: j-1 ← i   且   i ← j+1   (NH i → CO (j-1)) && (NH (j+1) → CO i)
+                if j > 0
+                    && j + 1 < n_res
+                    && hbonds[i][j - 1].load(Ordering::Relaxed)
+                    && hbonds[j + 1][i].load(Ordering::Relaxed)
+                {
                     is_parallel = true;
                 }
 
                 // ── 反平行桥（两种模式都要判断！）──
                 let mut is_antiparallel = false;
                 // 经典双向氢键
-                if hbonds[i][j] && hbonds[j][i] {
+                if hbonds[i][j].load(Ordering::Relaxed) && hbonds[j][i].load(Ordering::Relaxed) {
                     is_antiparallel = true;
                 }
                 // 错一位的反平行桥（非常常见！）
-                if i > 0 && j + 1 < n_res && hbonds[i - 1][j + 1] && hbonds[j - 1][i + 1] {
+                if i > 0
+                    && j > 0
+                    && i + 1 < n_res
+                    && j + 1 < n_res
+                    && hbonds[i + 1][j - 1].load(Ordering::Relaxed)
+                    && hbonds[j + 1][i - 1].load(Ordering::Relaxed)
+                {
                     is_antiparallel = true;
                 }
 
                 if is_parallel {
-                    bridge_type[i][j] = 1;
+                    bridge_type[i][j].store(1, Ordering::Relaxed);
                 }
                 if is_antiparallel {
-                    bridge_type[i][j] = 2;
+                    bridge_type[i][j].store(2, Ordering::Relaxed);
                 }
             }
-        }
+        });
 
         // Step 2: 扫描出所有连续 ladder（和原版一模一样）
         let mut ladders = Vec::new();
         for i in 0..n_res {
             for j in (i + 2)..n_res {
-                match bridge_type[i][j] {
+                match bridge_type[i][j].load(Ordering::Relaxed) {
                     1 => {
                         // parallel ladder
                         let mut k = 0;
-                        while i + k < n_res && j + k < n_res && bridge_type[i + k][j + k] == 1 {
-                            bridge_type[i + k][j + k] = 0; // mark as used
+                        while i + k < n_res
+                            && j + k < n_res
+                            && bridge_type[i + k][j + k].load(Ordering::Relaxed) == 1
+                        {
+                            bridge_type[i + k][j + k].store(0, Ordering::Relaxed); // mark as used
                             k += 1;
                         }
                         if k >= self.min_strand_length {
@@ -361,8 +385,11 @@ impl SecondaryStructureCalculator {
                     2 => {
                         // antiparallel ladder
                         let mut k = 0;
-                        while i + k < n_res && j >= k && bridge_type[i + k][j - k] == 2 {
-                            bridge_type[i + k][j - k] = 0;
+                        while i + k < n_res
+                            && j >= k
+                            && bridge_type[i + k][j - k].load(Ordering::Relaxed) == 2
+                        {
+                            bridge_type[i + k][j - k].store(0, Ordering::Relaxed);
                             k += 1;
                         }
                         if k >= self.min_strand_length {
@@ -481,20 +508,20 @@ impl SecondaryStructureCalculator {
         }
 
         let d0 = c1 as isize - e1 as isize - 1; // 链1 上的间隙
-        let d1 = if para1 {
+        let gap2 = if para1 {
             d1 as isize - e2 as isize - 1 // 平行：l2.start2 - l1.end2
         } else {
             s2 as isize - d2 as isize - 1 // 反平行：l1.start2 - l2.end2
         };
 
         // K&S 定义：两边最多一个 1-res bulge，另一边最多 4-res
-        if d0 < 0 || d0 > 4 || d1 < 0 || d1 > 4 || (d0 > 1 && d1 > 1) {
+        if d0 < 0 || d0 > 4 || gap2 < 0 || gap2 > 4 || (d0 > 1 && gap2 > 1) {
             return None;
         }
 
         let new_s1 = s1;
         let new_e1 = c2;
-        let new_s2 = s2.min(c1); // 修复: 用 c1 (l2 start2) 而非 d1
+        let new_s2 = s2.min(d1); // 修复: 用 d1 (l2 start2) 而非 c1
         let new_e2 = e2.max(d2); // 统一 max
         Some((new_s1, new_e1, new_s2, new_e2, para1))
     }
@@ -590,7 +617,7 @@ impl SecondaryStructureCalculator {
     }
 
     // 在 collect_helix_regions 返回后，加上 helix capping
-    fn _extend_helix_ends(helices: &mut Vec<(usize, usize)>, flags: &[u32], n_res: usize) {
+    fn extend_helix_ends(helices: &mut Vec<(usize, usize)>, flags: &[u32], n_res: usize) {
         for (start, end) in helices.iter_mut() {
             // N-端延伸
             if *start > 0 && (flags[*start - 1] & (Self::DSSP_4DONOR | Self::DSSP_5DONOR)) != 0 {

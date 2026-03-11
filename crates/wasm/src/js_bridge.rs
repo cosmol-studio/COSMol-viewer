@@ -34,11 +34,10 @@ impl NotebookViewer {
             height = height
         );
 
-        let escaped = serde_json::to_string::<String>(
-            &compress_data(&scene)
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?,
-        )
-        .unwrap();
+        let compressed = compress_data(&scene)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+
+        let escaped = serde_json::to_string(&compressed).unwrap();
 
         let combined_js = format!(
             r#"
@@ -112,11 +111,10 @@ impl NotebookViewer {
             height = height
         );
 
-        let escaped = serde_json::to_string::<String>(
-            &compress_data(&animation)
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?,
-        )
-        .unwrap();
+        let compressed = compress_data(&animation)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+
+        let escaped = serde_json::to_string(&compressed).unwrap();
 
         let combined_js = format!(
             r#"

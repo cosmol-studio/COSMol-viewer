@@ -3,14 +3,14 @@
 data_6fi1
 _entry.id 6fi1
 #
-_cell.entry_id 6fi1
+_cell.entry_id 6fi1_1
 _cell.length_a 37.779
 _cell.length_b 45.470
 _cell.length_c 64.829
 _cell.angle_alpha 90.00
 _cell.angle_beta  90.00
 _cell.angle_gamma 90.00
-_symmetry.entry_id 6fi1
+_symmetry.entry_id 6fi1_1
 _symmetry.space_group_name_H-M 'P 21 21 21'
 #
 loop_
