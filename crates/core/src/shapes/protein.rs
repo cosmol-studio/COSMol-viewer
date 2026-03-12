@@ -6,6 +6,7 @@ use crate::utils::{MeshData, VisualShape, VisualStyle};
 use bytemuck::{Pod, Zeroable};
 use glam::{Quat, Vec3, Vec4};
 use na_seq::AtomTypeInRes;
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use wide::f32x8;
 
@@ -227,119 +228,133 @@ impl Protein {
 
         // println!("reserve{} {}", estimated_verts, estimated_verts * 2);
 
-        for chain in &self.chains {
-            // let start_chain = Instant::now();
+        self.chains.par_iter().for_each(|chain| {
+            chain.get_ss();
+        });
 
-            let mut mesh = MeshData::default();
+        let meshes: Vec<MeshData> = self
+            .chains
+            .par_iter()
+            .filter_map(|chain| {
+                // let start_chain = Instant::now();
 
-            // 筛选有效残基
-            let residues: Vec<&Residue> = chain
-                .residues
-                .iter()
-                .filter(|r| r.ca.length_squared() > 1e-6)
-                .collect();
+                let mut mesh = MeshData::default();
 
-            let ca_positions: Vec<Vec3> = residues.iter().map(|r| r.ca).collect();
+                // 筛选有效残基
+                let residues: Vec<&Residue> = chain
+                    .residues
+                    .iter()
+                    .filter(|r| r.ca.length_squared() > 1e-6)
+                    .collect();
 
-            if ca_positions.len() < 2 {
-                println!("chain {} has less than 2 residues, skipping", chain.id);
-                continue;
-            }
+                let ca_positions: Vec<Vec3> = residues.iter().map(|r| r.ca).collect();
 
-            // 生成平滑路径
-            let path = self.catmull_rom_chain(&ca_positions, pts_per_res);
-
-            let n = path.len();
-            let mut centers = Vec::with_capacity(n);
-            let mut tangents = Vec::with_capacity(n);
-            let mut normals = Vec::with_capacity(n);
-
-            // === 计算 centers + tangents ===
-            // let start_tangent = Instant::now();
-            for i in 0..n {
-                centers.push(path[i]);
-                let p0 = if i > 0 { path[i - 1] } else { path[0] };
-                let p1 = path[i];
-                let p2 = if i + 1 < n { path[i + 1] } else { path[i] };
-                let p3 = if i + 2 < n { path[i + 2] } else { p2 };
-                tangents.push(catmull_rom_tangent(p0, p1, p2, p3).normalize_or_zero());
-            }
-            // println!("  tangent calculation: {:?}", start_tangent.elapsed());
-
-            // === 初始法线 + Parallel Transport Frame ===
-            // let start_normal = Instant::now();
-            fn initial_normal(t: Vec3) -> Vec3 {
-                if t.dot(Vec3::Z).abs() < 0.98 {
-                    t.cross(Vec3::Z).normalize()
-                } else {
-                    t.cross(Vec3::X).normalize()
+                if ca_positions.len() < 2 {
+                    println!("chain {} has less than 2 residues, skipping", chain.id);
+                    return None;
                 }
-            }
 
-            let mut current_normal = initial_normal(tangents[0]);
-            normals.push(current_normal);
+                // 生成平滑路径
+                let path = self.catmull_rom_chain(&ca_positions, pts_per_res);
 
-            for i in 1..centers.len() {
-                let prev_t = tangents[i - 1];
-                let curr_t = tangents[i];
+                let n = path.len();
+                let mut centers = Vec::with_capacity(n);
+                let mut tangents = Vec::with_capacity(n);
+                let mut normals = Vec::with_capacity(n);
 
-                let rotation_axis = prev_t.cross(curr_t);
-                if rotation_axis.length_squared() > 1e-6 {
-                    let rotation_angle = prev_t.angle_between(curr_t);
-                    let rotation = Quat::from_axis_angle(rotation_axis.normalize(), rotation_angle);
-                    current_normal = rotation * current_normal;
+                // === 计算 centers + tangents ===
+                // let start_tangent = Instant::now();
+                for i in 0..n {
+                    centers.push(path[i]);
+                    let p0 = if i > 0 { path[i - 1] } else { path[0] };
+                    let p1 = path[i];
+                    let p2 = if i + 1 < n { path[i + 1] } else { path[i] };
+                    let p3 = if i + 2 < n { path[i + 2] } else { p2 };
+                    tangents.push(catmull_rom_tangent(p0, p1, p2, p3).normalize_or_zero());
                 }
+                // println!("  tangent calculation: {:?}", start_tangent.elapsed());
+
+                // === 初始法线 + Parallel Transport Frame ===
+                // let start_normal = Instant::now();
+                fn initial_normal(t: Vec3) -> Vec3 {
+                    if t.dot(Vec3::Z).abs() < 0.98 {
+                        t.cross(Vec3::Z).normalize()
+                    } else {
+                        t.cross(Vec3::X).normalize()
+                    }
+                }
+
+                let mut current_normal = initial_normal(tangents[0]);
                 normals.push(current_normal);
-            }
 
-            // println!("  normal calculation: {:?}", start_normal.elapsed());
+                for i in 1..centers.len() {
+                    let prev_t = tangents[i - 1];
+                    let curr_t = tangents[i];
 
-            // === sections ===
-            // let start_section = Instant::now();
-            let sections: Vec<&RibbonXSection> = chain
-                .get_ss()
-                .iter()
-                .map(|r| match r {
-                    SecondaryStructure::Helix => &*HELIX_SECTION,
-                    SecondaryStructure::Sheet => &*SHEET_SECTION,
-                    _ => &*COIL_SECTION,
-                })
-                .collect();
-            // println!("  section lookup: {:?}", start_section.elapsed());
+                    let rotation_axis = prev_t.cross(curr_t);
+                    if rotation_axis.length_squared() > 1e-6 {
+                        let rotation_angle = prev_t.angle_between(curr_t);
+                        let rotation =
+                            Quat::from_axis_angle(rotation_axis.normalize(), rotation_angle);
+                        current_normal = rotation * current_normal;
+                    }
+                    normals.push(current_normal);
+                }
 
-            // === extrusion ===
-            // let start_extrude = Instant::now();
-            self.extrude_ribbon_corrected(
-                &centers,
-                &tangents,
-                &normals,
-                &sections,
-                pts_per_res,
-                &mut mesh,
-            );
-            // println!("  extrusion: {:?}", start_extrude.elapsed());
+                // println!("  normal calculation: {:?}", start_normal.elapsed());
 
-            // === scale + colors ===
-            // let start_post = Instant::now();
-            for v in &mut mesh.vertices {
-                *v *= scale;
-            }
+                // === sections ===
+                // let start_section = Instant::now();
+                let sections: Vec<&RibbonXSection> = chain
+                    .get_ss()
+                    .iter()
+                    .map(|r| match r {
+                        SecondaryStructure::Helix => &*HELIX_SECTION,
+                        SecondaryStructure::Sheet => &*SHEET_SECTION,
+                        _ => &*COIL_SECTION,
+                    })
+                    .collect();
+                // println!("  section lookup: {:?}", start_section.elapsed());
 
-            let color = match self.style.color {
-                Some(color) => Vec4::new(color[0], color[1], color[2], self.style.opacity),
-                None => Vec4::new(1.0, 1.0, 1.0, 1.0),
-            };
+                // === extrusion ===
+                // let start_extrude = Instant::now();
+                self.extrude_ribbon_corrected(
+                    &centers,
+                    &tangents,
+                    &normals,
+                    &sections,
+                    pts_per_res,
+                    &mut mesh,
+                );
+                // println!("  extrusion: {:?}", start_extrude.elapsed());
 
-            mesh.colors = Some(vec![color; mesh.vertices.len()]);
-            // println!("  postprocess: {:?}", start_post.elapsed());
+                // === scale + colors ===
+                // let start_post = Instant::now();
+                for v in &mut mesh.vertices {
+                    *v *= scale;
+                }
 
+                let color = match self.style.color {
+                    Some(color) => Vec4::new(color[0], color[1], color[2], self.style.opacity),
+                    None => Vec4::new(1.0, 1.0, 1.0, 1.0),
+                };
+
+                mesh.colors = Some(vec![color; mesh.vertices.len()]);
+                // println!("  postprocess: {:?}", start_post.elapsed());
+
+                Some(mesh)
+            })
+            .collect();
+
+        for mesh in meshes {
             final_mesh.append(&mesh);
-            // println!(
-            //     "chain {} processed in {:?}",
-            //     chain.id,
-            //     start_chain.elapsed()
-            // );
         }
+        // println!(
+        //     "chain {} processed in {:?}",
+        //     chain.id,
+        //     start_chain.elapsed()
+        // );
+        // }
 
         // println!(
         //     "actual length {} {}",

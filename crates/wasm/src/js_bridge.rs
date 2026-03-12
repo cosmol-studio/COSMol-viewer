@@ -56,7 +56,7 @@ impl NotebookViewer {
         }}
         const app = new mod.WebHandle();
         const scene_compressed = {SCENE};
-        console.log(scene_compressed);
+        // console.log(scene_compressed);
         await app.start_with_scene(canvas, scene_compressed);
 
         window[ns + "_instances"] = window[ns + "_instances"] || {{}};

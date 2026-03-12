@@ -2,6 +2,7 @@ use crate::utils::InstanceGroups;
 use crate::utils::Logger;
 use glam::Mat3;
 use glam::Mat4;
+use rayon::prelude::*;
 use std::collections::HashMap;
 use thiserror::Error;
 
@@ -57,22 +58,61 @@ impl Default for Scene {
 
 impl Scene {
     pub fn _get_meshes(&self) -> Vec<utils::MeshData> {
-        self.named_shapes
-            .values()
-            .chain(self.unnamed_shapes.iter())
-            .map(|s| s.to_mesh(self.scale))
-            .collect()
+        let scale = self.scale;
+
+        let (mut a, mut b) = rayon::join(
+            || {
+                self.named_shapes
+                    .par_iter()
+                    .map(|(_, s)| s.to_mesh(scale))
+                    .collect::<Vec<_>>()
+            },
+            || {
+                self.unnamed_shapes
+                    .par_iter()
+                    .map(|s| s.to_mesh(scale))
+                    .collect::<Vec<_>>()
+            },
+        );
+
+        a.append(&mut b);
+        a
     }
 
     pub fn get_instances_grouped(&self) -> InstanceGroups {
-        self.named_shapes
-            .values()
-            .chain(self.unnamed_shapes.iter())
-            .map(|s| s.to_instance_group(self.scale))
-            .fold(InstanceGroups::default(), |mut acc, g| {
-                acc.merge(g);
-                acc
-            })
+        let scale = self.scale;
+
+        // 分别处理两部分
+        let (named_groups, unnamed_groups) = rayon::join(
+            || {
+                self.named_shapes
+                    .par_iter()
+                    .map(|(_, s)| s.to_instance_group(scale))
+                    .reduce(
+                        || InstanceGroups::default(),
+                        |mut acc, g| {
+                            acc.merge(g);
+                            acc
+                        },
+                    )
+            },
+            || {
+                self.unnamed_shapes
+                    .par_iter()
+                    .map(|s| s.to_instance_group(scale))
+                    .reduce(
+                        || InstanceGroups::default(),
+                        |mut acc, g| {
+                            acc.merge(g);
+                            acc
+                        },
+                    )
+            },
+        );
+
+        let mut result = named_groups;
+        result.merge(unnamed_groups);
+        result
     }
 
     pub fn new() -> Self {

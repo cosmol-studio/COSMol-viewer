@@ -378,13 +378,22 @@ pub struct Chain {
     pub id: String,
     pub residues: Vec<Residue>,
 
+    ss_cache: Option<Vec<SecondaryStructure>>,
     #[serde(skip)]
-    ss_cache: OnceCell<Vec<SecondaryStructure>>,
+    ss: OnceCell<Vec<SecondaryStructure>>,
 }
 
 impl Chain {
+    pub fn init_ss(&mut self) {
+        let calculator = SecondaryStructureCalculator::new();
+        self.ss_cache = Some(calculator.compute_secondary_structure(&self.residues));
+    }
+
     pub fn get_ss(&self) -> &Vec<SecondaryStructure> {
-        self.ss_cache.get_or_init(|| {
+        if let Some(cache) = self.ss_cache.as_ref() {
+            return &cache;
+        }
+        self.ss.get_or_init(|| {
             let calculator = SecondaryStructureCalculator::new();
             calculator.compute_secondary_structure(&self.residues)
         })
@@ -394,7 +403,8 @@ impl Chain {
         Self {
             id,
             residues,
-            ss_cache: OnceCell::new(), // 初始化私有缓存
+            ss_cache: None,
+            ss: OnceCell::new(), // 初始化私有缓存
         }
     }
 }
