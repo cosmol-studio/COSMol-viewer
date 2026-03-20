@@ -211,8 +211,8 @@ impl Protein {
     }
 
     pub fn to_mesh(&self, scale: f32) -> MeshData {
-        use std::time::Instant;
-        let start_total = Instant::now();
+        // use std::time::Instant;
+        // let start_total = Instant::now();
         let pts_per_res = 5;
 
         // println!("to_mesh started");
@@ -442,7 +442,7 @@ impl Protein {
         //     final_mesh.indices.len()
         // );
 
-        println!("to_mesh finished in {:?}", start_total.elapsed());
+        // println!("to_mesh finished in {:?}", start_total.elapsed());
         final_mesh
     }
 }
