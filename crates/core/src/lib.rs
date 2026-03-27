@@ -5,8 +5,10 @@ use thiserror::Error;
 
 pub mod parser;
 pub mod utils;
+pub use crate::utils::RenderQuality;
 pub use eframe;
 use eframe::egui;
+pub use na_seq;
 
 use eframe::egui::{Color32, Stroke, UserData, ViewportCommand};
 
@@ -164,6 +166,15 @@ pub enum RenderError {
 
 impl NativeGuiViewer {
     pub fn render(scene: &Scene, width: f32, height: f32) -> Result<Self, RenderError> {
+        Self::render_with_quality(scene, width, height, RenderQuality::Medium)
+    }
+
+    pub fn render_with_quality(
+        scene: &Scene,
+        width: f32,
+        height: f32,
+        quality: RenderQuality,
+    ) -> Result<Self, RenderError> {
         use std::time::Duration;
         use std::{
             sync::{Arc, Mutex},

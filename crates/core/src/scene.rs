@@ -1,3 +1,4 @@
+use crate::utils::Color;
 use crate::utils::InstanceGroups;
 use crate::utils::Logger;
 use glam::Mat3;
@@ -22,7 +23,7 @@ use crate::{
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Scene {
-    pub background_color: [f32; 3],
+    pub background_color: Vec3,
     pub camera_state: Option<CameraState>,
     pub named_shapes: HashMap<String, Shape>,
     pub unnamed_shapes: Vec<Shape>,
@@ -44,7 +45,7 @@ pub enum SceneError {
 impl Default for Scene {
     fn default() -> Self {
         Self {
-            background_color: [1.0, 1.0, 1.0],
+            background_color: Vec3::ONE,
             camera_state: None,
             named_shapes: HashMap::new(),
             unnamed_shapes: Vec::new(),
@@ -153,12 +154,12 @@ impl Scene {
         }
     }
 
-    pub fn set_background_color(&mut self, background_color: [f32; 3]) {
-        self.background_color = background_color;
+    pub fn set_background_color<C: Into<Color>>(&mut self, background_color: C) {
+        self.background_color = background_color.into().into()
     }
 
     pub fn use_black_background(&mut self) {
-        self.background_color = [0.0, 0.0, 0.0];
+        self.background_color = Vec3::ZERO;
     }
 
     /// === u_model ===

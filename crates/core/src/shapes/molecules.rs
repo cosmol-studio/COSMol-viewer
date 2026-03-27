@@ -349,7 +349,7 @@ impl IntoInstanceGroups for Molecule {
                 pos.to_array(),
                 self.atom_types.get(i).map(|x| my_radius(x) * 0.2).unwrap(),
             )
-            .color(self.get_atom_colors(i).into())
+            .color(self.get_atom_colors(i))
             .opacity(self.visual_style.opacity);
 
             groups.spheres.push(sphere_instance.to_instance(scale));
@@ -511,7 +511,7 @@ impl IntoInstanceGroups for Molecule {
                     ],
                     radius,
                 )
-                .color(color_a.into())
+                .color(color_a)
                 .opacity(self.visual_style.opacity);
 
                 groups.sticks.push(stick_a.to_instance(scale));
@@ -526,7 +526,7 @@ impl IntoInstanceGroups for Molecule {
                     ],
                     radius,
                 )
-                .color(color_b.into())
+                .color(color_b)
                 .opacity(self.visual_style.opacity);
 
                 groups.sticks.push(stick_b.to_instance(scale));

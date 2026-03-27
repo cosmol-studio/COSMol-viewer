@@ -190,7 +190,7 @@ struct Shader {
     indices: Vec<u32>,
     sphere_index_count: usize,
     stick_index_count: usize,
-    background_color: [f32; 3],
+    background_color: Vec3,
     vbo: glow::Buffer,
     ebo: glow::Buffer,
     sphere_instance_buffer: glow::Buffer,
@@ -823,7 +823,7 @@ impl Shader {
             gl.uniform_3_f32_slice(
                 gl.get_uniform_location(self.program_bg, "background_color")
                     .as_ref(),
-                &self.background_color,
+                self.background_color.as_ref(),
             );
             gl.draw_arrays(glow::TRIANGLES, 0, 6);
 

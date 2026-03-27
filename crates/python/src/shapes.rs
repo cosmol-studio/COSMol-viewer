@@ -4,8 +4,9 @@ use cosmol_viewer_core::{
     shapes::{Molecule, Protein, Sphere, Stick},
     utils::VisualShape,
 };
-use pyo3::{PyRefMut, pyclass, pymethods};
-use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
+use pyo3::{Bound, PyAny, PyRefMut, pyclass, pymethods};
+use pyo3_stub_gen::derive::{gen_methods_from_python, gen_stub_pyclass, gen_stub_pymethods};
+use pyo3_stub_gen::inventory::submit;
 
 #[gen_stub_pyclass]
 #[pyclass(name = "Sphere", from_py_object)]
@@ -19,11 +20,26 @@ use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
     # Example
     ```python
-    sphere = Sphere([0, 0, 0], 1.0).color([1, 0, 0])
+    sphere = Sphere([0, 0, 0], 1.0).color([1.0, 0.0, 0.0])
     ```
 "#]
 pub struct PySphere {
     pub inner: Sphere,
+}
+
+submit! {
+    gen_methods_from_python! {
+        r#"
+        class PySphere:
+            from typing import overload, Self
+
+            @overload
+            def color(self, c: tuple[int, int, int]) -> Sphere: ...
+
+            @overload
+            def color(self, c: str) -> Sphere: ...
+        "#
+    }
 }
 
 #[gen_stub_pymethods]
@@ -46,14 +62,14 @@ impl PySphere {
         slf
     }
 
-    pub fn color(mut slf: PyRefMut<'_, Self>, color: [f32; 3]) -> PyRefMut<'_, Self> {
+    #[gen_stub(skip)]
+    pub fn color<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        color: Bound<'py, PyAny>,
+    ) -> PyResult<PyRefMut<'py, Self>> {
+        let color = py_to_color(color)?;
         slf.inner = slf.inner.color(color);
-        slf
-    }
-
-    pub fn color_rgba(mut slf: PyRefMut<'_, Self>, color: [f32; 4]) -> PyRefMut<'_, Self> {
-        slf.inner = slf.inner.color_rgba(color);
-        slf
+        Ok(slf)
     }
 
     pub fn opacity(mut slf: PyRefMut<'_, Self>, opacity: f32) -> PyRefMut<'_, Self> {
@@ -92,9 +108,14 @@ impl PyStick {
         }
     }
 
-    pub fn color(mut slf: PyRefMut<'_, Self>, color: [f32; 3]) -> PyRefMut<'_, Self> {
+    #[gen_stub(skip)]
+    pub fn color<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        color: Bound<'py, PyAny>,
+    ) -> PyResult<PyRefMut<'py, Self>> {
+        let color = py_to_color(color)?;
         slf.inner = slf.inner.color(color);
-        slf
+        Ok(slf)
     }
 
     pub fn set_thickness(mut slf: PyRefMut<'_, Self>, thickness: f32) -> PyRefMut<'_, Self> {
@@ -109,11 +130,6 @@ impl PyStick {
 
     pub fn set_end(mut slf: PyRefMut<'_, Self>, end: [f32; 3]) -> PyRefMut<'_, Self> {
         slf.inner = slf.inner.set_end(end);
-        slf
-    }
-
-    pub fn color_rgba(mut slf: PyRefMut<'_, Self>, color: [f32; 4]) -> PyRefMut<'_, Self> {
-        slf.inner = slf.inner.color_rgba(color);
         slf
     }
 
@@ -170,14 +186,14 @@ impl PyMolecule {
         slf
     }
 
-    pub fn color(mut slf: PyRefMut<'_, Self>, color: [f32; 3]) -> PyRefMut<'_, Self> {
+    #[gen_stub(skip)]
+    pub fn color<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        color: Bound<'py, PyAny>,
+    ) -> PyResult<PyRefMut<'py, Self>> {
+        let color = py_to_color(color)?;
         slf.inner = slf.inner.clone().color(color);
-        slf
-    }
-
-    pub fn color_rgba(mut slf: PyRefMut<'_, Self>, color: [f32; 4]) -> PyRefMut<'_, Self> {
-        slf.inner = slf.inner.clone().color_rgba(color);
-        slf
+        Ok(slf)
     }
 
     pub fn opacity(mut slf: PyRefMut<'_, Self>, opacity: f32) -> PyRefMut<'_, Self> {
@@ -202,6 +218,21 @@ impl PyMolecule {
 "#]
 pub struct PyProtein {
     pub inner: Protein,
+}
+
+submit! {
+    gen_methods_from_python! {
+        r#"
+        class PyProtein:
+            from typing import overload, Self
+
+            @overload
+            def color(self, c: tuple[int, int, int]) -> Protein: ...
+
+            @overload
+            def color(self, c: str) -> Protein: ...
+        "#
+    }
 }
 
 #[gen_stub_pymethods]
@@ -233,18 +264,45 @@ impl PyProtein {
         slf
     }
 
-    pub fn color(mut slf: PyRefMut<'_, Self>, color: [f32; 3]) -> PyRefMut<'_, Self> {
+    #[gen_stub(skip)]
+    pub fn color<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        color: Bound<'py, PyAny>,
+    ) -> PyResult<PyRefMut<'py, Self>> {
+        let color = py_to_color(color)?;
         slf.inner = slf.inner.clone().color(color);
-        slf
-    }
-
-    pub fn color_rgba(mut slf: PyRefMut<'_, Self>, color: [f32; 4]) -> PyRefMut<'_, Self> {
-        slf.inner = slf.inner.clone().color_rgba(color);
-        slf
+        Ok(slf)
     }
 
     pub fn opacity(mut slf: PyRefMut<'_, Self>, opacity: f32) -> PyRefMut<'_, Self> {
         slf.inner = slf.inner.clone().opacity(opacity);
         slf
     }
+}
+
+use cosmol_viewer_core::utils::Color;
+use pyo3::types::PyAnyMethods;
+pub fn py_to_color(color: Bound<'_, pyo3::PyAny>) -> PyResult<Color> {
+    if let Ok(v) = color.extract::<[i64; 3]>() {
+        for &c in &v {
+            if c < 0 || c > 255 {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                    "Color value {} out of range [0, 255]",
+                    c
+                )));
+            }
+        }
+
+        let v_u8 = [v[0] as u8, v[1] as u8, v[2] as u8];
+        return Ok(Color::from(v_u8));
+    }
+
+    if let Ok(s) = color.extract::<&str>() {
+        return Color::try_from(s)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()));
+    }
+
+    Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+        "Color must be [int;3] with each value in [0, 255], or hex string like '#ffffff'",
+    ))
 }

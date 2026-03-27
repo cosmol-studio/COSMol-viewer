@@ -2,7 +2,7 @@ from cosmol_viewer import Protein, Scene, Viewer
 
 mmcif_data = open("./examples/6fi1.cif", "r", encoding="utf-8").read()
 
-prot = Protein.from_mmcif(mmcif_data).color([0.2, 0.45, 0.6])
+prot = Protein.from_mmcif(mmcif_data).color("#10ACBF")
 
 scene = Scene()
 # scene.use_black_background()

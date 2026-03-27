@@ -38,8 +38,12 @@ fn main() {
             let g = 0.5 + 0.5 * f32::cos(theta);
             let b = 1.0 - r;
 
-            let sphere = Sphere::new([x, y, z], radius).color([r, g, b]);
-            // scene.add_shape(sphere);
+            let sphere = Sphere::new([x, y, z], radius).color([
+                (r * 256.0) as u8,
+                (g * 256.0) as u8,
+                (b * 256.0) as u8,
+            ]);
+
             scene.add_shape_with_id(*id, sphere);
         }
 

@@ -170,14 +170,53 @@ impl MeshData {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct Color(pub Vec3);
+
+impl From<Vec3> for Color {
+    fn from(c: Vec3) -> Self {
+        Color(c)
+    }
+}
+
+impl From<[u8; 3]> for Color {
+    fn from(c: [u8; 3]) -> Self {
+        Color(Vec3::new(
+            c[0] as f32 / 255.0,
+            c[1] as f32 / 255.0,
+            c[2] as f32 / 255.0,
+        ))
+    }
+}
+
+impl From<&str> for Color {
+    fn from(s: &str) -> Self {
+        let s = s.trim_start_matches('#');
+
+        assert!(s.len() == 6, "HEX color must be 6 characters");
+
+        let r = u8::from_str_radix(&s[0..2], 16).unwrap();
+        let g = u8::from_str_radix(&s[2..4], 16).unwrap();
+        let b = u8::from_str_radix(&s[4..6], 16).unwrap();
+
+        Color::from([r, g, b])
+    }
+}
+
+impl Into<Vec3> for Color {
+    fn into(self) -> Vec3 {
+        self.0
+    }
+}
+
 pub trait VisualShape {
     fn style_mut(&mut self) -> &mut VisualStyle;
 
-    fn color(mut self, color: [f32; 3]) -> Self
+    fn color<C: Into<Color>>(mut self, color: C) -> Self
     where
         Self: Sized,
     {
-        self.style_mut().color = Some(color.into());
+        self.style_mut().color = Some(color.into().into());
         self
     }
 
@@ -198,4 +237,11 @@ pub trait VisualShape {
         self.style_mut().opacity = opacity;
         self
     }
+}
+
+pub enum RenderQuality {
+    Low,
+    Medium,
+    High,
+    Ultra,
 }

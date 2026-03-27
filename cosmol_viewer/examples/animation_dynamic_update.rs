@@ -12,7 +12,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let ids = ["a", "b", "c", "d", "e", "f"];
     for id in ids.iter() {
-        let sphere = Sphere::new([0.0, 0.0, 0.0], 0.4).color([1.0, 1.0, 1.0]);
+        let sphere = Sphere::new([0.0, 0.0, 0.0], 0.4).color([255, 255, 255]);
         scene.add_shape_with_id(*id, sphere);
     }
 
@@ -44,7 +44,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let g = 0.5 + 0.5 * f32::cos(theta);
             let b = 1.0 - r;
 
-            let sphere = Sphere::new([x, y, z], radius).color([r, g, b]);
+            let sphere = Sphere::new([x, y, z], radius).color([
+                (r * 256.0) as u8,
+                (g * 256.0) as u8,
+                (b * 256.0) as u8,
+            ]);
             scene.replace_shape(id, sphere)?;
         }
 

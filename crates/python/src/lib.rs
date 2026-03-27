@@ -1,3 +1,4 @@
+use crate::shapes::py_to_color;
 use cosmol_viewer_core::BUILD_ID;
 use cosmol_viewer_core::scene::Animation as _Animation;
 use pyo3::exceptions::PyIndexError;
@@ -335,8 +336,10 @@ impl Scene {
         scene.set_background_color([1.0, 1.0, 1.0]) # white background
         ```
     "#]
-    pub fn set_background_color(&mut self, background_color: [f32; 3]) {
-        self.inner.set_background_color(background_color);
+    pub fn set_background_color(&mut self, background_color: Bound<'_, PyAny>) -> PyResult<()> {
+        let color = py_to_color(background_color)?;
+        self.inner.set_background_color(color);
+        Ok(())
     }
 
     #[doc = r#"

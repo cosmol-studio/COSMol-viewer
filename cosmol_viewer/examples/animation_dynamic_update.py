@@ -7,7 +7,7 @@ scene = Scene()
 
 ids = ["a", "b", "c", "d", "e", "f"]
 for id in ids:
-    sphere = Sphere([0.0, 0.0, 0.0], 0.4).color([1.0, 1.0, 1.0])
+    sphere = Sphere([0.0, 0.0, 0.0], 0.4).color("#FFFFFF")
     scene.add_shape_with_id(id, sphere)
 
 scene.set_scale(2.0)
@@ -38,7 +38,7 @@ while True:
         g = 0.5 + 0.5 * math.cos(theta)
         b = 1.0 - r
 
-        sphere = Sphere([x, y, z], radius).color([r, g, b])
+        sphere = Sphere([x, y, z], radius).color((int(r* 255), int(g* 255), int(b* 255)))
         scene.replace_shape(id, sphere)
 
     viewer.update(scene)

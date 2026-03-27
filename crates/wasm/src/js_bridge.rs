@@ -42,8 +42,8 @@ impl NotebookViewer {
         let combined_js = format!(
             r#"
 (function() {{
-    const version = "{BUILD_ID}";
-    const ns = "cosmol_viewer_" + version;
+    const ns = "cosmol_viewer_{BUILD_ID}";
+    console.error(ns);
 
     import(window[ns + "_blob_url"]).then(async (mod) => {{
         await mod.default(window[ns + "_wasm_bytes"]);
@@ -119,8 +119,7 @@ impl NotebookViewer {
         let combined_js = format!(
             r#"
 (function() {{
-    const version = "{BUILD_ID}";
-    const ns = "cosmol_viewer_" + version;
+    const ns = "cosmol_viewer_{BUILD_ID}";
 
     import(window[ns + "_blob_url"]).then(async (mod) => {{
         await mod.default(window[ns + "_wasm_bytes"]);
@@ -168,7 +167,7 @@ impl NotebookViewer {
         let combined_js = format!(
             r#"
 (async function() {{
-    const ns = "cosmol_viewer_" + "{BUILD_ID}";
+    const ns = "cosmol_viewer_{BUILD_ID}";
     const instances = window[ns + "_instances"] || {{}};
     const app = instances["{id}"];
     if (app) {{
