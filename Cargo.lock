@@ -652,11 +652,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "cosmol_viewer_derive"
+version = "0.0.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "cosmol_viewer_python"
 version = "0.0.0"
 dependencies = [
  "base64",
  "cosmol_viewer_core",
+ "cosmol_viewer_derive",
  "cosmol_viewer_wasm",
  "eframe",
  "egui_extras",

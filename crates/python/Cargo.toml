@@ -5,6 +5,7 @@ publish = false
 
 [dependencies]
 cosmol_viewer_wasm = { path = "../wasm", default-features = false, features = ["js_bridge"] }
+cosmol_viewer_derive = { path = "../derive" }
 cosmol_viewer_core.workspace = true
 egui_extras.workspace = true
 serde_json.workspace = true

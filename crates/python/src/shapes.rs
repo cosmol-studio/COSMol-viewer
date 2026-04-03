@@ -3,6 +3,7 @@ use crate::PyResult;
 use crate::impl_stylable_pymethods;
 use cosmol_viewer_core::shapes::{Molecule, Protein, Sphere, Stick};
 use cosmol_viewer_core::utils::Stylable;
+use cosmol_viewer_derive::gen_color_methods_submission;
 use pyo3::{Bound, PyAny, PyRefMut, pyclass, pymethods};
 use pyo3_stub_gen::derive::{gen_methods_from_python, gen_stub_pyclass, gen_stub_pymethods};
 use pyo3_stub_gen::inventory::submit;
@@ -25,6 +26,8 @@ use pyo3_stub_gen::inventory::submit;
 pub struct PySphere {
     pub inner: Sphere,
 }
+
+gen_color_methods_submission!(PySphere, Sphere);
 
 #[gen_stub_pymethods]
 #[pymethods]
@@ -68,6 +71,8 @@ impl_stylable_pymethods!(PySphere, Sphere);
 pub struct PyStick {
     pub inner: Stick,
 }
+
+gen_color_methods_submission!(PyStick, Stick);
 
 #[gen_stub_pymethods]
 #[pymethods]
@@ -114,6 +119,8 @@ impl_stylable_pymethods!(PyStick, Stick);
 pub struct PyMolecule {
     pub inner: Molecule,
 }
+
+gen_color_methods_submission!(PyMolecule, Molecule);
 
 #[gen_stub_pymethods]
 #[pymethods]
@@ -164,6 +171,8 @@ impl_stylable_pymethods!(PyMolecule, Molecule);
 pub struct PyProtein {
     pub inner: Protein,
 }
+
+gen_color_methods_submission!(PyProtein, Protein);
 
 #[gen_stub_pymethods]
 #[pymethods]
