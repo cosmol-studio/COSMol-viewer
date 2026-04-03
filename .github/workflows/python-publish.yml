@@ -35,7 +35,6 @@ jobs:
           registry-url: "https://registry.npmjs.org"
       - run: |
           cd ./crates/wasm/pkg
-          npm ci
           npm publish
       - name: build pyi
         working-directory: crates/python
