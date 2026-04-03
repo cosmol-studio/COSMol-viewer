@@ -1,7 +1,7 @@
 use crate::Arc;
 use crate::{
     Shape,
-    utils::{Interaction, Interpolatable, Logger, MeshData, VisualShape, VisualStyle},
+    utils::{Interaction, Interpolatable, Logger, Material, MeshData, Stylable},
 };
 use dashmap::DashMap;
 use glam::Vec3;
@@ -24,7 +24,7 @@ pub struct Sphere {
     pub radius: f32,
     pub quality: u32,
 
-    pub style: VisualStyle,
+    pub material: Material,
     pub interaction: Interaction,
 }
 
@@ -38,7 +38,7 @@ impl Interpolatable for Sphere {
             ],
             radius: self.radius * (1.0 - t) + other.radius * t,
             quality: ((self.quality as f32) * (1.0 - t) + (other.quality as f32) * t) as u32,
-            style: self.style.clone(), // 简单处理，或者给 VisualStyle 也实现 interpolate
+            material: self.material.clone(), // 简单处理，或者给 Material 也实现 interpolate
             interaction: self.interaction.clone(), // 同上
         }
     }
@@ -56,7 +56,7 @@ impl Sphere {
             center,
             radius,
             quality: 2,
-            style: VisualStyle {
+            material: Material {
                 opacity: 1.0,
                 visible: true,
                 ..Default::default()
@@ -240,17 +240,17 @@ impl Sphere {
     }
 
     pub fn to_instance(&self, scale: f32) -> SphereInstance {
-        let base_color = self.style.color.unwrap_or([1.0, 1.0, 1.0].into());
-        let alpha = self.style.opacity.clamp(0.0, 1.0);
+        let base_color = self.material.color.unwrap_or([1.0, 1.0, 1.0].into());
+        let alpha = self.material.opacity.clamp(0.0, 1.0);
         let color = [base_color[0], base_color[1], base_color[2], alpha];
 
         SphereInstance::new(self.center.map(|x| x * scale), self.radius * scale, color)
     }
 }
 
-impl VisualShape for Sphere {
-    fn style_mut(&mut self) -> &mut VisualStyle {
-        &mut self.style
+impl Stylable for Sphere {
+    fn style_mut(&mut self) -> &mut Material {
+        &mut self.material
     }
 }
 

@@ -21,10 +21,10 @@ members = [
 cosmol_viewer = { version = "0.2.11", path = "cosmol_viewer"}
 cosmol_viewer_core = { version = "0.2.11", path = "crates/core" }
 
-pyo3 = { version = "0.28.2", features = ["extension-module", "abi3-py310"] }
-eframe = { version = "0.33.3", features = ["wayland","x11","glow"], default-features = false }
-egui-winit = { version = "0.33.3", features = ["wayland","x11"], default-features = false }
-egui_extras = { version = "0.33.3", default-features = false }
+pyo3 = { version = "0.28.2", features = ["extension-module", "abi3-py310","multiple-pymethods"] }
+eframe = { version = "0.34.1", features = ["wayland","x11","glow"], default-features = false }
+egui-winit = { version = "0.34.1", features = ["wayland","x11"], default-features = false }
+egui_extras = { version = "0.34.1", default-features = false }
 serde = { version = "1.0.228" , features = ["derive"] }
 thiserror = "2.0.18"
 serde_json = "1.0.149"

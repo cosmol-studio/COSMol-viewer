@@ -11,7 +11,7 @@ use crate::{
     Shape,
     scene::Scene,
     shapes::sphere::MeshTemplate,
-    utils::{Interaction, Interpolatable, Logger, MeshData, VisualShape, VisualStyle},
+    utils::{Interaction, Interpolatable, Logger, Material, MeshData, Stylable},
 };
 
 static STICK_TEMPLATE_CACHE: Lazy<DashMap<(u32, StickCap), Arc<MeshTemplate>>> =
@@ -32,7 +32,7 @@ pub struct Stick {
     pub quality: u32,
     pub stick_cap: StickCap,
 
-    pub style: VisualStyle,
+    pub style: Material,
     interaction: Interaction,
 }
 
@@ -71,7 +71,7 @@ impl Stick {
             end,
             thickness_radius: radius,
             quality: 6,
-            style: VisualStyle {
+            style: Material {
                 opacity: 1.0,
                 visible: true,
                 ..Default::default()
@@ -241,8 +241,8 @@ impl Stick {
     }
 }
 
-impl VisualShape for Stick {
-    fn style_mut(&mut self) -> &mut VisualStyle {
+impl Stylable for Stick {
+    fn style_mut(&mut self) -> &mut Material {
         &mut self.style
     }
 }

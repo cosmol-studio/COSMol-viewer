@@ -1,4 +1,4 @@
-use cosmol_viewer::utils::VisualShape;
+use cosmol_viewer::utils::Stylable;
 use cosmol_viewer::{Scene, Viewer, shapes::Molecule, shapes::Protein};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

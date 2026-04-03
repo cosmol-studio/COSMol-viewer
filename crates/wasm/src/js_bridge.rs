@@ -216,6 +216,7 @@ impl NotebookViewer {
     (async function() {{
         const ns = "cosmol_viewer_{BUILD_ID}";
         const instances = window[ns + "_instances"] || {{}};
+        console.log(instances);
         const app = instances["{id}"];
         if (app) {{
             try {{

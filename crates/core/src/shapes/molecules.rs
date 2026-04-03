@@ -5,7 +5,7 @@ pub use crate::utils::Logger;
 use crate::{
     Shape,
     shapes::{sphere::Sphere, stick::Stick},
-    utils::{Interaction, Interpolatable, IntoInstanceGroups, MeshData, VisualShape, VisualStyle},
+    utils::{Interaction, Interpolatable, IntoInstanceGroups, Material, MeshData, Stylable},
 };
 use glam::Vec3;
 use na_seq::Element;
@@ -109,7 +109,7 @@ pub struct Molecule {
     pub bond_indices: Vec<[usize; 2]>,
     pub quality: u32,
 
-    pub visual_style: VisualStyle,
+    pub visual_style: Material,
     pub interaction: Interaction,
 }
 
@@ -269,7 +269,7 @@ impl Molecule {
             bond_types,
             bond_indices,
             quality: 6,
-            visual_style: VisualStyle {
+            visual_style: Material {
                 opacity: 1.0,
                 visible: true,
                 ..Default::default()
@@ -536,8 +536,8 @@ impl IntoInstanceGroups for Molecule {
     }
 }
 
-impl VisualShape for Molecule {
-    fn style_mut(&mut self) -> &mut VisualStyle {
+impl Stylable for Molecule {
+    fn style_mut(&mut self) -> &mut Material {
         &mut self.visual_style
     }
 }

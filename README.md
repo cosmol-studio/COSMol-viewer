@@ -3,14 +3,17 @@ A high-performance molecular viewer for Python and Rust, powered by a unified Ru
 It supports both in-notebook visualization and native desktop rendering, with smooth playback for scientific animations.
 
 <div align="center">
-  <a href="https://crates.io/crates/cosmol_viewer">
-    <img src="https://img.shields.io/crates/v/cosmol_viewer.svg" alt="crates.io Latest Release" />
-  </a>
   <a href="https://pypi.org/project/cosmol_viewer/">
     <img src="https://img.shields.io/pypi/v/cosmol_viewer.svg" alt="PyPi Latest Release" />
   </a>
-  <a href="https://cosmol-repl.github.io/COSMol-viewer">
+  <a href="https://cosmol-studio.github.io/COSMol-viewer">
     <img src="https://img.shields.io/badge/docs-latest-blue.svg" alt="Documentation Status" />
+  </a>
+  <a href="https://crates.io/crates/cosmol_viewer">
+    <img src="https://img.shields.io/crates/v/cosmol_viewer.svg" alt="crates.io Latest Release" />
+  </a>
+  <a href="https://www.npmjs.com/package/cosmol_viewer_wasm">
+    <img src="https://img.shields.io/npm/v/cosmol_viewer_wasm.svg" alt="npm Latest Release" />
   </a>
 </div>
 

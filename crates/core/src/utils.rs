@@ -25,12 +25,14 @@ impl Logger for RustLogger {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, Copy)]
-pub struct VisualStyle {
+pub struct Material {
     pub color: Option<Vec3>,
     pub opacity: f32,
-    pub wireframe: bool,
     pub visible: bool,
-    pub line_width: Option<f32>,
+    pub alpha: f32,
+    pub roughness: f32,
+    pub metallic: f32,
+    pub wireframe: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, Copy)]
@@ -209,9 +211,8 @@ impl Into<Vec3> for Color {
     }
 }
 
-pub trait VisualShape {
-    fn style_mut(&mut self) -> &mut VisualStyle;
-
+pub trait Stylable {
+    fn style_mut(&mut self) -> &mut Material;
     fn color<C: Into<Color>>(mut self, color: C) -> Self
     where
         Self: Sized,
@@ -220,21 +221,26 @@ pub trait VisualShape {
         self
     }
 
-    fn color_rgba(mut self, color: [f32; 4]) -> Self
-    where
-        Self: Sized,
-    {
-        self.style_mut().color = Some(Vec3::new(color[0], color[1], color[2]));
-        self.style_mut().opacity = color[3];
-
-        self
-    }
-
     fn opacity(mut self, opacity: f32) -> Self
     where
         Self: Sized,
     {
         self.style_mut().opacity = opacity;
+        self
+    }
+
+    fn roughness(mut self, roughness: f32) -> Self
+    where
+        Self: Sized,
+    {
+        self.style_mut().roughness = roughness;
+        self
+    }
+    fn metallic(mut self, metallic: f32) -> Self
+    where
+        Self: Sized,
+    {
+        self.style_mut().metallic = metallic;
         self
     }
 }

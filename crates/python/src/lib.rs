@@ -15,6 +15,7 @@ use cosmol_viewer_wasm::NotebookViewer;
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
 mod shapes;
+mod utils;
 
 #[derive(Clone)]
 #[gen_stub_pyclass]
@@ -61,8 +62,8 @@ impl Animation {
         # Args
         - frame: A Scene object representing a single frame of the animation.
     "#]
-    pub fn add_frame(&mut self, frame: Scene) {
-        self.inner.frames.push(frame.inner);
+    pub fn add_frame(&mut self, scene: Scene) {
+        self.inner.frames.push(scene.inner);
     }
 
     #[doc = r#"
@@ -333,7 +334,7 @@ impl Scene {
 
         # Example
         ```python
-        scene.set_background_color([1.0, 1.0, 1.0]) # white background
+        scene.set_background_color("\#FFFFFF") # white background
         ```
     "#]
     pub fn set_background_color(&mut self, background_color: Bound<'_, PyAny>) -> PyResult<()> {
@@ -344,11 +345,6 @@ impl Scene {
 
     #[doc = r#"
         Set the background color of the scene to black.
-
-        # Example
-        ```python
-        scene.use_black_background()
-        ```
     "#]
     pub fn use_black_background(&mut self) {
         self.inner.use_black_background();

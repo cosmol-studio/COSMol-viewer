@@ -25,7 +25,7 @@ jobs:
       - name: Install python dependencies
         run: |
           uv venv .venv
-          uv pip install maturin pdoc
+          uv pip install maturin sphinx furo
           echo "$GITHUB_WORKSPACE/.venv/bin" >> $GITHUB_PATH
 
       - uses: Swatinem/rust-cache@v2
@@ -48,10 +48,10 @@ jobs:
           maturin develop --uv
       - name: Build documentation
         run: |
-          pdoc -o docs/ cosmol_viewer
+          sphinx-build -b html docs/source docs/_build/html
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: docs/
+          path: docs/_build/html
 
   deploy:
     environment:

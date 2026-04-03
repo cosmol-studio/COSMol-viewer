@@ -139,7 +139,7 @@ impl<L: Logger> Canvas<L> {
                 self.shader.lock().update_scene(Some(&frame), static_scene);
             }
         }
-        let scroll_delta = ui.input(|i| i.raw_scroll_delta.y);
+        let scroll_delta = ui.input(|i| i.smooth_scroll_delta.y);
 
         if scroll_delta != 0.0 {
             let zoom_factor = 1.0 + scroll_delta * 0.001;

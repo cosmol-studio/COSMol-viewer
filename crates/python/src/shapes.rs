@@ -1,9 +1,8 @@
 use crate::PyErr;
 use crate::PyResult;
-use cosmol_viewer_core::{
-    shapes::{Molecule, Protein, Sphere, Stick},
-    utils::VisualShape,
-};
+use crate::impl_stylable_pymethods;
+use cosmol_viewer_core::shapes::{Molecule, Protein, Sphere, Stick};
+use cosmol_viewer_core::utils::Stylable;
 use pyo3::{Bound, PyAny, PyRefMut, pyclass, pymethods};
 use pyo3_stub_gen::derive::{gen_methods_from_python, gen_stub_pyclass, gen_stub_pymethods};
 use pyo3_stub_gen::inventory::submit;
@@ -27,21 +26,6 @@ pub struct PySphere {
     pub inner: Sphere,
 }
 
-submit! {
-    gen_methods_from_python! {
-        r#"
-        class PySphere:
-            from typing import overload, Self
-
-            @overload
-            def color(self, c: tuple[int, int, int]) -> Sphere: ...
-
-            @overload
-            def color(self, c: str) -> Sphere: ...
-        "#
-    }
-}
-
 #[gen_stub_pymethods]
 #[pymethods]
 impl PySphere {
@@ -61,22 +45,9 @@ impl PySphere {
         slf.inner = slf.inner.set_center(center);
         slf
     }
-
-    #[gen_stub(skip)]
-    pub fn color<'py>(
-        mut slf: PyRefMut<'py, Self>,
-        color: Bound<'py, PyAny>,
-    ) -> PyResult<PyRefMut<'py, Self>> {
-        let color = py_to_color(color)?;
-        slf.inner = slf.inner.color(color);
-        Ok(slf)
-    }
-
-    pub fn opacity(mut slf: PyRefMut<'_, Self>, opacity: f32) -> PyRefMut<'_, Self> {
-        slf.inner = slf.inner.opacity(opacity);
-        slf
-    }
 }
+
+impl_stylable_pymethods!(PySphere, Sphere);
 
 #[gen_stub_pyclass]
 #[pyclass(name = "Stick", from_py_object)]
@@ -108,16 +79,6 @@ impl PyStick {
         }
     }
 
-    #[gen_stub(skip)]
-    pub fn color<'py>(
-        mut slf: PyRefMut<'py, Self>,
-        color: Bound<'py, PyAny>,
-    ) -> PyResult<PyRefMut<'py, Self>> {
-        let color = py_to_color(color)?;
-        slf.inner = slf.inner.color(color);
-        Ok(slf)
-    }
-
     pub fn set_thickness(mut slf: PyRefMut<'_, Self>, thickness: f32) -> PyRefMut<'_, Self> {
         slf.inner = slf.inner.set_thickness(thickness);
         slf
@@ -132,12 +93,9 @@ impl PyStick {
         slf.inner = slf.inner.set_end(end);
         slf
     }
-
-    pub fn opacity(mut slf: PyRefMut<'_, Self>, opacity: f32) -> PyRefMut<'_, Self> {
-        slf.inner = slf.inner.opacity(opacity);
-        slf
-    }
 }
+
+impl_stylable_pymethods!(PyStick, Stick);
 
 #[gen_stub_pyclass]
 #[pyclass(name = "Molecule", from_py_object)]
@@ -150,7 +108,7 @@ impl PyStick {
     ```python
     # Load from file content
     content = open("structure.sdf", "r").read()
-    mol = Molecule.from_sdf(content).centered().color([0, 1, 0])
+    mol = Molecule.from_sdf(content).centered()
     ```
 "#]
 pub struct PyMolecule {
@@ -185,22 +143,9 @@ impl PyMolecule {
         slf.inner = slf.inner.clone().centered();
         slf
     }
-
-    #[gen_stub(skip)]
-    pub fn color<'py>(
-        mut slf: PyRefMut<'py, Self>,
-        color: Bound<'py, PyAny>,
-    ) -> PyResult<PyRefMut<'py, Self>> {
-        let color = py_to_color(color)?;
-        slf.inner = slf.inner.clone().color(color);
-        Ok(slf)
-    }
-
-    pub fn opacity(mut slf: PyRefMut<'_, Self>, opacity: f32) -> PyRefMut<'_, Self> {
-        slf.inner = slf.inner.clone().opacity(opacity);
-        slf
-    }
 }
+
+impl_stylable_pymethods!(PyMolecule, Molecule);
 
 #[gen_stub_pyclass]
 #[pyclass(name = "Protein", from_py_object)]
@@ -213,26 +158,11 @@ impl PyMolecule {
     ```python
     # Load from file content
     content = open("2AMD.cif", "r").read()
-    prot = Protein.from_mmcif(content).centered().color([0, 1, 0])
+    prot = Protein.from_mmcif(content).centered().color("\#F9FAFB")
     ```
 "#]
 pub struct PyProtein {
     pub inner: Protein,
-}
-
-submit! {
-    gen_methods_from_python! {
-        r#"
-        class PyProtein:
-            from typing import overload, Self
-
-            @overload
-            def color(self, c: tuple[int, int, int]) -> Protein: ...
-
-            @overload
-            def color(self, c: str) -> Protein: ...
-        "#
-    }
 }
 
 #[gen_stub_pymethods]
@@ -263,22 +193,9 @@ impl PyProtein {
         slf.inner = slf.inner.clone().centered();
         slf
     }
-
-    #[gen_stub(skip)]
-    pub fn color<'py>(
-        mut slf: PyRefMut<'py, Self>,
-        color: Bound<'py, PyAny>,
-    ) -> PyResult<PyRefMut<'py, Self>> {
-        let color = py_to_color(color)?;
-        slf.inner = slf.inner.clone().color(color);
-        Ok(slf)
-    }
-
-    pub fn opacity(mut slf: PyRefMut<'_, Self>, opacity: f32) -> PyRefMut<'_, Self> {
-        slf.inner = slf.inner.clone().opacity(opacity);
-        slf
-    }
 }
+
+impl_stylable_pymethods!(PyProtein, Protein);
 
 use cosmol_viewer_core::utils::Color;
 use pyo3::types::PyAnyMethods;

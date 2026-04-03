@@ -2,20 +2,19 @@ use crate::Shape;
 use crate::parser::mmcif::Chain;
 use crate::parser::mmcif::MmCif;
 use crate::parser::utils::{Residue, ResidueType::AminoAcid, SecondaryStructure};
-use crate::utils::{MeshData, VisualShape, VisualStyle};
+use crate::utils::{Material, MeshData, Stylable};
 use bytemuck::{Pod, Zeroable};
 use glam::{Quat, Vec3, Vec4};
 use na_seq::AtomTypeInRes;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
-use wide::f32x8;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Protein {
     pub chains: Vec<Chain>,
     pub center: Vec3,
 
-    pub style: VisualStyle,
+    pub style: Material,
 }
 
 use thiserror::Error;
@@ -132,7 +131,7 @@ impl Protein {
         Ok(Protein {
             chains: chains,
             center: center,
-            style: VisualStyle {
+            style: Material {
                 opacity: 1.0,
                 visible: true,
                 ..Default::default()
@@ -141,8 +140,8 @@ impl Protein {
     }
 }
 
-impl VisualShape for Protein {
-    fn style_mut(&mut self) -> &mut VisualStyle {
+impl Stylable for Protein {
+    fn style_mut(&mut self) -> &mut Material {
         &mut self.style
     }
 }

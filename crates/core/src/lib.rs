@@ -7,7 +7,7 @@ pub mod parser;
 pub mod utils;
 pub use crate::utils::RenderQuality;
 pub use eframe;
-use eframe::egui;
+use eframe::egui::{self, Ui};
 pub use na_seq;
 
 use eframe::egui::{Color32, Stroke, UserData, ViewportCommand};
@@ -31,9 +31,9 @@ pub const BUILD_ID: &str = concat!(
 );
 
 impl<L: Logger> eframe::App for AppWrapper<L> {
-    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut Ui, frame: &mut eframe::Frame) {
         if let Some(app) = &mut *self.0.lock().unwrap() {
-            app.update(ctx, frame);
+            app.ui(ui, frame);
         }
     }
 }
@@ -106,9 +106,9 @@ fn color_image_to_rgba_bytes(image: &egui::ColorImage) -> Vec<u8> {
 }
 
 impl<L: Logger> eframe::App for App<L> {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         #[cfg(not(target_arch = "wasm32"))]
-        egui_extras::install_image_loaders(ctx);
+        egui_extras::install_image_loaders(ui);
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::default()
@@ -117,7 +117,7 @@ impl<L: Logger> eframe::App for App<L> {
                     .outer_margin(0.0)
                     .stroke(Stroke::new(0.0, Color32::from_rgb(30, 200, 30))),
             )
-            .show(ctx, |ui| {
+            .show_inside(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.set_height(ui.available_height());
 
