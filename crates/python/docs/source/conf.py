@@ -8,6 +8,7 @@ author = "Jingtong Wang"
 
 extensions = [
     "sphinx.ext.autodoc",
+    "sphinx_autodoc_typehints",
     "sphinx.ext.autosummary",
     "sphinx.ext.napoleon",
     "sphinx.ext.viewcode",
@@ -15,6 +16,8 @@ extensions = [
 
 autosummary_generate = True
 autodoc_typehints = "signature"
+autoclass_content = "both"
+always_document_param_types = True
 
 templates_path = ["_templates"]
 exclude_patterns = []

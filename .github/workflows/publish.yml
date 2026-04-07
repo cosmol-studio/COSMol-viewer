@@ -1,4 +1,4 @@
-﻿name: python-publish
+﻿name: publish
 
 on:
   push:
@@ -45,6 +45,10 @@ jobs:
         with:
           name: wasm-pkg
           path: ./crates/wasm/pkg
+      - name: build pyi
+        working-directory: crates/python
+        run: |
+          cargo run --bin stub_gen
       - name: Upload cosmol_viewer.pyi
         uses: actions/upload-artifact@v4
         with:
@@ -236,3 +240,22 @@ jobs:
         with:
           command: upload
           args: --non-interactive --skip-existing wheels-*/*
+
+      - name: Publish to npm
+        if: ${{ startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+      - name: Download wasm pkg
+        uses: actions/download-artifact@v4
+        with:
+          name: wasm-pkg
+          path: crates/wasm/pkg
+      - name: Run npm publish
+        if: ${{ startsWith(github.ref, 'refs/tags/') }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          cd crates/wasm/pkg
+          npm publish --access public

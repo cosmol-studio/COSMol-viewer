@@ -1,9 +1,11 @@
 use crate::shapes::py_to_color;
 use cosmol_viewer_core::BUILD_ID;
 use cosmol_viewer_core::scene::Animation as _Animation;
+use pyo3::PyTypeInfo;
 use pyo3::exceptions::PyIndexError;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::exceptions::PyValueError;
+use pyo3::types::{PyDict, PySuper, PyTuple};
 use std::env;
 use std::ffi::CStr;
 
@@ -21,7 +23,16 @@ mod utils;
 #[gen_stub_pyclass]
 #[pyclass(from_py_object)]
 #[doc = r#"
-    A container for handling frame-based animations in the viewer.
+Create a new Animation container.
+
+Parameters
+----------
+interval: float
+    Time in seconds between frames.
+loops: int
+    Number of times to loop the animation (-1 for infinite).
+smooth: bool
+    Whether to interpolate between frames for smoother visualization.
 "#]
 pub struct Animation {
     inner: _Animation,
@@ -31,19 +42,6 @@ pub struct Animation {
 #[pymethods]
 impl Animation {
     #[new]
-    #[doc = r#"
-        Create a new Animation container.
-
-        # Args
-        - interval: Time in seconds between frames.
-        - loops: Number of times to loop the animation (-1 for infinite).
-        - smooth: Whether to interpolate between frames for smoother visualization.
-
-        # Example
-        ```python
-        anim = Animation(interval=0.1, loops=-1, smooth=True)
-        ```
-    "#]
     pub fn new(interval: f32, loops: i64, interpolate: bool) -> Self {
         Self {
             inner: _Animation {
@@ -57,10 +55,11 @@ impl Animation {
     }
 
     #[doc = r#"
-        Add a frame (Scene) to the animation.
+Add a frame (Scene) to the animation.
 
-        # Args
-        - frame: A Scene object representing a single frame of the animation.
+Parameters
+----------
+frame: A Scene object representing a single frame of the animation.
     "#]
     pub fn add_frame(&mut self, scene: Scene) {
         self.inner.frames.push(scene.inner);
