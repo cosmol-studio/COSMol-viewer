@@ -1,11 +1,9 @@
 use crate::shapes::py_to_color;
 use cosmol_viewer_core::BUILD_ID;
 use cosmol_viewer_core::scene::Animation as _Animation;
-use pyo3::PyTypeInfo;
 use pyo3::exceptions::PyIndexError;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::exceptions::PyValueError;
-use pyo3::types::{PyDict, PySuper, PyTuple};
 use std::env;
 use std::ffi::CStr;
 
@@ -23,16 +21,30 @@ mod utils;
 #[gen_stub_pyclass]
 #[pyclass(from_py_object)]
 #[doc = r#"
-Create a new Animation container.
+A container for handling frame-based animations in the viewer.
 
 Parameters
 ----------
-interval: float
+interval : float
     Time in seconds between frames.
-loops: int
-    Number of times to loop the animation (-1 for infinite).
-smooth: bool
+loops : int
+    Number of times to loop the animation. Use ``-1`` for infinite looping.
+interpolate : bool
     Whether to interpolate between frames for smoother visualization.
+
+
+Examples
+--------
+.. code-block:: python
+
+    animation = Animation(interval=0.1, loops=-1, smooth=True)
+    for _ in range(100):
+        scene = Scene()
+        scene.add_shape(..)
+        animation.add_frame(scene)
+
+    Viewer.play(animation, width=800.0, height=500.0)
+
 "#]
 pub struct Animation {
     inner: _Animation,
@@ -55,23 +67,26 @@ impl Animation {
     }
 
     #[doc = r#"
-Add a frame (Scene) to the animation.
+Add a frame to the animation.
 
 Parameters
 ----------
-frame: A Scene object representing a single frame of the animation.
-    "#]
+scene : Scene
+    A scene object representing a single frame of the animation.
+"#]
     pub fn add_frame(&mut self, scene: Scene) {
         self.inner.frames.push(scene.inner);
     }
 
     #[doc = r#"
-        Set a static scene that remains constant throughout the animation.
-        Useful for background elements or reference structures.
+Set a static scene that remains constant throughout the animation.
 
-        # Args
-        - scene: A Scene object to be rendered statically.
-    "#]
+Parameters
+----------
+scene : Scene
+    A scene object to be rendered statically. This is useful for
+    background elements or reference structures.
+"#]
     pub fn set_static_scene(&mut self, scene: Scene) {
         self.inner.static_scene = Some(scene.inner);
     }
@@ -87,7 +102,7 @@ frame: A Scene object representing a single frame of the animation.
         let frames = self.inner.frames.len();
 
         format!(
-            "Animation(frames={}, interval={:.3}s, loops={}, smooth={})",
+            "Animation(frames={}, interval={:.3}s, loops={}, interpolate={})",
             frames, interval_sec, self.inner.loops, self.inner.interpolate
         )
     }
@@ -121,19 +136,19 @@ frame: A Scene object representing a single frame of the animation.
 #[gen_stub_pyclass]
 #[pyclass(from_py_object)]
 #[doc = r#"
-    A 3D scene container for visualizing molecular or geometric shapes.
+A 3D scene container for visualizing molecular or geometric shapes.
 
-    This class allows adding, updating, and removing shapes in a 3D scene,
-    as well as modifying scene-level properties like scale and background color.
+This class allows adding, updating, and removing shapes in a scene,
+as well as modifying scene-level properties such as scale and background color.
 
-    Supported shape types:
-    - Sphere
-    - Stick
-    - Molecule
-    - Protein
+Supported shape types include ``Sphere``, ``Stick``, ``Molecule``, and ``Protein``.
+Shapes can optionally be assigned a string ``id`` so they can be updated or removed later.
 
-    Shapes can be optionally identified with a string `id`,
-    which allows updates and deletion.
+Examples
+--------
+.. code-block:: python
+
+    scene = Scene()
 "#]
 pub struct Scene {
     inner: _Scene,
@@ -143,14 +158,6 @@ pub struct Scene {
 #[pymethods]
 impl Scene {
     #[new]
-    #[doc = r#"
-        Creates a new empty scene.
-
-        # Example
-        ```python
-        scene = Scene()
-        ```
-    "#]
     pub fn new() -> Self {
         Self {
             inner: _Scene::new(),
@@ -158,16 +165,13 @@ impl Scene {
     }
 
     #[doc = r#"
-        Add a shape to the scene without an explicit ID.
+Add a shape to the scene without assigning an explicit ID.
 
-        # Args
-        - shape: A shape instance (Sphere, Stick, Molecule, or Protein).
-
-        # Example
-        ```python
-        scene.add_shape(sphere)
-        ```
-    "#]
+Parameters
+----------
+shape : Sphere or Stick or Molecule or Protein
+    A shape instance to add to the scene.
+"#]
     pub fn add_shape(&mut self, shape: &Bound<'_, PyAny>) -> PyResult<()> {
         macro_rules! try_add {
             ($py_type:ty) => {{
@@ -196,18 +200,19 @@ impl Scene {
     }
 
     #[doc = r#"
-        Add a shape to the scene with a specific ID which can be used to update or remove the shape later.
-        If a shape with the same ID exists, this method may fail or behave strictly;
+Add a shape to the scene with a specific ID.
 
-        # Args
-        - id: Unique string ID for the shape.
-        - shape: A shape instance.
+Parameters
+----------
+id : str
+    A unique string identifier for the shape.
+shape : Sphere or Stick or Molecule or Protein
+    A shape instance to add to the scene.
 
-        # Example
-        ```python
-        scene.add_shape_with_id("bond1", stick)
-        ```
-    "#]
+Notes
+-----
+If a shape with the same ID already exists, this method may fail or behave strictly.
+"#]
     pub fn add_shape_with_id(&mut self, id: &str, shape: &Bound<'_, PyAny>) -> PyResult<()> {
         macro_rules! try_add {
             ($py_type:ty) => {{
@@ -236,17 +241,15 @@ impl Scene {
     }
 
     #[doc = r#"
-        Replace an existing shape in the scene by its ID.
+Replace an existing shape in the scene by its ID.
 
-        # Args
-        - id: ID of the shape to update.
-        - shape: New shape object to replace the existing one.
-
-        # Example
-        ```python
-        scene.replace_shape("mol", updated_molecule)
-        ```
-    "#]
+Parameters
+----------
+id : str
+    The ID of the shape to replace.
+shape : Sphere or Stick or Molecule or Protein
+    The new shape object.
+"#]
     pub fn replace_shape(&mut self, id: &str, shape: &Bound<'_, PyAny>) -> PyResult<()> {
         macro_rules! update_with {
             ($py_type:ty) => {{
@@ -278,16 +281,13 @@ impl Scene {
     }
 
     #[doc = r#"
-        Remove a shape from the scene by its ID.
+Remove a shape from the scene by its ID.
 
-        # Args
-        - id: ID of the shape to remove.
-
-        # Example
-        ```python
-        scene.remove_shape("bond1")
-        ```
-    "#]
+Parameters
+----------
+id : str
+    The ID of the shape to remove.
+"#]
     pub fn remove_shape(&mut self, id: &str) -> PyResult<()> {
         self.inner
             .remove_shape(id)
@@ -295,47 +295,37 @@ impl Scene {
     }
 
     #[doc = r#"
-        Recenter the scene at a given point.
+Recenter the scene at a given point.
 
-        # Args
-        - center: An XYZ array of 3 float values representing the new center.
-
-        # Example
-        ```python
-        scene.recenter([0.0, 0.0, 0.0])
-        ```
-    "#]
+Parameters
+----------
+center : [float, float, float]
+    The new scene center as XYZ coordinates.
+"#]
     pub fn recenter(&mut self, center: [f32; 3]) {
         self.inner.recenter(center);
     }
 
     #[doc = r#"
-        Set the global scale factor of the scene.
-        This affects the visual size of all shapes uniformly.
+Set the global scale factor of the scene.
 
-        # Args
-        - scale: A positive float scaling factor.
-
-        # Example
-        ```python
-        scene.set_scale(1.5)
-        ```
-    "#]
+Parameters
+----------
+scale : float
+    A positive scaling factor applied uniformly to all shapes.
+"#]
     pub fn set_scale(&mut self, scale: f32) {
         self.inner.set_scale(scale);
     }
 
     #[doc = r#"
-        Set the background color of the scene.
+Set the background color of the scene.
 
-        # Args
-        - background_color: An RGB array of 3 float values between 0.0 and 1.0.
-
-        # Example
-        ```python
-        scene.set_background_color("\#FFFFFF") # white background
-        ```
-    "#]
+Parameters
+----------
+background_color : tuple[int, int, int] or str
+    The background color as an RGB tuple or a hex string such as "\#FFFFFF".
+"#]
     pub fn set_background_color(&mut self, background_color: Bound<'_, PyAny>) -> PyResult<()> {
         let color = py_to_color(background_color)?;
         self.inner.set_background_color(color);
@@ -343,8 +333,8 @@ impl Scene {
     }
 
     #[doc = r#"
-        Set the background color of the scene to black.
-    "#]
+Set the background color of the scene to black.
+"#]
     pub fn use_black_background(&mut self) {
         self.inner.use_black_background();
     }
@@ -383,14 +373,16 @@ impl std::fmt::Display for RuntimeEnv {
 #[pyclass]
 #[pyo3(crate = "pyo3", unsendable)]
 #[doc = r#"
-    A viewer that renders 3D scenes in different runtime environments
-    (e.g., Jupyter, Colab, or native GUI).
+A viewer for rendering 3D scenes in different runtime environments.
 
-    The `Viewer` automatically selects a backend:
-    - Jupyter/Colab → WebAssembly canvas (inline display)
-    - Python script/terminal → native GUI window (if supported)
+Depending on the runtime environment, the viewer automatically selects an
+appropriate backend:
 
-    Use `Viewer.render(scene)` to create and display a viewer instance.
+- Jupyter or Colab uses an inline WebAssembly canvas.
+- A Python script or terminal uses a native GUI window when supported.
+
+Use ``Viewer.render(scene, width, height)`` to display a scene, or
+``Viewer.play(animation, width, height)`` to play an animation.
 "#]
 pub struct Viewer {
     environment: RuntimeEnv,
@@ -444,17 +436,14 @@ def detect_env():
 impl Viewer {
     #[staticmethod]
     #[doc = r#"
-        Get the current runtime environment.
+Get the current runtime environment.
 
-        # Returns
-        - str: One of "Jupyter", "Colab", "PlainScript", or "IPythonTerminal".
-
-        # Example
-        ```python
-        env = Viewer.get_environment()
-        print(env) # e.g., "Jupyter"
-        ```
-    "#]
+Returns
+-------
+str
+    One of ``"Jupyter"``, ``"Colab"``, ``"PlainScript"``, or
+    ``"IPython-Terminal"``.
+"#]
     pub fn get_environment(py: Python) -> PyResult<String> {
         let env = detect_runtime_env(py)?;
         Ok(env.to_string())
@@ -462,24 +451,22 @@ impl Viewer {
 
     #[staticmethod]
     #[doc = r#"
-        Render a 3D scene.
+Render a 3D scene.
 
-        # Args
-        - scene: The scene to render.
-        - width: The viewport width in pixels (default: 800).
-        - height: The viewport height in pixels (default: 600).
+Parameters
+----------
+scene : Scene
+    The scene to render.
+width : float
+    The viewport width in pixels.
+height : float
+    The viewport height in pixels.
 
-        # Returns
-        - Viewer: The created viewer instance.
-
-        # Example
-        ```python
-        from cosmol_viewer import Viewer, Scene, Sphere
-        scene = Scene()
-        scene.add_shape(Sphere([0, 0, 0], 1.0))
-        viewer = Viewer.render(scene)
-        ```
-    "#]
+Returns
+-------
+Viewer
+    The created viewer instance.
+"#]
     pub fn render(scene: &Scene, width: f32, height: f32, py: Python) -> PyResult<Self> {
         let env_type = detect_runtime_env(py)?;
         match env_type {
@@ -518,24 +505,22 @@ impl Viewer {
 
     #[staticmethod]
     #[doc = r#"
-        Play an animation.
+Play an animation.
 
-        # Args
-        - animation: An Animation object containing frames and settings.
-        - width: The viewport width in pixels.
-        - height: The viewport height in pixels.
+Parameters
+----------
+animation : Animation
+    An animation object containing frames and playback settings.
+width : float
+    The viewport width in pixels.
+height : float
+    The viewport height in pixels.
 
-        # Returns
-        - Viewer: The created viewer instance playing the animation.
-
-        # Example
-        ```python
-        from cosmol_viewer import Viewer, Animation
-        anim = Animation(0.1, 10, True)
-        # ... add frames to anim ...
-        viewer = Viewer.play(anim, 800.0, 600.0)
-        ```
-    "#]
+Returns
+-------
+Viewer
+    The created viewer instance playing the animation.
+"#]
     pub fn play(animation: Animation, width: f32, height: f32, py: Python) -> PyResult<Self> {
         if animation.inner.frames.is_empty() {
             return Err(PyErr::new::<PyRuntimeError, _>("No frames provided"));
@@ -574,20 +559,18 @@ impl Viewer {
     }
 
     #[doc = r#"
-        Update the viewer with a new scene.
-        Works for both Web-based rendering (Jupyter/Colab) and native GUI windows.
+Update the viewer with a new scene.
 
-        ⚠️ Note (Jupyter/Colab): Animation updates may be limited by notebook rendering capacity.
+Parameters
+----------
+scene : Scene
+    The updated scene.
 
-        # Args
-        - scene: The updated scene.
-
-        # Example
-        ```python
-        scene.add_shape(Sphere([1, 1, 1], 0.5))
-        viewer.update(scene)
-        ```
-    "#]
+Notes
+-----
+In Jupyter or Colab, frequent animation updates may be limited by notebook
+rendering capacity, which can lead to delayed or incomplete rendering.
+"#]
     pub fn update(&mut self, scene: &Scene, py: Python) -> PyResult<()> {
         let env_type = self.environment;
         match env_type {
@@ -624,16 +607,13 @@ impl Viewer {
     }
 
     #[doc = r#"
-        Save the current image to a file.
+Save the current image to a file.
 
-        # Args
-        - path: File path for the saved image.
-
-        # Example
-        ```python
-        viewer.save_image("output.png")
-        ```
-    "#]
+Parameters
+----------
+path : str
+    The file path where the image will be saved.
+"#]
     pub fn save_image(&self, path: &str, py: Python) -> PyResult<()> {
         use std::fs;
         let env_type = self.environment;
@@ -654,20 +634,6 @@ impl Viewer {
                 }
             }
             RuntimeEnv::Jupyter => {
-                // test code
-                // if let Some(ref wasm_viewer) = self.wasm_viewer {
-                //     let img_buf_vec = wasm_viewer.take_screenshot_jupyter(py)?;
-                //     if let Err(e) = fs::write(path, &img_buf_vec) {
-                //         return Err(PyErr::new::<PyRuntimeError, _>(format!(
-                //             "Error saving image: {}",
-                //             e
-                //         )));
-                //     }
-                // } else {
-                //     return Err(PyErr::new::<PyRuntimeError, _>(
-                //         "Viewer is not initialized properly",
-                //     ));
-                // }
                 print_to_notebook(
                     c_str!(
                         r###"print("\033[33m⚠️ Image saving in Jupyter is not yet fully supported.\033[0m")"###

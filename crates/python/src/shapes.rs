@@ -12,16 +12,21 @@ use pyo3_stub_gen::inventory::submit;
 #[pyclass(name = "Sphere", from_py_object)]
 #[derive(Clone)]
 #[doc = r#"
-    A sphere shape in the scene.
+A sphere shape in the scene.
 
-    # Args
-    - center: [x, y, z] coordinates of the sphere center.
-    - radius: Radius of the sphere.
+Parameters
+----------
+center : [float, float, float]
+    The ``[x, y, z]`` coordinates of the sphere center.
+radius : float
+    The radius of the sphere.
 
-    # Example
-    ```python
-    sphere = Sphere([0, 0, 0], 1.0).color([1.0, 0.0, 0.0])
-    ```
+Examples
+--------
+.. code-block:: python
+
+    sphere = Sphere([0, 0, 0], 1.0).color("\#FF0000")
+    sphere = Sphere([0, 0, 0], 1.0).color((255, 0, 0))
 "#]
 pub struct PySphere {
     pub inner: Sphere,
@@ -39,11 +44,37 @@ impl PySphere {
         }
     }
 
+    #[doc = r#"
+Set the radius of the sphere.
+
+Parameters
+----------
+radius : float
+    The new radius of the sphere.
+
+Returns
+-------
+Sphere
+    The updated sphere object.
+"#]
     pub fn set_radius(mut slf: PyRefMut<'_, Self>, radius: f32) -> PyRefMut<'_, Self> {
         slf.inner = slf.inner.set_radius(radius);
         slf
     }
 
+    #[doc = r#"
+Set the center of the sphere.
+
+Parameters
+----------
+center : [float, float, float]
+    The new center coordinates of the sphere.
+
+Returns
+-------
+Sphere
+    The updated sphere object.
+"#]
     pub fn set_center(mut slf: PyRefMut<'_, Self>, center: [f32; 3]) -> PyRefMut<'_, Self> {
         slf.inner = slf.inner.set_center(center);
         slf
@@ -56,17 +87,22 @@ impl_stylable_pymethods!(PySphere, Sphere);
 #[pyclass(name = "Stick", from_py_object)]
 #[derive(Clone)]
 #[doc = r#"
-    A cylindrical stick (or capsule) connecting two points.
+A cylindrical stick shape connecting two points.
 
-    # Args
-    - start: Starting point [x, y, z].
-    - end: Ending point [x, y, z].
-    - thickness: Stick radius.
+Parameters
+----------
+start : [float, float, float]
+    The starting point of the stick.
+end : [float, float, float]
+    The ending point of the stick.
+thickness : float
+    The radius or thickness of the stick.
 
-    # Example
-    ```python
-    stick = Stick([0,0,0], [1,1,1], 0.1).opacity(0.5)
-    ```
+Examples
+--------
+.. code-block:: python
+
+    stick = Stick([0, 0, 0], [1, 1, 1], 0.1).opacity(0.5)
 "#]
 pub struct PyStick {
     pub inner: Stick,
@@ -84,16 +120,55 @@ impl PyStick {
         }
     }
 
+    #[doc = r#"
+Set the thickness of the stick.
+
+Parameters
+----------
+thickness : float
+    The new thickness of the stick.
+
+Returns
+-------
+Stick
+    The updated stick object.
+"#]
     pub fn set_thickness(mut slf: PyRefMut<'_, Self>, thickness: f32) -> PyRefMut<'_, Self> {
         slf.inner = slf.inner.set_thickness(thickness);
         slf
     }
 
+    #[doc = r#"
+Set the starting point of the stick.
+
+Parameters
+----------
+start : [float, float, float]
+    The new starting point.
+
+Returns
+-------
+Stick
+    The updated stick object.
+"#]
     pub fn set_start(mut slf: PyRefMut<'_, Self>, start: [f32; 3]) -> PyRefMut<'_, Self> {
         slf.inner = slf.inner.set_start(start);
         slf
     }
 
+    #[doc = r#"
+Set the ending point of the stick.
+
+Parameters
+----------
+end : [float, float, float]
+    The new ending point.
+
+Returns
+-------
+Stick
+    The updated stick object.
+"#]
     pub fn set_end(mut slf: PyRefMut<'_, Self>, end: [f32; 3]) -> PyRefMut<'_, Self> {
         slf.inner = slf.inner.set_end(end);
         slf
@@ -106,15 +181,16 @@ impl_stylable_pymethods!(PyStick, Stick);
 #[pyclass(name = "Molecule", from_py_object)]
 #[derive(Clone)]
 #[doc = r#"
-    A molecular shape object.
-    Typically created by parsing an SDF format string.
+A molecular shape object.
 
-    # Example
-    ```python
-    # Load from file content
+This class is typically created by parsing an SDF-format string.
+
+Examples
+--------
+.. code-block:: python
+
     content = open("structure.sdf", "r").read()
     mol = Molecule.from_sdf(content).centered()
-    ```
 "#]
 pub struct PyMolecule {
     pub inner: Molecule,
@@ -127,14 +203,18 @@ gen_color_methods_submission!(PyMolecule, Molecule);
 impl PyMolecule {
     #[staticmethod]
     #[doc = r#"
-        Create a Molecule from an SDF format string.
+Create a molecule from an SDF-format string.
 
-        # Args
-        - sdf: The SDF file content as a string.
+Parameters
+----------
+sdf : str
+    The SDF file content as a string.
 
-        # Returns
-        - Molecule: The parsed molecule object.
-    "#]
+Returns
+-------
+Molecule
+    The parsed molecule object.
+"#]
     pub fn from_sdf(sdf: &str) -> PyResult<Self> {
         Ok(Self {
             inner: Molecule::from_sdf(sdf)
@@ -142,10 +222,26 @@ impl PyMolecule {
         })
     }
 
+    #[doc = r#"
+Get the geometric center of the molecule.
+
+Returns
+-------
+[float, float, float]
+    The center coordinates of the molecule.
+"#]
     pub fn get_center(slf: PyRefMut<'_, Self>) -> [f32; 3] {
         slf.inner.clone().get_center()
     }
 
+    #[doc = r#"
+Center the molecule around the origin.
+
+Returns
+-------
+Molecule
+    The centered molecule object.
+"#]
     pub fn centered(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
         slf.inner = slf.inner.clone().centered();
         slf
@@ -158,15 +254,16 @@ impl_stylable_pymethods!(PyMolecule, Molecule);
 #[pyclass(name = "Protein", from_py_object)]
 #[derive(Clone)]
 #[doc = r#"
-    A protein shape object.
-    Typically created by parsing an mmCIF format string.
+A protein shape object.
 
-    # Example
-    ```python
-    # Load from file content
-    content = open("2AMD.cif", "r").read()
+This class is typically created by parsing an mmCIF-format string.
+
+Examples
+--------
+.. code-block:: python
+
+    content = open("2AMD.cif", "r", encoding="utf-8").read()
     prot = Protein.from_mmcif(content).centered().color("\#F9FAFB")
-    ```
 "#]
 pub struct PyProtein {
     pub inner: Protein,
@@ -179,14 +276,18 @@ gen_color_methods_submission!(PyProtein, Protein);
 impl PyProtein {
     #[staticmethod]
     #[doc = r#"
-        Create a Protein from an mmCIF format string.
+Create a protein from an mmCIF-format string.
 
-        # Args
-        - mmcif: The mmCIF file content as a string.
+Parameters
+----------
+mmcif : str
+    The mmCIF file content as a string.
 
-        # Returns
-        - Protein: The parsed protein object.
-    "#]
+Returns
+-------
+Protein
+    The parsed protein object.
+"#]
     pub fn from_mmcif(mmcif: &str) -> PyResult<Self> {
         Ok(Self {
             inner: Protein::from_mmcif(mmcif)
@@ -194,10 +295,26 @@ impl PyProtein {
         })
     }
 
+    #[doc = r#"
+Get the geometric center of the protein.
+
+Returns
+-------
+[float, float, float]
+    The center coordinates of the protein.
+"#]
     pub fn get_center(slf: PyRefMut<'_, Self>) -> [f32; 3] {
         slf.inner.clone().get_center()
     }
 
+    #[doc = r#"
+Center the protein around the origin.
+
+Returns
+-------
+Protein
+    The centered protein object.
+"#]
     pub fn centered(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
         slf.inner = slf.inner.clone().centered();
         slf

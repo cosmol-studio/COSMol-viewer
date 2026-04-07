@@ -1,5 +1,3 @@
-use pyo3_stub_gen::inventory::submit;
-
 #[macro_export]
 macro_rules! impl_stylable_pymethods {
     ($pyclass:ident, $return_ty:ident) => {
