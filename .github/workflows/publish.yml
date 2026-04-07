@@ -23,32 +23,32 @@ jobs:
           toolchain: stable
           override: true
           target: wasm32-unknown-unknown
+      - name: Install Python dev
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-dev
       - uses: cargo-bins/cargo-binstall@main
       - name: Build wasm module
         run: |
           cargo binstall -y wasm-pack --force
           wasm-pack build ./crates/wasm --target web --out-dir ./pkg --release
         if: ${{ startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
-      - uses: actions/setup-node@v6
-        with:
-          node-version: "24"
-          registry-url: "https://registry.npmjs.org"
-      - run: |
-          cd ./crates/wasm/pkg
-          npm publish
+      # - uses: actions/setup-node@v6
+      #   with:
+      #     node-version: "24"
+      #     registry-url: "https://registry.npmjs.org"
+      # - run: |
+      #     cd ./crates/wasm/pkg
+      #     npm publish
       - name: build pyi
         working-directory: crates/python
         run: |
-          cargo run --bin stub_gen
+          cargo run --bin stub_gen --no-default-features --features stubgen
       - name: Upload wasm pkg
         uses: actions/upload-artifact@v4
         with:
           name: wasm-pkg
           path: ./crates/wasm/pkg
-      - name: build pyi
-        working-directory: crates/python
-        run: |
-          cargo run --bin stub_gen
       - name: Upload cosmol_viewer.pyi
         uses: actions/upload-artifact@v4
         with:

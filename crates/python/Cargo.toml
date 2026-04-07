@@ -19,6 +19,8 @@ name = "cosmol_viewer"
 crate-type = ["cdylib", "rlib"]
 
 [features]
-default = []
+default = ["extension-module"]
+extension-module = ["pyo3/extension-module", "pyo3/abi3-py310"]
+stubgen = []
 wayland = ["cosmol_viewer_core/wayland"]
 x11 = ["cosmol_viewer_core/x11"]

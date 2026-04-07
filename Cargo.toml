@@ -20,8 +20,7 @@ members = [
 [workspace.dependencies]
 cosmol_viewer = { version = "0.2.11", path = "cosmol_viewer"}
 cosmol_viewer_core = { version = "0.2.11", path = "crates/core" }
-
-pyo3 = { version = "0.28.3", features = ["extension-module", "abi3-py310","multiple-pymethods"] }
+pyo3 = { version = "0.28.3", default-features = false, features = ["multiple-pymethods"] }
 eframe = { version = "0.34.1", features = ["wayland","x11","glow"], default-features = false }
 egui-winit = { version = "0.34.1", features = ["wayland","x11"], default-features = false }
 egui_extras = { version = "0.34.1", default-features = false }
