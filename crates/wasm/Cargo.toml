@@ -3,6 +3,8 @@ name = "cosmol_viewer_wasm"
 version.workspace = true
 edition.workspace = true
 description.workspace = true
+repository.workspace = true
+homepage.workspace = true
 publish = false
 
 [dependencies]
