@@ -13,10 +13,12 @@ in vec3 a_normal;
 in vec3 i_position;  // sphere center
 in float i_radius;   // sphere radius
 in vec4 i_color;     // sphere color
+in vec2 i_material;
 
 out vec3 v_normal;
 out vec3 v_frag_pos;
 out vec4 v_color;
+out vec2 v_material;
 
 void main() {
     // 1️⃣ 顶点缩放 + 平移到实例中心
@@ -31,6 +33,7 @@ void main() {
 
     // 4️⃣ 输出颜色
     v_color = i_color;
+    v_material = i_material;
 
     // 5️⃣ 投影
     gl_Position = u_projection * u_view * world_pos;

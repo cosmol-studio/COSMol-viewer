@@ -1,7 +1,8 @@
 use crate::parser::dssp::SecondaryStructureCalculator;
 use crate::parser::utils::ResidueType;
 use crate::parser::utils::{
-    AtomGeneric, ChainGeneric, Residue, ResidueEnd, ResidueGeneric, SecondaryStructure,
+    AtomGeneric, ChainGeneric, Residue, ResidueEnd, ResidueGeneric, RibbonResidueInfo,
+    SecondaryStructure,
 };
 pub use crate::utils::{Logger, RustLogger};
 use glam::Vec3;
@@ -381,21 +382,34 @@ pub struct Chain {
     ss_cache: Option<Vec<SecondaryStructure>>,
     #[serde(skip)]
     ss: OnceCell<Vec<SecondaryStructure>>,
+    ribbon_cache: Option<Vec<RibbonResidueInfo>>,
+    #[serde(skip)]
+    ribbon: OnceCell<Vec<RibbonResidueInfo>>,
 }
 
 impl Chain {
     pub fn init_ss(&mut self) {
         let calculator = SecondaryStructureCalculator::new();
-        self.ss_cache = Some(calculator.compute_secondary_structure(&self.residues));
+        let ribbon = calculator.compute_ribbon_info(&self.residues);
+        self.ss_cache = Some(ribbon.iter().map(|info| info.ss).collect());
+        self.ribbon_cache = Some(ribbon);
     }
 
     pub fn get_ss(&self) -> &Vec<SecondaryStructure> {
         if let Some(cache) = self.ss_cache.as_ref() {
             return &cache;
         }
-        self.ss.get_or_init(|| {
+        self.ss
+            .get_or_init(|| self.get_ribbon_info().iter().map(|info| info.ss).collect())
+    }
+
+    pub fn get_ribbon_info(&self) -> &Vec<RibbonResidueInfo> {
+        if let Some(cache) = self.ribbon_cache.as_ref() {
+            return cache;
+        }
+        self.ribbon.get_or_init(|| {
             let calculator = SecondaryStructureCalculator::new();
-            calculator.compute_secondary_structure(&self.residues)
+            calculator.compute_ribbon_info(&self.residues)
         })
     }
 
@@ -404,6 +418,8 @@ impl Chain {
             id,
             residues,
             ss_cache: None,
+            ribbon_cache: None,
+            ribbon: OnceCell::new(),
             ss: OnceCell::new(), // 初始化私有缓存
         }
     }

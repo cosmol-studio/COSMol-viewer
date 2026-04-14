@@ -337,6 +337,23 @@ pub enum SecondaryStructure {
     Turn,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RibbonResidueInfo {
+    pub ss: SecondaryStructure,
+    pub helix_id: Option<usize>,
+    pub sheet_id: Option<usize>,
+}
+
+impl Default for RibbonResidueInfo {
+    fn default() -> Self {
+        Self {
+            ss: SecondaryStructure::Coil,
+            helix_id: None,
+            sheet_id: None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum PharmacophoreType {
     Acceptor,

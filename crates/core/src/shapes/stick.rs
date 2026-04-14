@@ -106,6 +106,7 @@ impl Stick {
         let mut normals = Vec::new();
         let mut indices = Vec::new();
         let mut colors = Vec::new();
+        let mut material_params = Vec::new();
 
         let segments = 10 * self.quality;
         let r = self.thickness_radius;
@@ -118,16 +119,19 @@ impl Stick {
         let base_color = self.style.color.unwrap_or([1.0, 1.0, 1.0].into());
         let alpha = self.style.opacity.clamp(0.0, 1.0);
         let color = Vec4::new(base_color[0], base_color[1], base_color[2], alpha);
+        let material = [self.style.roughness, self.style.metallic];
 
         build_cylinder_body(
             segments,
             r,
             height,
             color,
+            material,
             &mut vertices,
             &mut normals,
             &mut indices,
             &mut colors,
+            &mut material_params,
         );
 
         let cap = self.stick_cap;
@@ -141,10 +145,12 @@ impl Stick {
                     segments,
                     r,
                     color,
+                    material,
                     &mut vertices,
                     &mut normals,
                     &mut indices,
                     &mut colors,
+                    &mut material_params,
                 );
                 build_flat_cap(
                     height,
@@ -152,10 +158,12 @@ impl Stick {
                     segments,
                     r,
                     color,
+                    material,
                     &mut vertices,
                     &mut normals,
                     &mut indices,
                     &mut colors,
+                    &mut material_params,
                 );
             }
             StickCap::Round => {
@@ -166,10 +174,12 @@ impl Stick {
                     self.quality,
                     r,
                     color,
+                    material,
                     &mut vertices,
                     &mut normals,
                     &mut indices,
                     &mut colors,
+                    &mut material_params,
                 );
                 build_round_cap(
                     height,
@@ -178,10 +188,12 @@ impl Stick {
                     self.quality,
                     r,
                     color,
+                    material,
                     &mut vertices,
                     &mut normals,
                     &mut indices,
                     &mut colors,
+                    &mut material_params,
                 );
             }
         }
@@ -201,6 +213,7 @@ impl Stick {
             normals,
             indices,
             colors: Some(colors),
+            material_params: Some(material_params),
             transform: None,
             is_wireframe: self.style.wireframe,
         }
@@ -231,12 +244,14 @@ impl Stick {
         let base_color = self.style.color.unwrap_or([1.0, 1.0, 1.0].into());
         let alpha = self.style.opacity.clamp(0.0, 1.0);
         let color = [base_color[0], base_color[1], base_color[2], alpha];
+        let material = [self.style.roughness, self.style.metallic];
 
         StickInstance {
             start: self.start.map(|x| x * scale),
             end: self.end.map(|x| x * scale),
             radius: self.thickness_radius * scale,
             color,
+            material,
         }
     }
 }
@@ -266,10 +281,12 @@ fn build_cylinder_body(
     r: f32,
     height: f32,
     color: Vec4,
+    material: [f32; 2],
     vertices: &mut Vec<Vec3>,
     normals: &mut Vec<Vec3>,
     indices: &mut Vec<u32>,
     colors: &mut Vec<Vec4>,
+    material_params: &mut Vec<[f32; 2]>,
 ) {
     let base = vertices.len() as u32;
 
@@ -283,10 +300,12 @@ fn build_cylinder_body(
         vertices.push(Vec3::new(x, y, 0.0));
         normals.push(Vec3::new(cos, sin, 0.0));
         colors.push(color);
+        material_params.push(material);
 
         vertices.push(Vec3::new(x, y, height));
         normals.push(Vec3::new(cos, sin, 0.0));
         colors.push(color);
+        material_params.push(material);
     }
 
     for i in 0..segments {
@@ -302,16 +321,19 @@ fn build_flat_cap(
     segments: u32,
     r: f32,
     color: Vec4,
+    material: [f32; 2],
     vertices: &mut Vec<Vec3>,
     normals: &mut Vec<Vec3>,
     indices: &mut Vec<u32>,
     colors: &mut Vec<Vec4>,
+    material_params: &mut Vec<[f32; 2]>,
 ) {
     let center_idx = vertices.len() as u32;
 
     vertices.push(Vec3::new(0.0, 0.0, z));
     normals.push(normal);
     colors.push(color);
+    material_params.push(material);
 
     for i in 0..=segments {
         let theta = i as f32 / segments as f32 * std::f32::consts::TAU;
@@ -320,6 +342,7 @@ fn build_flat_cap(
         vertices.push(Vec3::new(cos * r, sin * r, z));
         normals.push(normal);
         colors.push(color);
+        material_params.push(material);
     }
 
     for i in 0..segments {
@@ -334,10 +357,12 @@ fn build_round_cap(
     rings: u32,
     r: f32,
     color: Vec4,
+    material: [f32; 2],
     vertices: &mut Vec<Vec3>,
     normals: &mut Vec<Vec3>,
     indices: &mut Vec<u32>,
     colors: &mut Vec<Vec4>,
+    material_params: &mut Vec<[f32; 2]>,
 ) {
     let base = vertices.len() as u32;
 
@@ -362,6 +387,7 @@ fn build_round_cap(
             vertices.push(Vec3::new(cos * ring_r, sin * ring_r, z));
             normals.push(Vec3::new(nx, ny, nz));
             colors.push(color);
+            material_params.push(material);
         }
     }
 
@@ -391,15 +417,23 @@ pub struct StickInstance {
     pub end: [f32; 3],
     pub radius: f32,
     pub color: [f32; 4],
+    pub material: [f32; 2],
 }
 
 impl StickInstance {
-    pub fn new(start: [f32; 3], end: [f32; 3], radius: f32, color: [f32; 4]) -> Self {
+    pub fn new(
+        start: [f32; 3],
+        end: [f32; 3],
+        radius: f32,
+        color: [f32; 4],
+        material: [f32; 2],
+    ) -> Self {
         Self {
             start,
             end,
             radius,
             color,
+            material,
         }
     }
 }

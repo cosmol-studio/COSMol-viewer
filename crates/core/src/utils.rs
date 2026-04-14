@@ -24,15 +24,27 @@ impl Logger for RustLogger {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default, Copy)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 pub struct Material {
     pub color: Option<Vec3>,
     pub opacity: f32,
     pub visible: bool,
-    pub alpha: f32,
     pub roughness: f32,
     pub metallic: f32,
     pub wireframe: bool,
+}
+
+impl Default for Material {
+    fn default() -> Self {
+        Self {
+            color: None,
+            opacity: 1.0,
+            visible: true,
+            roughness: 0.65,
+            metallic: 0.0,
+            wireframe: false,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, Copy)]
@@ -86,7 +98,7 @@ impl Interpolatable for Shape {
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct InstanceGroups {
     pub spheres: Vec<SphereInstance>,
     pub sticks: Vec<StickInstance>,
@@ -143,6 +155,7 @@ pub struct MeshData {
     pub normals: Vec<Vec3>,
     pub indices: Vec<u32>,
     pub colors: Option<Vec<Vec4>>,
+    pub material_params: Option<Vec<[f32; 2]>>,
     pub transform: Option<Mat4>, // 可选位移旋转缩放
     pub is_wireframe: bool,
 }
@@ -165,6 +178,14 @@ impl MeshData {
             }
         } else if let Some(ref other_colors) = other.colors {
             self.colors = Some(other_colors.clone());
+        }
+
+        if let Some(ref mut my_params) = self.material_params {
+            if let Some(ref other_params) = other.material_params {
+                my_params.extend(other_params.iter().copied());
+            }
+        } else if let Some(ref other_params) = other.material_params {
+            self.material_params = Some(other_params.clone());
         }
 
         // append indices with offset
@@ -233,6 +254,9 @@ pub trait Stylable {
     where
         Self: Sized,
     {
+        if !(0.0..=1.0).contains(&roughness) {
+            panic!("roughness must be between 0.0 and 1.0, got {}", roughness);
+        }
         self.style_mut().roughness = roughness;
         self
     }
@@ -240,6 +264,9 @@ pub trait Stylable {
     where
         Self: Sized,
     {
+        if !(0.0..=1.0).contains(&metallic) {
+            panic!("metallic must be between 0.0 and 1.0, got {}", metallic);
+        }
         self.style_mut().metallic = metallic;
         self
     }

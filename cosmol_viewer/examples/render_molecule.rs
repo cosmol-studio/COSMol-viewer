@@ -1,4 +1,4 @@
-use cosmol_viewer::{Scene, Viewer, shapes::Molecule};
+use cosmol_viewer::{Scene, Viewer, shapes::Molecule, utils::Stylable};
 use std::path::Path;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

@@ -8,10 +8,12 @@ uniform mat3 u_normal_matrix;
 in vec3 a_position;
 in vec3 a_normal;
 in vec4 a_color;
+in vec2 a_material;
 
 out vec3 v_normal;
 out vec3 v_frag_pos;
 out vec4 v_color;
+out vec2 v_material;
 
 void main() {
     // 1. 模型空间 -> 世界空间
@@ -26,4 +28,5 @@ void main() {
 
     // 4. 传颜色
     v_color = a_color;
+    v_material = a_material;
 }

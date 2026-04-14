@@ -10,7 +10,7 @@
 // Kabsch & Sander, Biopolymers 22:2577-2637 (1983)
 // https://doi.org/10.1002/bip.360221211
 
-use crate::parser::utils::{Residue, SecondaryStructure};
+use crate::parser::utils::{Residue, RibbonResidueInfo, SecondaryStructure};
 use glam::Vec3;
 use kiddo::{KdTree, SquaredEuclidean};
 use na_seq::AminoAcid;
@@ -40,6 +40,15 @@ pub struct HydrogenBond {
     pub donor_idx: usize,
     pub acceptor_idx: usize,
     pub energy: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct BetaLadder {
+    start1: usize,
+    end1: usize,
+    start2: usize,
+    end2: usize,
+    is_parallel: bool,
 }
 
 // 二级结构计算器
@@ -78,8 +87,15 @@ impl SecondaryStructureCalculator {
 
     /// 计算一条链的二级结构
     pub fn compute_secondary_structure(&self, residues: &[Residue]) -> Vec<SecondaryStructure> {
+        self.compute_ribbon_info(residues)
+            .into_iter()
+            .map(|info| info.ss)
+            .collect()
+    }
+
+    pub fn compute_ribbon_info(&self, residues: &[Residue]) -> Vec<RibbonResidueInfo> {
         if residues.len() < 2 {
-            return vec![SecondaryStructure::Coil; residues.len()];
+            return vec![RibbonResidueInfo::default(); residues.len()];
         }
 
         // 关键：先补氢
@@ -101,9 +117,12 @@ impl SecondaryStructureCalculator {
 
         let mut helices = self.collect_helix_regions(&flags, n_res);
         SecondaryStructureCalculator::extend_helix_ends(&mut helices, &flags, n_res);
+        let ladders = self.find_ladders(&hbonds, n_res);
+        let strand_groups = self.group_sheet_ranges(&ladders);
+        return self.assign_ribbon_info(n_res, &helices, &strand_groups, &mut flags); /*
         let strands = self.find_strands(&hbonds, n_res); // 也用 matrix 版
 
-        self.assign_ss_labels(n_res, &helices, &strands, &mut flags)
+        */
     }
 
     /// 补全缺失的亚氨基氢原子
@@ -487,6 +506,221 @@ impl SecondaryStructureCalculator {
     // Beta-bulge 合并（100% 对应原版 merge_bulge）
     // ladder = (start1, end1, start2, end2, is_parallel)
     // ──────────────────────────────────────────────────────────────
+    fn find_ladders(&self, hbonds: &HBondMatrix, n_res: usize) -> Vec<BetaLadder> {
+        let bridge_type: Vec<Vec<AtomicU8>> = (0..n_res)
+            .map(|_| (0..n_res).map(|_| AtomicU8::new(0)).collect())
+            .collect();
+
+        (0..n_res).into_par_iter().for_each(|i| {
+            for j in (i + 2)..n_res {
+                let mut is_parallel = false;
+
+                if i > 0
+                    && i + 1 < n_res
+                    && hbonds[j][i - 1].load(Ordering::Relaxed)
+                    && hbonds[i + 1][j].load(Ordering::Relaxed)
+                {
+                    is_parallel = true;
+                }
+
+                if j > 0
+                    && j + 1 < n_res
+                    && hbonds[i][j - 1].load(Ordering::Relaxed)
+                    && hbonds[j + 1][i].load(Ordering::Relaxed)
+                {
+                    is_parallel = true;
+                }
+
+                let mut is_antiparallel = false;
+                if hbonds[i][j].load(Ordering::Relaxed) && hbonds[j][i].load(Ordering::Relaxed) {
+                    is_antiparallel = true;
+                }
+                if i > 0
+                    && j > 0
+                    && i + 1 < n_res
+                    && j + 1 < n_res
+                    && hbonds[i + 1][j - 1].load(Ordering::Relaxed)
+                    && hbonds[j + 1][i - 1].load(Ordering::Relaxed)
+                {
+                    is_antiparallel = true;
+                }
+
+                if is_parallel {
+                    bridge_type[i][j].store(1, Ordering::Relaxed);
+                }
+                if is_antiparallel {
+                    bridge_type[i][j].store(2, Ordering::Relaxed);
+                }
+            }
+        });
+
+        let mut ladders = Vec::new();
+        for i in 0..n_res {
+            for j in (i + 2)..n_res {
+                match bridge_type[i][j].load(Ordering::Relaxed) {
+                    1 => {
+                        let mut k = 0;
+                        while i + k < n_res
+                            && j + k < n_res
+                            && bridge_type[i + k][j + k].load(Ordering::Relaxed) == 1
+                        {
+                            bridge_type[i + k][j + k].store(0, Ordering::Relaxed);
+                            k += 1;
+                        }
+                        if k >= self.min_strand_length {
+                            ladders.push(BetaLadder {
+                                start1: i,
+                                end1: i + k - 1,
+                                start2: j,
+                                end2: j + k - 1,
+                                is_parallel: true,
+                            });
+                        }
+                    }
+                    2 => {
+                        let mut k = 0;
+                        while i + k < n_res
+                            && j >= k
+                            && bridge_type[i + k][j - k].load(Ordering::Relaxed) == 2
+                        {
+                            bridge_type[i + k][j - k].store(0, Ordering::Relaxed);
+                            k += 1;
+                        }
+                        if k >= self.min_strand_length {
+                            ladders.push(BetaLadder {
+                                start1: i,
+                                end1: i + k - 1,
+                                start2: j - k + 1,
+                                end2: j,
+                                is_parallel: false,
+                            });
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        let mut changed = true;
+        while changed {
+            changed = false;
+            let mut idx = 0;
+            while idx + 1 < ladders.len() {
+                let l1 = ladders[idx];
+                let mut jdx = idx + 1;
+                while jdx < ladders.len() {
+                    if let Some(merged) = self.merge_bulge_beta_ladders(l1, ladders[jdx]) {
+                        ladders[idx] = merged;
+                        ladders.remove(jdx);
+                        changed = true;
+                    } else {
+                        jdx += 1;
+                    }
+                }
+                idx += 1;
+            }
+        }
+
+        ladders.retain(|ladder| {
+            (ladder.end1 - ladder.start1 + 1) >= self.min_strand_length
+                && (ladder.end2 - ladder.start2 + 1) >= self.min_strand_length
+        });
+
+        ladders
+    }
+
+    fn collect_strand_ranges(&self, ladders: &[BetaLadder]) -> Vec<(usize, usize)> {
+        let mut res_ranges: Vec<(usize, usize)> = Vec::new();
+        for ladder in ladders {
+            res_ranges.push((ladder.start1, ladder.end1));
+            res_ranges.push((ladder.start2, ladder.end2));
+        }
+        res_ranges.sort();
+
+        let mut merged: Vec<(usize, usize)> = Vec::new();
+        for (start, end) in res_ranges {
+            if let Some(last) = merged.last_mut()
+                && start <= last.1 + 1
+            {
+                last.1 = last.1.max(end);
+            } else {
+                merged.push((start, end));
+            }
+        }
+
+        merged
+    }
+
+    fn group_sheet_ranges(&self, ladders: &[BetaLadder]) -> Vec<Vec<(usize, usize)>> {
+        if ladders.is_empty() {
+            return Vec::new();
+        }
+
+        let mut groups: Vec<Vec<usize>> = Vec::new();
+        let mut visited = vec![false; ladders.len()];
+
+        for root in 0..ladders.len() {
+            if visited[root] {
+                continue;
+            }
+
+            let mut stack = vec![root];
+            let mut group = Vec::new();
+            visited[root] = true;
+
+            while let Some(curr) = stack.pop() {
+                group.push(curr);
+                for next in 0..ladders.len() {
+                    if !visited[next] && ladders_share_sheet(ladders[curr], ladders[next]) {
+                        visited[next] = true;
+                        stack.push(next);
+                    }
+                }
+            }
+
+            groups.push(group);
+        }
+
+        groups
+            .into_iter()
+            .map(|group| {
+                let mut ranges = Vec::new();
+                for ladder_idx in group {
+                    let ladder = ladders[ladder_idx];
+                    ranges.push((ladder.start1, ladder.end1));
+                    ranges.push((ladder.start2, ladder.end2));
+                }
+                ranges.sort();
+
+                let mut merged: Vec<(usize, usize)> = Vec::new();
+                for (start, end) in ranges {
+                    if let Some(last) = merged.last_mut()
+                        && start <= last.1 + 1
+                    {
+                        last.1 = last.1.max(end);
+                    } else {
+                        merged.push((start, end));
+                    }
+                }
+                merged
+            })
+            .collect()
+    }
+
+    fn merge_bulge_beta_ladders(&self, l1: BetaLadder, l2: BetaLadder) -> Option<BetaLadder> {
+        self.merge_bulge_ladders(
+            (l1.start1, l1.end1, l1.start2, l1.end2, l1.is_parallel),
+            (l2.start1, l2.end1, l2.start2, l2.end2, l2.is_parallel),
+        )
+        .map(|(start1, end1, start2, end2, is_parallel)| BetaLadder {
+            start1,
+            end1,
+            start2,
+            end2,
+            is_parallel,
+        })
+    }
+
     fn merge_bulge_ladders(
         &self,
         l1: (usize, usize, usize, usize, bool),
@@ -633,6 +867,75 @@ impl SecondaryStructureCalculator {
     }
 
     /// 分配二级结构标签
+    fn assign_ribbon_info(
+        &self,
+        num_residues: usize,
+        helices: &[(usize, usize)],
+        sheet_groups: &[Vec<(usize, usize)>],
+        flags: &[u32],
+    ) -> Vec<RibbonResidueInfo> {
+        let mut info = vec![RibbonResidueInfo::default(); num_residues];
+
+        for (helix_id, &(start, end)) in helices.iter().enumerate() {
+            for residue_idx in start..=end {
+                if residue_idx < num_residues {
+                    info[residue_idx].ss = SecondaryStructure::Helix;
+                    info[residue_idx].helix_id = Some(helix_id);
+                    info[residue_idx].sheet_id = None;
+                }
+            }
+        }
+
+        for (sheet_id, ranges) in sheet_groups.iter().enumerate() {
+            for &(start, end) in ranges {
+                for residue_idx in start..=end {
+                    if residue_idx < num_residues
+                        && info[residue_idx].ss == SecondaryStructure::Coil
+                    {
+                        info[residue_idx].ss = SecondaryStructure::Sheet;
+                        info[residue_idx].sheet_id = Some(sheet_id);
+                    }
+                }
+            }
+        }
+
+        self.identify_turns_info(&mut info, flags);
+        info
+    }
+
+    fn identify_turns_info(&self, info: &mut [RibbonResidueInfo], flags: &[u32]) {
+        for i in 0..info.len() {
+            if info[i].ss != SecondaryStructure::Coil {
+                continue;
+            }
+
+            let f = flags[i];
+            if (f & (Self::DSSP_3DONOR | Self::DSSP_3ACCEPTOR)) != 0
+                || (f & (Self::DSSP_4DONOR | Self::DSSP_4ACCEPTOR)) != 0
+                || (f & (Self::DSSP_5DONOR | Self::DSSP_5ACCEPTOR)) != 0
+            {
+                info[i].ss = SecondaryStructure::Turn;
+            }
+        }
+
+        let mut i = 0;
+        while i < info.len() {
+            if info[i].ss == SecondaryStructure::Coil {
+                let start = i;
+                while i < info.len() && info[i].ss == SecondaryStructure::Coil {
+                    i += 1;
+                }
+                if (2..=4).contains(&(i - start)) {
+                    for residue_idx in start..i {
+                        info[residue_idx].ss = SecondaryStructure::Turn;
+                    }
+                }
+            } else {
+                i += 1;
+            }
+        }
+    }
+
     fn assign_ss_labels(
         &self,
         num_residues: usize,
@@ -727,4 +1030,15 @@ fn dist_sq(a: Point3, b: Point3) -> f64 {
     let dy = a[1] - b[1];
     let dz = a[2] - b[2];
     dx * dx + dy * dy + dz * dz
+}
+
+fn ladders_share_sheet(a: BetaLadder, b: BetaLadder) -> bool {
+    ranges_overlap_or_touch((a.start1, a.end1), (b.start1, b.end1))
+        || ranges_overlap_or_touch((a.start1, a.end1), (b.start2, b.end2))
+        || ranges_overlap_or_touch((a.start2, a.end2), (b.start1, b.end1))
+        || ranges_overlap_or_touch((a.start2, a.end2), (b.start2, b.end2))
+}
+
+fn ranges_overlap_or_touch(a: (usize, usize), b: (usize, usize)) -> bool {
+    a.0 <= b.1.saturating_add(1) && b.0 <= a.1.saturating_add(1)
 }

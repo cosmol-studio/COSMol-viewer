@@ -441,6 +441,7 @@ impl Shader {
                     position: *pos,
                     normal: template_sphere.normals[i],
                     color: default_color.into(),
+                    material: [0.65, 0.0],
                 })
                 .collect();
 
@@ -458,6 +459,7 @@ impl Shader {
                     position: *pos,
                     normal: template_stick.normals[i],
                     color: default_color.into(),
+                    material: [0.65, 0.0],
                 })
                 .collect();
 
@@ -525,6 +527,7 @@ impl Shader {
             let pos_loc = gl.get_attrib_location(program, "a_position").unwrap();
             let normal_loc = gl.get_attrib_location(program, "a_normal").unwrap();
             let color_loc = gl.get_attrib_location(program, "a_color").unwrap();
+            let material_loc = gl.get_attrib_location(program, "a_material").unwrap();
 
             let stride_vertex_3d = std::mem::size_of::<Vertex3d>() as i32;
 
@@ -544,6 +547,16 @@ impl Shader {
             gl.enable_vertex_attrib_array(color_loc);
             gl.vertex_attrib_pointer_f32(color_loc, 4, glow::FLOAT, false, stride_vertex_3d, 6 * 4);
 
+            gl.enable_vertex_attrib_array(material_loc);
+            gl.vertex_attrib_pointer_f32(
+                material_loc,
+                2,
+                glow::FLOAT,
+                false,
+                stride_vertex_3d,
+                10 * 4,
+            );
+
             // =========================
             // 7.1 Setup VAO for instanced spheres
             // =========================
@@ -557,6 +570,9 @@ impl Shader {
                 .unwrap();
             let i_radius_loc = gl.get_attrib_location(program_sphere, "i_radius").unwrap();
             let i_color_loc = gl.get_attrib_location(program_sphere, "i_color").unwrap();
+            let i_material_loc = gl
+                .get_attrib_location(program_sphere, "i_material")
+                .unwrap();
 
             let vao_sphere = gl
                 .create_vertex_array()
@@ -611,6 +627,17 @@ impl Shader {
             );
             gl.vertex_attrib_divisor(i_color_loc, 1);
 
+            gl.enable_vertex_attrib_array(i_material_loc); // i_material
+            gl.vertex_attrib_pointer_f32(
+                i_material_loc,
+                2,
+                glow::FLOAT,
+                false,
+                stride_instance,
+                8 * 4,
+            );
+            gl.vertex_attrib_divisor(i_material_loc, 1);
+
             gl.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, Some(sphere_ebo));
             gl.bind_vertex_array(None);
 
@@ -625,6 +652,7 @@ impl Shader {
             let instance_i_end = gl.get_attrib_location(program_stick, "i_end").unwrap();
             let instance_i_radius = gl.get_attrib_location(program_stick, "i_radius").unwrap();
             let instance_i_color = gl.get_attrib_location(program_stick, "i_color").unwrap();
+            let instance_i_material = gl.get_attrib_location(program_stick, "i_material").unwrap();
 
             let vao_stick = gl
                 .create_vertex_array()
@@ -703,6 +731,17 @@ impl Shader {
             );
             gl.vertex_attrib_divisor(instance_i_color, 1);
 
+            gl.enable_vertex_attrib_array(instance_i_material); // i_material
+            gl.vertex_attrib_pointer_f32(
+                instance_i_material,
+                2,
+                glow::FLOAT,
+                false,
+                stride_instance,
+                11 * 4,
+            );
+            gl.vertex_attrib_divisor(instance_i_material, 1);
+
             gl.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, Some(stick_ebo));
             gl.bind_vertex_array(None);
 
@@ -767,6 +806,11 @@ impl Shader {
                             .as_ref()
                             .map(|x| x[i].into())
                             .unwrap_or_default(),
+                        material: mesh
+                            .material_params
+                            .as_ref()
+                            .and_then(|params| params.get(i).copied())
+                            .unwrap_or([0.65, 0.0]),
                     }
                 }));
 
@@ -832,12 +876,7 @@ impl Shader {
             gl.depth_mask(true); // ✅ 关键：恢复写入深度缓冲区
 
             // gl.enable(glow::BLEND);
-            // gl.blend_func_separate(
-            //     glow::ONE,
-            //     glow::ONE, // 颜色：累加所有透明颜色
-            //     glow::ZERO,
-            //     glow::ONE_MINUS_SRC_ALPHA, // alpha：按透明度混合
-            // );
+            // gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
 
             gl.use_program(Some(self.program));
 
@@ -1117,6 +1156,7 @@ pub struct Vertex3d {
     pub position: Vec3,
     pub normal: Vec3,
     pub color: [f32; 4],
+    pub material: [f32; 2],
 }
 
 pub struct Light {

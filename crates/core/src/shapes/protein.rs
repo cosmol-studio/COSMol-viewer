@@ -1,7 +1,9 @@
 use crate::Shape;
 use crate::parser::mmcif::Chain;
 use crate::parser::mmcif::MmCif;
-use crate::parser::utils::{Residue, ResidueType::AminoAcid, SecondaryStructure};
+use crate::parser::utils::{
+    Residue, ResidueType::AminoAcid, RibbonResidueInfo, SecondaryStructure,
+};
 use crate::utils::{Material, MeshData, Stylable};
 use bytemuck::{Pod, Zeroable};
 use glam::{Quat, Vec3, Vec4};
@@ -134,6 +136,7 @@ impl Protein {
             style: Material {
                 opacity: 1.0,
                 visible: true,
+                roughness: 0.7,
                 ..Default::default()
             },
         })
@@ -209,164 +212,450 @@ impl Protein {
         path
     }
 
+    fn estimate_tangents(&self, positions: &[Vec3]) -> Vec<Vec3> {
+        let n = positions.len();
+        let mut tangents = Vec::with_capacity(n);
+        for i in 0..n {
+            let prev = if i > 0 {
+                positions[i - 1]
+            } else {
+                positions[i]
+            };
+            let next = if i + 1 < n {
+                positions[i + 1]
+            } else {
+                positions[i]
+            };
+            tangents.push((next - prev).normalize_or_zero());
+        }
+        tangents
+    }
+
+    fn default_face_normal(&self, residue: &Residue, tangent: Vec3) -> Vec3 {
+        let mut face = project_perpendicular(residue.o - residue.c, tangent);
+        if face.length_squared() <= 1e-6 {
+            face = project_perpendicular(residue.o - residue.ca, tangent);
+        }
+        if face.length_squared() <= 1e-6 {
+            face = fallback_face_normal(tangent);
+        }
+        face.normalize_or_zero()
+    }
+
+    fn apply_helix_face_normals(
+        &self,
+        face_normals: &mut [Vec3],
+        ca_positions: &[Vec3],
+        ribbon_info: &[RibbonResidueInfo],
+        residue_tangents: &[Vec3],
+    ) {
+        // Keep the helix path on the CA spiral and only steer the wide face toward the helix axis.
+        let mut helix_start = 0;
+        while helix_start < ribbon_info.len() {
+            let Some(helix_id) = ribbon_info[helix_start].helix_id else {
+                helix_start += 1;
+                continue;
+            };
+
+            let mut helix_end = helix_start + 1;
+            while helix_end < ribbon_info.len() && ribbon_info[helix_end].helix_id == Some(helix_id)
+            {
+                helix_end += 1;
+            }
+
+            let axis_direction = helix_axis_direction(&ca_positions[helix_start..helix_end]);
+            let axis_center = average_vec3(&ca_positions[helix_start..helix_end]);
+            for residue_idx in helix_start..helix_end {
+                let axis_point = axis_center
+                    + axis_direction
+                        * (ca_positions[residue_idx] - axis_center).dot(axis_direction);
+                let inward = project_perpendicular(
+                    axis_point - ca_positions[residue_idx],
+                    residue_tangents[residue_idx],
+                );
+                if inward.length_squared() > 1e-6 {
+                    face_normals[residue_idx] = inward.normalize();
+                }
+            }
+
+            helix_start = helix_end;
+        }
+    }
+
+    fn apply_helix_face_samples(
+        &self,
+        face_samples: &mut [Vec3],
+        centers: &[Vec3],
+        tangents: &[Vec3],
+        sample_helix_ids: &[Option<usize>],
+    ) {
+        let mut helix_start = 0;
+        while helix_start < sample_helix_ids.len() {
+            let Some(helix_id) = sample_helix_ids[helix_start] else {
+                helix_start += 1;
+                continue;
+            };
+
+            let mut helix_end = helix_start + 1;
+            while helix_end < sample_helix_ids.len()
+                && sample_helix_ids[helix_end] == Some(helix_id)
+            {
+                helix_end += 1;
+            }
+
+            let axis_direction = helix_axis_direction(&centers[helix_start..helix_end]);
+            let axis_center = average_vec3(&centers[helix_start..helix_end]);
+            for sample_idx in helix_start..helix_end {
+                let axis_point = axis_center
+                    + axis_direction * (centers[sample_idx] - axis_center).dot(axis_direction);
+                let inward =
+                    project_perpendicular(axis_point - centers[sample_idx], tangents[sample_idx]);
+                if inward.length_squared() > 1e-6 {
+                    face_samples[sample_idx] = inward.normalize();
+                }
+            }
+
+            for sample_idx in (helix_start + 1)..helix_end {
+                if face_samples[sample_idx - 1].dot(face_samples[sample_idx]) < 0.0 {
+                    face_samples[sample_idx] = -face_samples[sample_idx];
+                }
+            }
+
+            helix_start = helix_end;
+        }
+    }
+
+    fn apply_sheet_face_normals(
+        &self,
+        face_normals: &mut [Vec3],
+        ca_positions: &[Vec3],
+        ribbon_info: &[RibbonResidueInfo],
+        residue_tangents: &[Vec3],
+    ) {
+        // Use one low-frequency plane normal per sheet group so each strand stays locally flat.
+        let sheet_strands = collect_sheet_strands(ribbon_info);
+        let mut sheet_ids: Vec<usize> = ribbon_info
+            .iter()
+            .filter_map(|info| info.sheet_id)
+            .collect();
+        sheet_ids.sort_unstable();
+        sheet_ids.dedup();
+
+        for sheet_id in sheet_ids {
+            let strands: Vec<&SheetStrand> = sheet_strands
+                .iter()
+                .filter(|strand| strand.sheet_id == sheet_id)
+                .collect();
+            let Some(plane_normal) =
+                self.estimate_sheet_plane_normal(&strands, ca_positions, residue_tangents)
+            else {
+                continue;
+            };
+
+            for strand in strands {
+                for residue_idx in strand.start..=strand.end {
+                    face_normals[residue_idx] = plane_normal;
+                }
+            }
+        }
+    }
+
+    fn estimate_sheet_plane_normal(
+        &self,
+        strands: &[&SheetStrand],
+        ca_positions: &[Vec3],
+        residue_tangents: &[Vec3],
+    ) -> Option<Vec3> {
+        if strands.len() < 2 {
+            return None;
+        }
+
+        let mut long_axis = Vec3::ZERO;
+        let mut reference_tangent = None;
+        for strand in strands {
+            let tangent =
+                average_vec3(&residue_tangents[strand.start..=strand.end]).normalize_or_zero();
+            if tangent.length_squared() <= 1e-6 {
+                continue;
+            }
+
+            let tangent = if let Some(reference) = reference_tangent {
+                if tangent.dot(reference) < 0.0 {
+                    -tangent
+                } else {
+                    tangent
+                }
+            } else {
+                reference_tangent = Some(tangent);
+                tangent
+            };
+            long_axis += tangent;
+        }
+        if long_axis.length_squared() <= 1e-6 {
+            return None;
+        }
+        long_axis = long_axis.normalize();
+
+        let centroids: Vec<Vec3> = strands
+            .iter()
+            .map(|strand| average_vec3(&ca_positions[strand.start..=strand.end]))
+            .collect();
+
+        let mut cross_axis = Vec3::ZERO;
+        for (idx, centroid) in centroids.iter().enumerate() {
+            let mut best = None;
+            for (other_idx, other_centroid) in centroids.iter().enumerate() {
+                if idx == other_idx {
+                    continue;
+                }
+
+                let delta = project_perpendicular(*other_centroid - *centroid, long_axis);
+                let dist2 = delta.length_squared();
+                if dist2 <= 1e-6 {
+                    continue;
+                }
+
+                if best.is_none_or(|(_, best_dist2)| dist2 < best_dist2) {
+                    best = Some((delta, dist2));
+                }
+            }
+
+            if let Some((delta, _)) = best {
+                let mut delta = delta.normalize();
+                if cross_axis.length_squared() > 1e-6 && cross_axis.dot(delta) < 0.0 {
+                    delta = -delta;
+                }
+                cross_axis += delta;
+            }
+        }
+
+        if cross_axis.length_squared() <= 1e-6 {
+            return None;
+        }
+
+        let plane_normal = long_axis.cross(cross_axis).normalize_or_zero();
+        (plane_normal.length_squared() > 1e-6).then_some(plane_normal)
+    }
+
+    fn stabilize_face_normals(&self, face_normals: &mut [Vec3], ribbon_info: &[RibbonResidueInfo]) {
+        for i in 1..face_normals.len() {
+            if face_normals[i].length_squared() <= 1e-6 {
+                face_normals[i] = face_normals[i - 1];
+                continue;
+            }
+
+            let prev = face_normals[i - 1];
+            if prev.length_squared() <= 1e-6 {
+                continue;
+            }
+
+            let same_band = ribbon_info[i].helix_id == ribbon_info[i - 1].helix_id
+                || ribbon_info[i].sheet_id == ribbon_info[i - 1].sheet_id;
+            if same_band && prev.dot(face_normals[i]) < 0.0 {
+                face_normals[i] = -face_normals[i];
+            }
+        }
+    }
+
+    fn build_sampled_normals(
+        &self,
+        tangents: &[Vec3],
+        face_samples: &[Vec3],
+        sample_ss: &[SecondaryStructure],
+    ) -> Vec<Vec3> {
+        // The ribbon section's broad face is controlled by b = t x n, so we fit n from face targets.
+        let mut normals = Vec::with_capacity(tangents.len());
+        let initial_face = project_perpendicular(face_samples[0], tangents[0]).normalize_or_zero();
+        let initial_normal = if initial_face.length_squared() > 1e-6 {
+            initial_face.cross(tangents[0]).normalize_or_zero()
+        } else {
+            fallback_normal(tangents[0])
+        };
+        let mut current_normal = if initial_normal.length_squared() > 1e-6 {
+            initial_normal
+        } else {
+            fallback_normal(tangents[0])
+        };
+        normals.push(current_normal);
+
+        for i in 1..tangents.len() {
+            let prev_t = tangents[i - 1];
+            let curr_t = tangents[i];
+            let axis = prev_t.cross(curr_t);
+            if axis.length_squared() > 1e-6 {
+                let angle = prev_t.angle_between(curr_t);
+                let q = Quat::from_axis_angle(axis.normalize(), angle);
+                current_normal = q * current_normal;
+            }
+
+            let desired_face = project_perpendicular(face_samples[i], curr_t);
+            if desired_face.length_squared() > 1e-6 {
+                let mut desired_normal = desired_face.normalize().cross(curr_t).normalize_or_zero();
+                if current_normal.dot(desired_normal) < 0.0 {
+                    desired_normal = -desired_normal;
+                }
+
+                let blend = match sample_ss[i] {
+                    SecondaryStructure::Sheet => 0.92,
+                    SecondaryStructure::Helix => 0.95,
+                    SecondaryStructure::Coil | SecondaryStructure::Turn => 0.35,
+                };
+                current_normal =
+                    (current_normal * (1.0 - blend) + desired_normal * blend).normalize_or_zero();
+            }
+
+            if current_normal.length_squared() <= 1e-6 {
+                current_normal = fallback_normal(curr_t);
+            }
+            normals.push(current_normal);
+        }
+
+        normals
+    }
+
     pub fn to_mesh(&self, scale: f32) -> MeshData {
-        // use std::time::Instant;
-        // let start_total = Instant::now();
+        let mut final_mesh = MeshData::default();
         let pts_per_res = 5;
 
-        // println!("to_mesh started");
-
-        let mut final_mesh = MeshData::default();
-
-        // let total_res: usize = self.chains.iter().map(|c| c.residues.len()).sum();
-        // let estimated_verts = total_res * 8 * pts_per_res; // 粗估
-        // final_mesh.vertices.reserve(estimated_verts);
-        // final_mesh.normals.reserve(estimated_verts);
-        // final_mesh.indices.reserve(estimated_verts * 2);
-
-        // println!("reserve{} {}", estimated_verts, estimated_verts * 2);
-
         self.chains.par_iter().for_each(|chain| {
-            chain.get_ss();
+            chain.get_ribbon_info();
         });
 
         let meshes: Vec<MeshData> = self
             .chains
-            // .iter()
             .par_iter()
             .filter_map(|chain| {
                 let mut mesh = MeshData::default();
-
-                // === residues ===
-                let residues: Vec<&Residue> = chain
+                let ribbon_info_all = chain.get_ribbon_info();
+                let filtered: Vec<(usize, &Residue)> = chain
                     .residues
                     .iter()
-                    .filter(|r| r.ca.length_squared() > 1e-6)
+                    .enumerate()
+                    .filter(|(_, residue)| residue.ca.length_squared() > 1e-6)
                     .collect();
 
-                if residues.len() < 2 {
+                if filtered.len() < 2 {
                     return None;
                 }
 
-                let ca_positions: Vec<Vec3> = residues.iter().map(|r| r.ca).collect();
+                let residues: Vec<&Residue> =
+                    filtered.iter().map(|(_, residue)| *residue).collect();
+                let ribbon_info: Vec<RibbonResidueInfo> = filtered
+                    .iter()
+                    .map(|(idx, _)| ribbon_info_all[*idx])
+                    .collect();
+                let ss: Vec<SecondaryStructure> = ribbon_info.iter().map(|info| info.ss).collect();
 
-                let path = self.catmull_rom_chain(&ca_positions, pts_per_res);
-                let n = path.len();
+                let centers = residues
+                    .iter()
+                    .map(|residue| residue.ca)
+                    .collect::<Vec<_>>();
+                let residue_tangents = self.estimate_tangents(&centers);
+                let mut face_normals: Vec<Vec3> = residues
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, residue)| self.default_face_normal(residue, residue_tangents[idx]))
+                    .collect();
 
-                let mut centers = Vec::with_capacity(n);
+                self.apply_helix_face_normals(
+                    &mut face_normals,
+                    &centers,
+                    &ribbon_info,
+                    &residue_tangents,
+                );
+                self.apply_sheet_face_normals(
+                    &mut face_normals,
+                    &centers,
+                    &ribbon_info,
+                    &residue_tangents,
+                );
+                self.stabilize_face_normals(&mut face_normals, &ribbon_info);
+
+                let centers = self.catmull_rom_chain(&centers, pts_per_res);
+                let mut face_samples = self.catmull_rom_chain(&face_normals, pts_per_res);
+                let n = centers.len();
                 let mut tangents = Vec::with_capacity(n);
-                let mut normals = Vec::with_capacity(n);
-
-                // === tangent ===
                 for i in 0..n {
-                    centers.push(path[i]);
-
-                    let p0 = if i > 0 { path[i - 1] } else { path[0] };
-                    let p1 = path[i];
-                    let p2 = if i + 1 < n { path[i + 1] } else { path[i] };
-                    let p3 = if i + 2 < n { path[i + 2] } else { p2 };
-
+                    let p0 = if i > 0 { centers[i - 1] } else { centers[0] };
+                    let p1 = centers[i];
+                    let p2 = if i + 1 < n {
+                        centers[i + 1]
+                    } else {
+                        centers[i]
+                    };
+                    let p3 = if i + 2 < n { centers[i + 2] } else { p2 };
                     tangents.push(catmull_rom_tangent(p0, p1, p2, p3).normalize_or_zero());
                 }
 
-                // === normal (parallel transport) ===
-                fn initial_normal(t: Vec3) -> Vec3 {
-                    if t.dot(Vec3::Z).abs() < 0.98 {
-                        t.cross(Vec3::Z).normalize()
-                    } else {
-                        t.cross(Vec3::X).normalize()
-                    }
-                }
+                let sample_ss: Vec<SecondaryStructure> = (0..n)
+                    .map(|sample_idx| {
+                        ss[((sample_idx + pts_per_res / 2) / pts_per_res).min(ss.len() - 1)]
+                    })
+                    .collect();
+                let sample_helix_ids: Vec<Option<usize>> = (0..n)
+                    .map(|sample_idx| {
+                        ribbon_info[((sample_idx + pts_per_res / 2) / pts_per_res)
+                            .min(ribbon_info.len() - 1)]
+                        .helix_id
+                    })
+                    .collect();
+                self.apply_helix_face_samples(
+                    &mut face_samples,
+                    &centers,
+                    &tangents,
+                    &sample_helix_ids,
+                );
+                let normals = self.build_sampled_normals(&tangents, &face_samples, &sample_ss);
 
-                let mut current_normal = initial_normal(tangents[0]);
-                normals.push(current_normal);
-
-                for i in 1..n {
-                    let prev_t = tangents[i - 1];
-                    let curr_t = tangents[i];
-
-                    let axis = prev_t.cross(curr_t);
-                    if axis.length_squared() > 1e-6 {
-                        let angle = prev_t.angle_between(curr_t);
-                        let q = Quat::from_axis_angle(axis.normalize(), angle);
-                        current_normal = q * current_normal;
-                    }
-                    normals.push(current_normal);
-                }
-
-                // === secondary structure ===
-                let ss = chain.get_ss();
-
-                // === 🔥 核心：per-residue extrusion ===
                 for (res_idx, ss_type) in ss.iter().enumerate() {
-                    // 对应 spline 区间
+                    if res_idx == ss.len() - 1 {
+                        continue;
+                    }
+
                     let i0 = res_idx * pts_per_res;
                     let i1 = ((res_idx + 1) * pts_per_res + 1).min(n);
-
                     let mid = (i0 + i1) / 2;
 
-                    // === ChimeraX: front / back section ===
                     let section_front = match ss_type {
                         SecondaryStructure::Helix => &*HELIX_SECTION,
                         SecondaryStructure::Sheet => &*SHEET_SECTION,
                         _ => &*COIL_SECTION,
                     };
-
-                    // ⚠️ 这里先简化：front/back 相同
-                    // 后续可以做 arrow / transition
                     let section_back = section_front;
 
-                    if res_idx == ss.len() - 1 {
-                        continue;
+                    let front_centers = &centers[i0..mid + 1];
+                    let front_tangents = &tangents[i0..mid + 1];
+                    let front_normals = &normals[i0..mid + 1];
+                    if front_centers.len() > 1 {
+                        let scales = vec![1.0; front_centers.len()];
+                        mesh.append(&section_front.extrude(
+                            front_centers,
+                            front_tangents,
+                            front_normals,
+                            &scales,
+                        ));
                     }
 
-                    // println!("{:?} {:?}", [i0..mid], [mid..i1]);
-
-                    // === front half ===
-                    {
-                        let sub_centers = &centers[i0..mid + 1];
-                        let sub_tangents = &tangents[i0..mid + 1];
-                        let sub_normals = &normals[i0..mid + 1];
-
-                        if sub_centers.len() > 1 {
-                            let scales = vec![1.0; sub_centers.len()];
-                            let sub_mesh = section_front.extrude(
-                                sub_centers,
-                                sub_tangents,
-                                sub_normals,
-                                &scales,
-                            );
-                            mesh.append(&sub_mesh);
-                        }
+                    let back_centers = &centers[mid..i1];
+                    let back_tangents = &tangents[mid..i1];
+                    let back_normals = &normals[mid..i1];
+                    if back_centers.len() > 1 {
+                        let scales = vec![1.0; back_centers.len()];
+                        mesh.append(&section_back.extrude(
+                            back_centers,
+                            back_tangents,
+                            back_normals,
+                            &scales,
+                        ));
                     }
 
-                    // === back half ===
-                    {
-                        let sub_centers = &centers[mid..i1];
-                        let sub_tangents = &tangents[mid..i1];
-                        let sub_normals = &normals[mid..i1];
-
-                        if sub_centers.len() > 1 {
-                            let scales = vec![1.0; sub_centers.len()];
-                            let sub_mesh = section_back.extrude(
-                                sub_centers,
-                                sub_tangents,
-                                sub_normals,
-                                &scales,
-                            );
-                            mesh.append(&sub_mesh);
-                        }
-                    }
-
-                    // add flat cap
                     if res_idx == 0 {
-                        let cap = section_front.add_flat_cap(
+                        mesh.append(&section_front.add_flat_cap(
                             &centers[i0],
                             &tangents[i0],
                             &normals[i0],
                             1.0,
-                        );
-                        mesh.append(&cap);
+                        ));
                     } else if !matches!(
                         (&ss[res_idx - 1], ss_type),
                         (SecondaryStructure::Helix, SecondaryStructure::Helix)
@@ -376,50 +665,43 @@ impl Protein {
                                 SecondaryStructure::Coil | SecondaryStructure::Turn
                             )
                     ) {
-                        // 处理 turn -> coil
                         let (section, is_first) = cap_use(&ss[res_idx - 1], ss_type);
-                        if is_first {
-                            let cap = section.add_flat_cap(
-                                &centers[i0],
-                                &-tangents[i0],
-                                &normals[i0],
-                                1.0,
-                            );
-                            mesh.append(&cap);
+                        let cap_tangent = if is_first {
+                            -tangents[i0]
                         } else {
-                            let cap = section.add_flat_cap(
-                                &centers[i0],
-                                &tangents[i0],
-                                &normals[i0],
-                                1.0,
-                            );
-                            mesh.append(&cap);
-                        }
+                            tangents[i0]
+                        };
+                        mesh.append(&section.add_flat_cap(
+                            &centers[i0],
+                            &cap_tangent,
+                            &normals[i0],
+                            1.0,
+                        ));
                     }
-                    // add caps for the last residue
+
                     if res_idx == ss.len() - 2 {
-                        let cap = section_back.add_flat_cap(
+                        mesh.append(&section_back.add_flat_cap(
                             &centers[i1 - 1],
                             &-tangents[i1 - 1],
                             &normals[i1 - 1],
                             1.0,
-                        );
-                        mesh.append(&cap);
+                        ));
                     }
                 }
 
-                // === scale ===
-                for v in &mut mesh.vertices {
-                    *v *= scale;
+                for vertex in &mut mesh.vertices {
+                    *vertex *= scale;
                 }
 
-                // === color ===
                 let color = match self.style.color {
                     Some(color) => Vec4::new(color[0], color[1], color[2], self.style.opacity),
-                    None => Vec4::new(1.0, 1.0, 1.0, 1.0),
+                    None => Vec4::new(1.0, 1.0, 1.0, self.style.opacity),
                 };
-
                 mesh.colors = Some(vec![color; mesh.vertices.len()]);
+                mesh.material_params = Some(vec![
+                    [self.style.roughness, self.style.metallic,];
+                    mesh.vertices.len()
+                ]);
 
                 Some(mesh)
             })
@@ -428,25 +710,99 @@ impl Protein {
         for mesh in meshes {
             final_mesh.append(&mesh);
         }
-        // println!(
-        //     "chain {} processed in {:?}",
-        //     chain.id,
-        //     start_chain.elapsed()
-        // );
-        // }
 
-        // println!(
-        //     "actual length {} {}",
-        //     final_mesh.vertices.len(),
-        //     final_mesh.indices.len()
-        // );
-
-        // println!("to_mesh finished in {:?}", start_total.elapsed());
         final_mesh
     }
 }
 
 // 加这个函数
+#[derive(Clone, Copy)]
+struct SheetStrand {
+    sheet_id: usize,
+    start: usize,
+    end: usize,
+}
+
+fn collect_sheet_strands(ribbon_info: &[RibbonResidueInfo]) -> Vec<SheetStrand> {
+    let mut strands = Vec::new();
+    let mut start = 0;
+
+    while start < ribbon_info.len() {
+        let info = ribbon_info[start];
+        if info.ss != SecondaryStructure::Sheet {
+            start += 1;
+            continue;
+        }
+
+        let Some(sheet_id) = info.sheet_id else {
+            start += 1;
+            continue;
+        };
+
+        let mut end = start + 1;
+        while end < ribbon_info.len()
+            && ribbon_info[end].ss == SecondaryStructure::Sheet
+            && ribbon_info[end].sheet_id == Some(sheet_id)
+        {
+            end += 1;
+        }
+
+        strands.push(SheetStrand {
+            sheet_id,
+            start,
+            end: end - 1,
+        });
+        start = end;
+    }
+
+    strands
+}
+
+fn fallback_normal(tangent: Vec3) -> Vec3 {
+    if tangent.dot(Vec3::Z).abs() < 0.98 {
+        tangent.cross(Vec3::Z).normalize_or_zero()
+    } else {
+        tangent.cross(Vec3::X).normalize_or_zero()
+    }
+}
+
+fn fallback_face_normal(tangent: Vec3) -> Vec3 {
+    let side = fallback_normal(tangent);
+    tangent.cross(side).normalize_or_zero()
+}
+
+fn project_perpendicular(vector: Vec3, tangent: Vec3) -> Vec3 {
+    vector - tangent * vector.dot(tangent)
+}
+
+fn average_vec3(values: &[Vec3]) -> Vec3 {
+    let mut sum = Vec3::ZERO;
+    for value in values {
+        sum += *value;
+    }
+    sum / values.len().max(1) as f32
+}
+
+fn helix_axis_direction(points: &[Vec3]) -> Vec3 {
+    if points.len() < 2 {
+        return Vec3::Y;
+    }
+
+    let mut axis = Vec3::ZERO;
+    if points.len() >= 5 {
+        for i in 0..=(points.len() - 5) {
+            axis += points[i + 4] - points[i];
+        }
+    }
+    if axis.length_squared() <= 1e-6 {
+        axis = points[points.len() - 1] - points[0];
+    }
+    if axis.length_squared() <= 1e-6 {
+        axis = Vec3::Y;
+    }
+    axis.normalize_or_zero()
+}
+
 #[inline(always)]
 fn catmull_rom_tangent(p0: Vec3, p1: Vec3, p2: Vec3, p3: Vec3) -> Vec3 {
     // 标准公式：(p2 - p0) + 0.5 * (p3 - p1)
@@ -600,6 +956,7 @@ impl RibbonXSection {
         let mut mesh = MeshData {
             vertices: vec![],
             colors: None,
+            material_params: None,
             normals: vec![],
             indices: vec![],
             transform: None,
@@ -657,6 +1014,7 @@ impl RibbonXSection {
             normals: Vec::new(),
             indices: Vec::new(),
             colors: None,
+            material_params: None,
             transform: None,
             is_wireframe: false,
         };
@@ -743,7 +1101,7 @@ fn make_square_section(width: f32, height: f32) -> RibbonXSection {
 
 pub static HELIX_SECTION: Lazy<RibbonXSection> = Lazy::new(|| {
     // ChimeraX: helix = 圆柱，略扁
-    make_round_section(1.0, 1.0, 16)
+    make_round_section(1.3, 0.25, 24)
 });
 
 pub static COIL_SECTION: Lazy<RibbonXSection> = Lazy::new(|| {

@@ -243,8 +243,14 @@ impl Sphere {
         let base_color = self.material.color.unwrap_or([1.0, 1.0, 1.0].into());
         let alpha = self.material.opacity.clamp(0.0, 1.0);
         let color = [base_color[0], base_color[1], base_color[2], alpha];
+        let material = [self.material.roughness, self.material.metallic];
 
-        SphereInstance::new(self.center.map(|x| x * scale), self.radius * scale, color)
+        SphereInstance::new(
+            self.center.map(|x| x * scale),
+            self.radius * scale,
+            color,
+            material,
+        )
     }
 }
 
@@ -260,14 +266,21 @@ pub struct SphereInstance {
     pub position: [f32; 3],
     pub radius: f32,
     pub color: [f32; 4],
+    pub material: [f32; 2],
 }
 
 impl SphereInstance {
-    pub fn new(position: [f32; 3], radius: f32, color: [f32; 4]) -> Self {
+    pub fn new(
+        position: [f32; 3],
+        radius: f32,
+        color: [f32; 4],
+        material: [f32; 2],
+    ) -> Self {
         Self {
             position,
             radius,
             color,
+            material,
         }
     }
 }

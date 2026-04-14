@@ -14,10 +14,12 @@ in vec3 i_start;
 in vec3 i_end;
 in float i_radius;
 in vec4 i_color;
+in vec2 i_material;
 
 out vec3 v_normal;
 out vec3 v_frag_pos;
 out vec4 v_color;
+out vec2 v_material;
 
 void main() {
     // 1️⃣ 棒方向和长度
@@ -46,6 +48,7 @@ void main() {
 
     // 6️⃣ 输出颜色
     v_color = i_color;
+    v_material = i_material;
 
     // 7️⃣ 投影
     gl_Position = u_projection * u_view * world_pos;
