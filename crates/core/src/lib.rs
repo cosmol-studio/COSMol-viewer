@@ -183,7 +183,7 @@ impl NativeGuiViewer {
 
         #[cfg(not(target_arch = "wasm32"))]
         use eframe::{
-            NativeOptions,
+            NativeOptions, Renderer,
             egui::{Vec2, ViewportBuilder},
         };
 
@@ -221,8 +221,10 @@ impl NativeGuiViewer {
                 viewport: ViewportBuilder::default()
                     .with_inner_size(Vec2::new(width, height))
                     .with_icon(icon),
-                depth_buffer: 24,
-                multisampling: 4,
+                vsync: native_vsync(),
+                depth_buffer: native_depth_buffer(),
+                multisampling: native_multisampling(),
+                renderer: Renderer::Glow,
                 event_loop_builder,
                 ..Default::default()
             };
@@ -293,7 +295,7 @@ impl NativeGuiViewer {
 
         #[cfg(not(target_arch = "wasm32"))]
         use eframe::{
-            NativeOptions,
+            NativeOptions, Renderer,
             egui::{Vec2, ViewportBuilder},
         };
 
@@ -326,8 +328,10 @@ impl NativeGuiViewer {
 
             let native_options = NativeOptions {
                 viewport: ViewportBuilder::default().with_inner_size(Vec2::new(width, height)),
-                depth_buffer: 24,
-                multisampling: 4,
+                vsync: native_vsync(),
+                depth_buffer: native_depth_buffer(),
+                multisampling: native_multisampling(),
+                renderer: Renderer::Glow,
                 event_loop_builder,
                 ..Default::default()
             };
@@ -357,6 +361,35 @@ impl NativeGuiViewer {
         unimplemented!()
     }
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+fn native_multisampling() -> u16 {
+    std::env::var("COSMOL_VIEWER_MULTISAMPLING")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(4)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn native_depth_buffer() -> u8 {
+    std::env::var("COSMOL_VIEWER_DEPTH_BUFFER")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(24)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn native_vsync() -> bool {
+    std::env::var("COSMOL_VIEWER_VSYNC")
+        .ok()
+        .and_then(|value| match value.to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => Some(true),
+            "0" | "false" | "no" | "off" => Some(false),
+            _ => None,
+        })
+        .unwrap_or(true)
+}
+
 fn load_icon() -> IconData {
     let bytes = include_bytes!(concat!(env!("OUT_DIR"), "/icon.png"));
     let image = image::load_from_memory(bytes)

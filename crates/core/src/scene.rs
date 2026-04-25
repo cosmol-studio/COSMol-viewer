@@ -162,6 +162,20 @@ impl Scene {
         self.background_color = Vec3::ZERO;
     }
 
+    pub fn prepare_for_wasm(&mut self) {
+        for shape in self.named_shapes.values_mut() {
+            if let Shape::Protein(protein) = shape {
+                protein.init_secondary_structure();
+            }
+        }
+
+        for shape in &mut self.unnamed_shapes {
+            if let Shape::Protein(protein) = shape {
+                protein.init_secondary_structure();
+            }
+        }
+    }
+
     /// === u_model ===
     pub fn model_matrix(&self) -> Mat4 {
         Mat4::from_translation(-Vec3::from(self.scene_center) * self.scale)

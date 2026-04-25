@@ -150,6 +150,12 @@ impl Stylable for Protein {
 }
 
 impl Protein {
+    pub fn init_secondary_structure(&mut self) {
+        for chain in &mut self.chains {
+            chain.init_ss();
+        }
+    }
+
     pub fn get_center(&self) -> [f32; 3] {
         [self.center.x, self.center.y, self.center.z]
     }

@@ -6,6 +6,7 @@ use pyo3::exceptions::PyRuntimeError;
 use pyo3::exceptions::PyValueError;
 use std::env;
 use std::ffi::CStr;
+use std::sync::OnceLock;
 
 use pyo3::{ffi::c_str, prelude::*};
 
@@ -37,7 +38,7 @@ Examples
 --------
 .. code-block:: python
 
-    animation = Animation(interval=0.1, loops=-1, smooth=True)
+    animation = Animation(interval=0.1, loops=-1, interpolate=True)
     for _ in range(100):
         scene = Scene()
         scene.add_shape(..)
@@ -175,7 +176,8 @@ shape : Sphere or Stick or Molecule or Protein
     pub fn add_shape(&mut self, shape: &Bound<'_, PyAny>) -> PyResult<()> {
         macro_rules! try_add {
             ($py_type:ty) => {{
-                if let Ok(py_obj) = shape.extract::<PyRef<$py_type>>() {
+                if let Ok(py_obj) = shape.cast::<$py_type>() {
+                    let py_obj = py_obj.borrow();
                     self.inner.add_shape(py_obj.inner.clone());
                     return Ok(());
                 }
@@ -216,7 +218,8 @@ If a shape with the same ID already exists, this method may fail or behave stric
     pub fn add_shape_with_id(&mut self, id: &str, shape: &Bound<'_, PyAny>) -> PyResult<()> {
         macro_rules! try_add {
             ($py_type:ty) => {{
-                if let Ok(py_obj) = shape.extract::<PyRef<$py_type>>() {
+                if let Ok(py_obj) = shape.cast::<$py_type>() {
+                    let py_obj = py_obj.borrow();
                     self.inner.add_shape_with_id(id, py_obj.inner.clone());
                     return Ok(());
                 }
@@ -235,8 +238,8 @@ If a shape with the same ID already exists, this method may fail or behave stric
             .unwrap_or("<unknown type>".to_string());
 
         Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-            "add_shape(): unsupported shape type '{type_name}'. \
-             Expected one of: Sphere, Stick, Molecules, Protein"
+            "add_shape_with_id(): unsupported shape type '{type_name}'. \
+             Expected one of: Sphere, Stick, Molecule, Protein"
         )))
     }
 
@@ -253,7 +256,8 @@ shape : Sphere or Stick or Molecule or Protein
     pub fn replace_shape(&mut self, id: &str, shape: &Bound<'_, PyAny>) -> PyResult<()> {
         macro_rules! update_with {
             ($py_type:ty) => {{
-                if let Ok(py_obj) = shape.extract::<PyRef<$py_type>>() {
+                if let Ok(py_obj) = shape.cast::<$py_type>() {
+                    let py_obj = py_obj.borrow();
                     return self
                         .inner
                         .replace_shape(id, py_obj.inner.clone())
@@ -355,6 +359,8 @@ pub enum RuntimeEnv {
     Unknown,
 }
 
+static RUNTIME_ENV: OnceLock<RuntimeEnv> = OnceLock::new();
+
 impl std::fmt::Display for RuntimeEnv {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
@@ -392,6 +398,10 @@ pub struct Viewer {
 }
 
 fn detect_runtime_env(py: Python) -> PyResult<RuntimeEnv> {
+    if let Some(env) = RUNTIME_ENV.get() {
+        return Ok(*env);
+    }
+
     let code = c_str!(
         r#"
 def detect_env():
@@ -428,6 +438,7 @@ def detect_env():
         _ => RuntimeEnv::Unknown,
     };
 
+    let _ = RUNTIME_ENV.set(env);
     Ok(env)
 }
 
@@ -441,8 +452,8 @@ Get the current runtime environment.
 Returns
 -------
 str
-    One of ``"Jupyter"``, ``"Colab"``, ``"PlainScript"``, or
-    ``"IPython-Terminal"``.
+    One of ``"Jupyter"``, ``"Colab"``, ``"Plain Script"``,
+    ``"IPython-Terminal"``, ``"Other IPython"``, or ``"Unknown"``.
 "#]
     pub fn get_environment(py: Python) -> PyResult<String> {
         let env = detect_runtime_env(py)?;
@@ -472,7 +483,9 @@ Viewer
         match env_type {
             RuntimeEnv::Colab | RuntimeEnv::Jupyter => {
                 setup_wasm_if_needed(py, env_type)?;
-                let wasm_viewer = NotebookViewer::initiate_viewer(py, &scene.inner, width, height)?;
+                let mut scene = scene.inner.clone();
+                scene.prepare_for_wasm();
+                let wasm_viewer = NotebookViewer::initiate_viewer(py, &scene, width, height)?;
 
                 Ok(Viewer {
                     environment: env_type,
@@ -530,8 +543,15 @@ Viewer
         match env_type {
             RuntimeEnv::Colab | RuntimeEnv::Jupyter => {
                 setup_wasm_if_needed(py, env_type)?;
+                let mut animation = animation.inner;
+                if let Some(static_scene) = &mut animation.static_scene {
+                    static_scene.prepare_for_wasm();
+                }
+                for frame in &mut animation.frames {
+                    frame.prepare_for_wasm();
+                }
                 let wasm_viewer =
-                    NotebookViewer::initiate_viewer_and_play(py, animation.inner, width, height)?;
+                    NotebookViewer::initiate_viewer_and_play(py, animation, width, height)?;
 
                 Ok(Viewer {
                     environment: env_type,
@@ -608,6 +628,9 @@ rendering capacity, which can lead to delayed or incomplete rendering.
 
     #[doc = r#"
 Save the current image to a file.
+
+This is supported by the native desktop backend and Colab. Jupyter image
+saving is not fully supported yet.
 
 Parameters
 ----------

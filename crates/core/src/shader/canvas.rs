@@ -178,13 +178,13 @@ impl<L: Logger> Canvas<L> {
 }
 
 struct Shader {
-    program: glow::Program,
+    program: Option<glow::Program>,
     program_bg: glow::Program,
-    program_sphere: glow::Program,
-    program_stick: glow::Program,
-    vao_mesh: glow::VertexArray,
-    vao_sphere: glow::VertexArray,
-    vao_stick: glow::VertexArray,
+    program_sphere: Option<glow::Program>,
+    program_stick: Option<glow::Program>,
+    vao_mesh: Option<glow::VertexArray>,
+    vao_sphere: Option<glow::VertexArray>,
+    vao_stick: Option<glow::VertexArray>,
     camera_lighting: Lighting,
     vertex3d: Vec<Vertex3d>,
     indices: Vec<u32>,
@@ -193,6 +193,10 @@ struct Shader {
     background_color: Vec3,
     vbo: glow::Buffer,
     ebo: glow::Buffer,
+    sphere_vbo: glow::Buffer,
+    sphere_ebo: glow::Buffer,
+    stick_vbo: glow::Buffer,
+    stick_ebo: glow::Buffer,
     sphere_instance_buffer: glow::Buffer,
     stick_instance_buffer: glow::Buffer,
     instance_groups: Option<InstanceGroups>,
@@ -202,6 +206,61 @@ struct Shader {
 
 #[expect(unsafe_code)] // we need unsafe code to use glow
 impl Shader {
+    #[allow(unsafe_op_in_unsafe_fn)]
+    unsafe fn compile_program(
+        gl: &glow::Context,
+        shader_version: egui_glow::ShaderVersion,
+        label: &str,
+        vertex_shader: &str,
+        fragment_shader: &str,
+    ) -> glow::Program {
+        use glow::HasContext as _;
+
+        let program = gl.create_program().expect("Cannot create program");
+        let shaders = [
+            (glow::VERTEX_SHADER, vertex_shader),
+            (glow::FRAGMENT_SHADER, fragment_shader),
+        ]
+        .iter()
+        .map(|(shader_type, shader_source)| {
+            let shader = gl
+                .create_shader(*shader_type)
+                .expect("Cannot create shader");
+            gl.shader_source(
+                shader,
+                &format!(
+                    "{}\n{}",
+                    shader_version.version_declaration(),
+                    shader_source
+                ),
+            );
+            gl.compile_shader(shader);
+            assert!(
+                gl.get_shader_compile_status(shader),
+                "Failed to compile {label} {shader_type}: {}",
+                gl.get_shader_info_log(shader)
+            );
+
+            gl.attach_shader(program, shader);
+            shader
+        })
+        .collect::<Vec<_>>();
+
+        gl.link_program(program);
+        assert!(
+            gl.get_program_link_status(program),
+            "{}",
+            gl.get_program_info_log(program)
+        );
+
+        for shader in shaders {
+            gl.detach_shader(program, shader);
+            gl.delete_shader(shader);
+        }
+
+        program
+    }
+
     fn new(gl: &glow::Context, scene: &Scene) -> Option<Self> {
         use glow::HasContext as _;
 
@@ -210,14 +269,6 @@ impl Shader {
         let default_color = Vec4::new(1.0, 1.0, 1.0, 1.0);
 
         unsafe {
-            // =========================
-            // 1. Create shader programs
-            // =========================
-            let program_bg = gl.create_program().expect("Cannot create program");
-            let program = gl.create_program().expect("Cannot create program");
-            let program_sphere = gl.create_program().expect("Cannot create program");
-            let program_stick = gl.create_program().expect("Cannot create program");
-
             if !shader_version.is_new_shader_interface() {
                 println!(
                     "Custom 3D painting hasn't been ported to {:?}",
@@ -226,206 +277,19 @@ impl Shader {
                 return None;
             }
 
-            // =========================
-            // 2. Load shader sources
-            // =========================
-            let (vertex_shader, fragment_shader) = (
-                include_str!("./vertex.glsl"),
-                include_str!("./fragment.glsl"),
-            );
-
             let (vertex_shader_bg, fragment_shader_bg) = (
                 include_str!("./bg_vertex.glsl"),
                 include_str!("./bg_fragment.glsl"),
             );
 
-            let vertex_sphere_shader = include_str!("./vertex_sphere.glsl");
-            let vertex_stick_shader = include_str!("./vertex_stick.glsl");
-
-            let shader = [
-                (glow::VERTEX_SHADER, vertex_shader),
-                (glow::FRAGMENT_SHADER, fragment_shader),
-            ];
-
-            let shader_bg = [
-                (glow::VERTEX_SHADER, vertex_shader_bg),
-                (glow::FRAGMENT_SHADER, fragment_shader_bg),
-            ];
-
-            let shader_sphere = [
-                (glow::VERTEX_SHADER, vertex_sphere_shader),
-                (glow::FRAGMENT_SHADER, fragment_shader),
-            ];
-
-            let shader_stick = [
-                (glow::VERTEX_SHADER, vertex_stick_shader),
-                (glow::FRAGMENT_SHADER, fragment_shader),
-            ];
-
             println!("shader_version = {:?}", shader_version);
-
-            // =========================
-            // 3.1 Compile and link main shader
-            // =========================
-            let shaders: Vec<_> = shader
-                .iter()
-                .map(|(shader_type, shader_source)| {
-                    let shader = gl
-                        .create_shader(*shader_type)
-                        .expect("Cannot create shader");
-                    gl.shader_source(
-                        shader,
-                        &format!(
-                            "{}\n{}",
-                            shader_version.version_declaration(),
-                            shader_source
-                        ),
-                    );
-                    gl.compile_shader(shader);
-                    assert!(
-                        gl.get_shader_compile_status(shader),
-                        "Failed to compile custom_3d_glow {shader_type}: {}",
-                        gl.get_shader_info_log(shader)
-                    );
-
-                    gl.attach_shader(program, shader);
-                    shader
-                })
-                .collect();
-
-            gl.link_program(program);
-            assert!(
-                gl.get_program_link_status(program),
-                "{}",
-                gl.get_program_info_log(program)
+            let program_bg = Self::compile_program(
+                gl,
+                shader_version,
+                "custom_3d_glow_bg",
+                vertex_shader_bg,
+                fragment_shader_bg,
             );
-
-            for shader in shaders {
-                gl.detach_shader(program, shader);
-                gl.delete_shader(shader);
-            }
-
-            // =========================
-            // 3.2 Compile and link background shader
-            // =========================
-            let shaders_bg: Vec<_> = shader_bg
-                .iter()
-                .map(|(shader_type, shader_source)| {
-                    let shader = gl
-                        .create_shader(*shader_type)
-                        .expect("Cannot create shader_bg");
-                    gl.shader_source(
-                        shader,
-                        &format!(
-                            "{}\n{}",
-                            shader_version.version_declaration(),
-                            shader_source
-                        ),
-                    );
-                    gl.compile_shader(shader);
-                    assert!(
-                        gl.get_shader_compile_status(shader),
-                        "Failed to compile custom_3d_glow_bg {shader_type}: {}",
-                        gl.get_shader_info_log(shader)
-                    );
-
-                    gl.attach_shader(program_bg, shader);
-                    shader
-                })
-                .collect();
-
-            gl.link_program(program_bg);
-            assert!(
-                gl.get_program_link_status(program_bg),
-                "{}",
-                gl.get_program_info_log(program_bg)
-            );
-
-            for shader in shaders_bg {
-                gl.detach_shader(program_bg, shader);
-                gl.delete_shader(shader);
-            }
-
-            // =========================
-            // 3.3 Compile and link sphere shader
-            // =========================
-            let shaders_sphere: Vec<_> = shader_sphere
-                .iter()
-                .map(|(shader_type, shader_source)| {
-                    let shader = gl
-                        .create_shader(*shader_type)
-                        .expect("Cannot create shader_sphere");
-                    gl.shader_source(
-                        shader,
-                        &format!(
-                            "{}\n{}",
-                            shader_version.version_declaration(),
-                            shader_source
-                        ),
-                    );
-                    gl.compile_shader(shader);
-                    assert!(
-                        gl.get_shader_compile_status(shader),
-                        "Failed to compile custom_3d_glow_sphere {shader_type}: {}",
-                        gl.get_shader_info_log(shader)
-                    );
-
-                    gl.attach_shader(program_sphere, shader);
-                    shader
-                })
-                .collect();
-
-            gl.link_program(program_sphere);
-            assert!(
-                gl.get_program_link_status(program_sphere),
-                "{}",
-                gl.get_program_info_log(program_sphere)
-            );
-
-            for shader in shaders_sphere {
-                gl.detach_shader(program_sphere, shader);
-                gl.delete_shader(shader);
-            }
-
-            // =========================
-            // 3.4 Compile and link stick shader
-            // =========================
-            let shaders_stick: Vec<_> = shader_stick
-                .iter()
-                .map(|(shader_type, shader_source)| {
-                    let shader = gl
-                        .create_shader(*shader_type)
-                        .expect("Cannot create shader_stick");
-                    gl.shader_source(
-                        shader,
-                        &format!(
-                            "{}\n{}",
-                            shader_version.version_declaration(),
-                            shader_source
-                        ),
-                    );
-                    gl.compile_shader(shader);
-                    assert!(
-                        gl.get_shader_compile_status(shader),
-                        "Failed to compile custom_3d_glow_stick {shader_type}: {}",
-                        gl.get_shader_info_log(shader)
-                    );
-
-                    gl.attach_shader(program_stick, shader);
-                    shader
-                })
-                .collect();
-
-            gl.link_program(program_stick);
-            assert!(
-                gl.get_program_link_status(program_stick),
-                "{}",
-                gl.get_program_info_log(program_stick)
-            );
-            for shader in shaders_stick {
-                gl.detach_shader(program_stick, shader);
-                gl.delete_shader(shader);
-            }
 
             // =========================
             // 4.1 Generate sphere mesh template
@@ -515,252 +379,24 @@ impl Shader {
                 glow::STATIC_DRAW,
             );
 
-            // =========================
-            // 6. Setup VAO for mesh
-            // =========================
-            let vao_mesh = gl
-                .create_vertex_array()
-                .expect("Cannot create vertex array");
-            gl.bind_vertex_array(Some(vao_mesh));
-            gl.bind_buffer(glow::ARRAY_BUFFER, Some(vbo));
-
-            let pos_loc = gl.get_attrib_location(program, "a_position").unwrap();
-            let normal_loc = gl.get_attrib_location(program, "a_normal").unwrap();
-            let color_loc = gl.get_attrib_location(program, "a_color").unwrap();
-            let material_loc = gl.get_attrib_location(program, "a_material").unwrap();
-
-            let stride_vertex_3d = std::mem::size_of::<Vertex3d>() as i32;
-
-            gl.enable_vertex_attrib_array(pos_loc);
-            gl.vertex_attrib_pointer_f32(pos_loc, 3, glow::FLOAT, false, stride_vertex_3d, 0);
-
-            gl.enable_vertex_attrib_array(normal_loc);
-            gl.vertex_attrib_pointer_f32(
-                normal_loc,
-                3,
-                glow::FLOAT,
-                false,
-                stride_vertex_3d,
-                3 * 4,
-            );
-
-            gl.enable_vertex_attrib_array(color_loc);
-            gl.vertex_attrib_pointer_f32(color_loc, 4, glow::FLOAT, false, stride_vertex_3d, 6 * 4);
-
-            gl.enable_vertex_attrib_array(material_loc);
-            gl.vertex_attrib_pointer_f32(
-                material_loc,
-                2,
-                glow::FLOAT,
-                false,
-                stride_vertex_3d,
-                10 * 4,
-            );
-
-            // =========================
-            // 7.1 Setup VAO for instanced spheres
-            // =========================
-
-            let pos_loc = gl
-                .get_attrib_location(program_sphere, "a_position")
-                .unwrap();
-            let normal_loc = gl.get_attrib_location(program_sphere, "a_normal").unwrap();
-            let i_pos_loc = gl
-                .get_attrib_location(program_sphere, "i_position")
-                .unwrap();
-            let i_radius_loc = gl.get_attrib_location(program_sphere, "i_radius").unwrap();
-            let i_color_loc = gl.get_attrib_location(program_sphere, "i_color").unwrap();
-            let i_material_loc = gl
-                .get_attrib_location(program_sphere, "i_material")
-                .unwrap();
-
-            let vao_sphere = gl
-                .create_vertex_array()
-                .expect("Cannot create vertex array");
-            gl.bind_vertex_array(Some(vao_sphere));
-            gl.bind_buffer(glow::ARRAY_BUFFER, Some(sphere_vbo));
-
-            gl.enable_vertex_attrib_array(pos_loc); // a_position
-            gl.vertex_attrib_pointer_f32(pos_loc, 3, glow::FLOAT, false, stride_vertex_3d, 0);
-
-            gl.enable_vertex_attrib_array(normal_loc); // a_normal
-            gl.vertex_attrib_pointer_f32(
-                normal_loc,
-                3,
-                glow::FLOAT,
-                false,
-                stride_vertex_3d,
-                3 * 4,
-            );
-
-            // per-instance attributes
             let sphere_instance_buffer = gl
                 .create_buffer()
                 .expect("Cannot create sphere instance buffer");
-            gl.bind_buffer(glow::ARRAY_BUFFER, Some(sphere_instance_buffer));
-
-            let stride_instance = std::mem::size_of::<SphereInstance>() as i32;
-
-            gl.enable_vertex_attrib_array(i_pos_loc); // i_position
-            gl.vertex_attrib_pointer_f32(i_pos_loc, 3, glow::FLOAT, false, stride_instance, 0);
-            gl.vertex_attrib_divisor(i_pos_loc, 1);
-
-            gl.enable_vertex_attrib_array(i_radius_loc); // i_radius
-            gl.vertex_attrib_pointer_f32(
-                i_radius_loc,
-                1,
-                glow::FLOAT,
-                false,
-                stride_instance,
-                3 * 4,
-            );
-            gl.vertex_attrib_divisor(i_radius_loc, 1);
-
-            gl.enable_vertex_attrib_array(i_color_loc); // i_color
-            gl.vertex_attrib_pointer_f32(
-                i_color_loc,
-                4,
-                glow::FLOAT,
-                false,
-                stride_instance,
-                4 * 4,
-            );
-            gl.vertex_attrib_divisor(i_color_loc, 1);
-
-            gl.enable_vertex_attrib_array(i_material_loc); // i_material
-            gl.vertex_attrib_pointer_f32(
-                i_material_loc,
-                2,
-                glow::FLOAT,
-                false,
-                stride_instance,
-                8 * 4,
-            );
-            gl.vertex_attrib_divisor(i_material_loc, 1);
-
-            gl.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, Some(sphere_ebo));
-            gl.bind_vertex_array(None);
-
-            gl.use_program(Some(program));
-
-            // =========================
-            // 7.2 Setup VAO for instanced sticks
-            // =========================
-            let pos_a_position = gl.get_attrib_location(program_stick, "a_position").unwrap();
-            let normal_a_position = gl.get_attrib_location(program_stick, "a_normal").unwrap();
-            let instance_i_start = gl.get_attrib_location(program_stick, "i_start").unwrap();
-            let instance_i_end = gl.get_attrib_location(program_stick, "i_end").unwrap();
-            let instance_i_radius = gl.get_attrib_location(program_stick, "i_radius").unwrap();
-            let instance_i_color = gl.get_attrib_location(program_stick, "i_color").unwrap();
-            let instance_i_material = gl.get_attrib_location(program_stick, "i_material").unwrap();
-
-            let vao_stick = gl
-                .create_vertex_array()
-                .expect("Cannot create vertex array");
-            gl.bind_vertex_array(Some(vao_stick));
-
-            // per-vertex attributes
-            gl.bind_buffer(glow::ARRAY_BUFFER, Some(stick_vbo));
-            gl.enable_vertex_attrib_array(pos_a_position); // a_position
-            gl.vertex_attrib_pointer_f32(
-                pos_a_position,
-                3,
-                glow::FLOAT,
-                false,
-                stride_vertex_3d,
-                0,
-            );
-            gl.vertex_attrib_divisor(pos_a_position, 0);
-
-            gl.enable_vertex_attrib_array(normal_a_position); // a_normal
-            gl.vertex_attrib_pointer_f32(
-                normal_a_position,
-                3,
-                glow::FLOAT,
-                false,
-                stride_vertex_3d,
-                3 * 4,
-            );
-            gl.vertex_attrib_divisor(normal_a_position, 0);
-
-            // per-instance attributes
-            gl.bind_buffer(glow::ARRAY_BUFFER, Some(stick_instance_buffer));
-            let stride_instance = std::mem::size_of::<StickInstance>() as i32;
-
-            gl.enable_vertex_attrib_array(instance_i_start); // i_start
-            gl.vertex_attrib_pointer_f32(
-                instance_i_start,
-                3,
-                glow::FLOAT,
-                false,
-                stride_instance,
-                0,
-            );
-            gl.vertex_attrib_divisor(instance_i_start, 1);
-
-            gl.enable_vertex_attrib_array(instance_i_end); // i_end
-            gl.vertex_attrib_pointer_f32(
-                instance_i_end,
-                3,
-                glow::FLOAT,
-                false,
-                stride_instance,
-                3 * 4,
-            );
-            gl.vertex_attrib_divisor(instance_i_end, 1);
-
-            gl.enable_vertex_attrib_array(instance_i_radius); // i_radius
-            gl.vertex_attrib_pointer_f32(
-                instance_i_radius,
-                1,
-                glow::FLOAT,
-                false,
-                stride_instance,
-                6 * 4,
-            );
-            gl.vertex_attrib_divisor(instance_i_radius, 1);
-
-            gl.enable_vertex_attrib_array(instance_i_color); // i_color
-            gl.vertex_attrib_pointer_f32(
-                instance_i_color,
-                4,
-                glow::FLOAT,
-                false,
-                stride_instance,
-                7 * 4,
-            );
-            gl.vertex_attrib_divisor(instance_i_color, 1);
-
-            gl.enable_vertex_attrib_array(instance_i_material); // i_material
-            gl.vertex_attrib_pointer_f32(
-                instance_i_material,
-                2,
-                glow::FLOAT,
-                false,
-                stride_instance,
-                11 * 4,
-            );
-            gl.vertex_attrib_divisor(instance_i_material, 1);
-
-            gl.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, Some(stick_ebo));
-            gl.bind_vertex_array(None);
-
-            gl.use_program(Some(program));
 
             // =========================
             // 8. Create shader instance struct
             // =========================
             let mut shader_instance = Self {
-                program,
+                program: None,
                 program_bg,
-                program_sphere,
-                program_stick,
+                program_sphere: None,
+                program_stick: None,
                 vertex3d: vec![],
                 indices: vec![],
                 camera_lighting: Lighting::default(),
-                vao_mesh,
-                vao_sphere,
-                vao_stick,
+                vao_mesh: None,
+                vao_sphere: None,
+                vao_stick: None,
                 sphere_instance_buffer,
                 stick_instance_buffer,
                 sphere_index_count: indices_sphere.len(),
@@ -768,6 +404,10 @@ impl Shader {
                 background_color,
                 vbo,
                 ebo,
+                sphere_vbo,
+                sphere_ebo,
+                stick_vbo,
+                stick_ebo,
                 instance_groups: None,
                 u_model: scene.model_matrix(),
                 u_normal_matrix: scene.normal_matrix(),
@@ -780,6 +420,220 @@ impl Shader {
 
             Some(shader_instance)
         }
+    }
+
+    #[allow(unsafe_op_in_unsafe_fn)]
+    unsafe fn ensure_mesh_pipeline(&mut self, gl: &glow::Context) {
+        use glow::HasContext as _;
+
+        if self.program.is_some() {
+            return;
+        }
+
+        let shader_version = egui_glow::ShaderVersion::get(gl);
+        let program = Self::compile_program(
+            gl,
+            shader_version,
+            "custom_3d_glow",
+            include_str!("./vertex.glsl"),
+            include_str!("./fragment.glsl"),
+        );
+
+        let vao = gl
+            .create_vertex_array()
+            .expect("Cannot create mesh vertex array");
+        gl.bind_vertex_array(Some(vao));
+        gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.vbo));
+
+        let pos_loc = gl.get_attrib_location(program, "a_position").unwrap();
+        let normal_loc = gl.get_attrib_location(program, "a_normal").unwrap();
+        let color_loc = gl.get_attrib_location(program, "a_color").unwrap();
+        let material_loc = gl.get_attrib_location(program, "a_material").unwrap();
+        let stride_vertex_3d = std::mem::size_of::<Vertex3d>() as i32;
+
+        gl.enable_vertex_attrib_array(pos_loc);
+        gl.vertex_attrib_pointer_f32(pos_loc, 3, glow::FLOAT, false, stride_vertex_3d, 0);
+        gl.enable_vertex_attrib_array(normal_loc);
+        gl.vertex_attrib_pointer_f32(normal_loc, 3, glow::FLOAT, false, stride_vertex_3d, 3 * 4);
+        gl.enable_vertex_attrib_array(color_loc);
+        gl.vertex_attrib_pointer_f32(color_loc, 4, glow::FLOAT, false, stride_vertex_3d, 6 * 4);
+        gl.enable_vertex_attrib_array(material_loc);
+        gl.vertex_attrib_pointer_f32(
+            material_loc,
+            2,
+            glow::FLOAT,
+            false,
+            stride_vertex_3d,
+            10 * 4,
+        );
+        gl.bind_vertex_array(None);
+
+        self.program = Some(program);
+        self.vao_mesh = Some(vao);
+    }
+
+    #[allow(unsafe_op_in_unsafe_fn)]
+    unsafe fn ensure_sphere_pipeline(&mut self, gl: &glow::Context) {
+        use glow::HasContext as _;
+
+        if self.program_sphere.is_some() {
+            return;
+        }
+
+        let shader_version = egui_glow::ShaderVersion::get(gl);
+        let program = Self::compile_program(
+            gl,
+            shader_version,
+            "custom_3d_glow_sphere",
+            include_str!("./vertex_sphere.glsl"),
+            include_str!("./fragment.glsl"),
+        );
+
+        let vao = gl
+            .create_vertex_array()
+            .expect("Cannot create sphere vertex array");
+        gl.bind_vertex_array(Some(vao));
+
+        let pos_loc = gl.get_attrib_location(program, "a_position").unwrap();
+        let normal_loc = gl.get_attrib_location(program, "a_normal").unwrap();
+        let i_pos_loc = gl.get_attrib_location(program, "i_position").unwrap();
+        let i_radius_loc = gl.get_attrib_location(program, "i_radius").unwrap();
+        let i_color_loc = gl.get_attrib_location(program, "i_color").unwrap();
+        let i_material_loc = gl.get_attrib_location(program, "i_material").unwrap();
+        let stride_vertex_3d = std::mem::size_of::<Vertex3d>() as i32;
+
+        gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.sphere_vbo));
+        gl.enable_vertex_attrib_array(pos_loc);
+        gl.vertex_attrib_pointer_f32(pos_loc, 3, glow::FLOAT, false, stride_vertex_3d, 0);
+        gl.enable_vertex_attrib_array(normal_loc);
+        gl.vertex_attrib_pointer_f32(normal_loc, 3, glow::FLOAT, false, stride_vertex_3d, 3 * 4);
+
+        gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.sphere_instance_buffer));
+        let stride_instance = std::mem::size_of::<SphereInstance>() as i32;
+        gl.enable_vertex_attrib_array(i_pos_loc);
+        gl.vertex_attrib_pointer_f32(i_pos_loc, 3, glow::FLOAT, false, stride_instance, 0);
+        gl.vertex_attrib_divisor(i_pos_loc, 1);
+        gl.enable_vertex_attrib_array(i_radius_loc);
+        gl.vertex_attrib_pointer_f32(i_radius_loc, 1, glow::FLOAT, false, stride_instance, 3 * 4);
+        gl.vertex_attrib_divisor(i_radius_loc, 1);
+        gl.enable_vertex_attrib_array(i_color_loc);
+        gl.vertex_attrib_pointer_f32(i_color_loc, 4, glow::FLOAT, false, stride_instance, 4 * 4);
+        gl.vertex_attrib_divisor(i_color_loc, 1);
+        gl.enable_vertex_attrib_array(i_material_loc);
+        gl.vertex_attrib_pointer_f32(
+            i_material_loc,
+            2,
+            glow::FLOAT,
+            false,
+            stride_instance,
+            8 * 4,
+        );
+        gl.vertex_attrib_divisor(i_material_loc, 1);
+
+        gl.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, Some(self.sphere_ebo));
+        gl.bind_vertex_array(None);
+
+        self.program_sphere = Some(program);
+        self.vao_sphere = Some(vao);
+    }
+
+    #[allow(unsafe_op_in_unsafe_fn)]
+    unsafe fn ensure_stick_pipeline(&mut self, gl: &glow::Context) {
+        use glow::HasContext as _;
+
+        if self.program_stick.is_some() {
+            return;
+        }
+
+        let shader_version = egui_glow::ShaderVersion::get(gl);
+        let program = Self::compile_program(
+            gl,
+            shader_version,
+            "custom_3d_glow_stick",
+            include_str!("./vertex_stick.glsl"),
+            include_str!("./fragment.glsl"),
+        );
+
+        let vao = gl
+            .create_vertex_array()
+            .expect("Cannot create stick vertex array");
+        gl.bind_vertex_array(Some(vao));
+
+        let pos_a_position = gl.get_attrib_location(program, "a_position").unwrap();
+        let normal_a_position = gl.get_attrib_location(program, "a_normal").unwrap();
+        let instance_i_start = gl.get_attrib_location(program, "i_start").unwrap();
+        let instance_i_end = gl.get_attrib_location(program, "i_end").unwrap();
+        let instance_i_radius = gl.get_attrib_location(program, "i_radius").unwrap();
+        let instance_i_color = gl.get_attrib_location(program, "i_color").unwrap();
+        let instance_i_material = gl.get_attrib_location(program, "i_material").unwrap();
+        let stride_vertex_3d = std::mem::size_of::<Vertex3d>() as i32;
+
+        gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.stick_vbo));
+        gl.enable_vertex_attrib_array(pos_a_position);
+        gl.vertex_attrib_pointer_f32(pos_a_position, 3, glow::FLOAT, false, stride_vertex_3d, 0);
+        gl.vertex_attrib_divisor(pos_a_position, 0);
+        gl.enable_vertex_attrib_array(normal_a_position);
+        gl.vertex_attrib_pointer_f32(
+            normal_a_position,
+            3,
+            glow::FLOAT,
+            false,
+            stride_vertex_3d,
+            3 * 4,
+        );
+        gl.vertex_attrib_divisor(normal_a_position, 0);
+
+        gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.stick_instance_buffer));
+        let stride_instance = std::mem::size_of::<StickInstance>() as i32;
+        gl.enable_vertex_attrib_array(instance_i_start);
+        gl.vertex_attrib_pointer_f32(instance_i_start, 3, glow::FLOAT, false, stride_instance, 0);
+        gl.vertex_attrib_divisor(instance_i_start, 1);
+        gl.enable_vertex_attrib_array(instance_i_end);
+        gl.vertex_attrib_pointer_f32(
+            instance_i_end,
+            3,
+            glow::FLOAT,
+            false,
+            stride_instance,
+            3 * 4,
+        );
+        gl.vertex_attrib_divisor(instance_i_end, 1);
+        gl.enable_vertex_attrib_array(instance_i_radius);
+        gl.vertex_attrib_pointer_f32(
+            instance_i_radius,
+            1,
+            glow::FLOAT,
+            false,
+            stride_instance,
+            6 * 4,
+        );
+        gl.vertex_attrib_divisor(instance_i_radius, 1);
+        gl.enable_vertex_attrib_array(instance_i_color);
+        gl.vertex_attrib_pointer_f32(
+            instance_i_color,
+            4,
+            glow::FLOAT,
+            false,
+            stride_instance,
+            7 * 4,
+        );
+        gl.vertex_attrib_divisor(instance_i_color, 1);
+        gl.enable_vertex_attrib_array(instance_i_material);
+        gl.vertex_attrib_pointer_f32(
+            instance_i_material,
+            2,
+            glow::FLOAT,
+            false,
+            stride_instance,
+            11 * 4,
+        );
+        gl.vertex_attrib_divisor(instance_i_material, 1);
+
+        gl.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, Some(self.stick_ebo));
+        gl.bind_vertex_array(None);
+
+        self.program_stick = Some(program);
+        self.vao_stick = Some(vao);
     }
 
     fn update_scene(&mut self, scene_opt: Option<&Scene>, static_scene_opt: Option<&Scene>) {
@@ -878,129 +732,131 @@ impl Shader {
             // gl.enable(glow::BLEND);
             // gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
 
-            gl.use_program(Some(self.program));
+            if !self.indices.is_empty() {
+                self.ensure_mesh_pipeline(gl);
+                let program = self.program.unwrap();
 
-            gl.uniform_matrix_4_f32_slice(
-                gl.get_uniform_location(self.program, "u_model").as_ref(),
-                false,
-                (self.u_model).as_ref(),
-            );
-            gl.uniform_matrix_4_f32_slice(
-                gl.get_uniform_location(self.program, "u_view").as_ref(),
-                false,
-                (u_view).as_ref(),
-            );
-            gl.uniform_matrix_4_f32_slice(
-                gl.get_uniform_location(self.program, "u_projection")
-                    .as_ref(),
-                false,
-                (u_projection).as_ref(),
-            );
-            gl.uniform_matrix_3_f32_slice(
-                gl.get_uniform_location(self.program, "u_normal_matrix")
-                    .as_ref(),
-                false,
-                (self.u_normal_matrix).as_ref(),
-            );
-
-            gl.uniform_3_f32_slice(
-                gl.get_uniform_location(self.program, "u_light_pos")
-                    .as_ref(),
-                (light_dir_world).as_ref(),
-            );
-
-            gl.uniform_3_f32_slice(
-                gl.get_uniform_location(self.program, "u_view_pos").as_ref(),
-                (u_view_pos).as_ref(),
-            );
-
-            gl.uniform_3_f32_slice(
-                gl.get_uniform_location(self.program, "u_light_color")
-                    .as_ref(),
-                light_color_cam_space.as_ref(),
-            );
-
-            gl.uniform_1_f32(
-                gl.get_uniform_location(self.program, "u_light_intensity")
-                    .as_ref(),
-                1.0,
-            );
-
-            // 绑定并上传缓冲
-            gl.bind_vertex_array(Some(self.vao_mesh));
-            gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.vbo));
-            gl.buffer_data_u8_slice(
-                glow::ARRAY_BUFFER,
-                bytemuck::cast_slice(&self.vertex3d),
-                glow::DYNAMIC_DRAW,
-            );
-
-            gl.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, Some(self.ebo));
-            gl.buffer_data_u8_slice(
-                glow::ELEMENT_ARRAY_BUFFER,
-                bytemuck::cast_slice(&self.indices),
-                glow::DYNAMIC_DRAW,
-            );
-
-            gl.draw_elements(
-                glow::TRIANGLES,
-                self.indices.len() as i32,
-                glow::UNSIGNED_INT,
-                0,
-            );
-
-            if let Some(instance_groups) = &self.instance_groups {
-                gl.use_program(Some(self.program_sphere));
+                gl.use_program(Some(program));
                 gl.uniform_matrix_4_f32_slice(
-                    gl.get_uniform_location(self.program_sphere, "u_model")
-                        .as_ref(),
+                    gl.get_uniform_location(program, "u_model").as_ref(),
                     false,
                     (self.u_model).as_ref(),
                 );
                 gl.uniform_matrix_4_f32_slice(
-                    gl.get_uniform_location(self.program_sphere, "u_view")
-                        .as_ref(),
+                    gl.get_uniform_location(program, "u_view").as_ref(),
                     false,
                     (u_view).as_ref(),
                 );
                 gl.uniform_matrix_4_f32_slice(
-                    gl.get_uniform_location(self.program_sphere, "u_projection")
-                        .as_ref(),
+                    gl.get_uniform_location(program, "u_projection").as_ref(),
                     false,
                     (u_projection).as_ref(),
                 );
                 gl.uniform_matrix_3_f32_slice(
-                    gl.get_uniform_location(self.program_sphere, "u_normal_matrix")
+                    gl.get_uniform_location(program, "u_normal_matrix").as_ref(),
+                    false,
+                    (self.u_normal_matrix).as_ref(),
+                );
+                gl.uniform_3_f32_slice(
+                    gl.get_uniform_location(program, "u_light_pos").as_ref(),
+                    (light_dir_world).as_ref(),
+                );
+                gl.uniform_3_f32_slice(
+                    gl.get_uniform_location(program, "u_view_pos").as_ref(),
+                    (u_view_pos).as_ref(),
+                );
+                gl.uniform_3_f32_slice(
+                    gl.get_uniform_location(program, "u_light_color").as_ref(),
+                    light_color_cam_space.as_ref(),
+                );
+                gl.uniform_1_f32(
+                    gl.get_uniform_location(program, "u_light_intensity")
                         .as_ref(),
+                    1.0,
+                );
+
+                // 绑定并上传缓冲
+                gl.bind_vertex_array(self.vao_mesh);
+                gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.vbo));
+                gl.buffer_data_u8_slice(
+                    glow::ARRAY_BUFFER,
+                    bytemuck::cast_slice(&self.vertex3d),
+                    glow::DYNAMIC_DRAW,
+                );
+
+                gl.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, Some(self.ebo));
+                gl.buffer_data_u8_slice(
+                    glow::ELEMENT_ARRAY_BUFFER,
+                    bytemuck::cast_slice(&self.indices),
+                    glow::DYNAMIC_DRAW,
+                );
+
+                gl.draw_elements(
+                    glow::TRIANGLES,
+                    self.indices.len() as i32,
+                    glow::UNSIGNED_INT,
+                    0,
+                );
+            }
+
+            let has_spheres = self
+                .instance_groups
+                .as_ref()
+                .is_some_and(|groups| !groups.spheres.is_empty());
+            let has_sticks = self
+                .instance_groups
+                .as_ref()
+                .is_some_and(|groups| !groups.sticks.is_empty());
+
+            if has_spheres {
+                self.ensure_sphere_pipeline(gl);
+                let program = self.program_sphere.unwrap();
+                let instance_groups = self.instance_groups.as_ref().unwrap();
+
+                gl.use_program(Some(program));
+                gl.uniform_matrix_4_f32_slice(
+                    gl.get_uniform_location(program, "u_model").as_ref(),
+                    false,
+                    (self.u_model).as_ref(),
+                );
+                gl.uniform_matrix_4_f32_slice(
+                    gl.get_uniform_location(program, "u_view").as_ref(),
+                    false,
+                    (u_view).as_ref(),
+                );
+                gl.uniform_matrix_4_f32_slice(
+                    gl.get_uniform_location(program, "u_projection").as_ref(),
+                    false,
+                    (u_projection).as_ref(),
+                );
+                gl.uniform_matrix_3_f32_slice(
+                    gl.get_uniform_location(program, "u_normal_matrix").as_ref(),
                     false,
                     (self.u_normal_matrix).as_ref(),
                 );
 
                 gl.uniform_3_f32_slice(
-                    gl.get_uniform_location(self.program_sphere, "u_light_pos")
-                        .as_ref(),
+                    gl.get_uniform_location(program, "u_light_pos").as_ref(),
                     (light_dir_world).as_ref(),
                 );
 
                 gl.uniform_3_f32_slice(
-                    gl.get_uniform_location(self.program_sphere, "u_view_pos")
-                        .as_ref(),
+                    gl.get_uniform_location(program, "u_view_pos").as_ref(),
                     (u_view_pos).as_ref(),
                 );
 
                 gl.uniform_3_f32_slice(
-                    gl.get_uniform_location(self.program_sphere, "u_light_color")
-                        .as_ref(),
+                    gl.get_uniform_location(program, "u_light_color").as_ref(),
                     light_color_cam_space.as_ref(),
                 );
 
                 gl.uniform_1_f32(
-                    gl.get_uniform_location(self.program_sphere, "u_light_intensity")
+                    gl.get_uniform_location(program, "u_light_intensity")
                         .as_ref(),
                     1.0,
                 );
 
-                gl.bind_vertex_array(Some(self.vao_sphere));
+                gl.bind_vertex_array(self.vao_sphere);
                 gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.sphere_instance_buffer));
                 gl.buffer_data_u8_slice(
                     glow::ARRAY_BUFFER,
@@ -1015,53 +871,52 @@ impl Shader {
                     0,
                     instance_groups.spheres.len() as i32,
                 );
+            }
 
-                gl.use_program(Some(self.program_stick));
+            if has_sticks {
+                self.ensure_stick_pipeline(gl);
+                let program = self.program_stick.unwrap();
+                let instance_groups = self.instance_groups.as_ref().unwrap();
+
+                gl.use_program(Some(program));
                 gl.uniform_matrix_4_f32_slice(
-                    gl.get_uniform_location(self.program_stick, "u_model")
-                        .as_ref(),
+                    gl.get_uniform_location(program, "u_model").as_ref(),
                     false,
                     (self.u_model).as_ref(),
                 );
                 gl.uniform_matrix_4_f32_slice(
-                    gl.get_uniform_location(self.program_stick, "u_view")
-                        .as_ref(),
+                    gl.get_uniform_location(program, "u_view").as_ref(),
                     false,
                     (u_view).as_ref(),
                 );
                 gl.uniform_matrix_4_f32_slice(
-                    gl.get_uniform_location(self.program_stick, "u_projection")
-                        .as_ref(),
+                    gl.get_uniform_location(program, "u_projection").as_ref(),
                     false,
                     (u_projection).as_ref(),
                 );
                 gl.uniform_matrix_3_f32_slice(
-                    gl.get_uniform_location(self.program_stick, "u_normal_matrix")
-                        .as_ref(),
+                    gl.get_uniform_location(program, "u_normal_matrix").as_ref(),
                     false,
                     (self.u_normal_matrix).as_ref(),
                 );
                 gl.uniform_3_f32_slice(
-                    gl.get_uniform_location(self.program_stick, "u_light_pos")
-                        .as_ref(),
+                    gl.get_uniform_location(program, "u_light_pos").as_ref(),
                     (light_dir_world).as_ref(),
                 );
                 gl.uniform_3_f32_slice(
-                    gl.get_uniform_location(self.program_stick, "u_view_pos")
-                        .as_ref(),
+                    gl.get_uniform_location(program, "u_view_pos").as_ref(),
                     (u_view_pos).as_ref(),
                 );
                 gl.uniform_3_f32_slice(
-                    gl.get_uniform_location(self.program_stick, "u_light_color")
-                        .as_ref(),
+                    gl.get_uniform_location(program, "u_light_color").as_ref(),
                     light_color_cam_space.as_ref(),
                 );
                 gl.uniform_1_f32(
-                    gl.get_uniform_location(self.program_stick, "u_light_intensity")
+                    gl.get_uniform_location(program, "u_light_intensity")
                         .as_ref(),
                     1.0,
                 );
-                gl.bind_vertex_array(Some(self.vao_stick));
+                gl.bind_vertex_array(self.vao_stick);
                 gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.stick_instance_buffer));
                 gl.buffer_data_u8_slice(
                     glow::ARRAY_BUFFER,

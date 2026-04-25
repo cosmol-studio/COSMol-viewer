@@ -3,8 +3,8 @@ A high-performance molecular viewer for Python and Rust, powered by a unified Ru
 It supports both in-notebook visualization and native desktop rendering, with smooth playback for scientific animations.
 
 <div align="center">
-  <a href="https://pypi.org/project/cosmol_viewer/">
-    <img src="https://img.shields.io/pypi/v/cosmol_viewer.svg" alt="PyPi Latest Release" />
+  <a href="https://pypi.org/project/cosmol-viewer/">
+    <img src="https://img.shields.io/pypi/v/cosmol-viewer.svg" alt="PyPi Latest Release" />
   </a>
   <a href="https://cosmol-studio.github.io/COSMol-viewer">
     <img src="https://img.shields.io/badge/docs-latest-blue.svg" alt="Documentation Status" />
@@ -31,15 +31,16 @@ All implementations share the same Rust rendering engine, ensuring consistent pe
 ## Quick concepts
 
 - **Scene**: container for shapes (molecules, proteins, spheres, etc.).
-- **Viewer.render(scene, ...)**: create a static viewer bound to a canvas (native or notebook). Good for static visualization.
+- **Viewer.render(scene, ...)**: create a static viewer in a native window or notebook canvas. Good for static visualization.
 - **viewer.update(scene)**: push incremental changes after `Viewer.render()` (real-time / streaming use-cases).
 - **Animation**: An Animation object containing frames and settings.
-- **Viewer.play(animation, interval, loops, width, height, smooth)**: *recommended* for precomputed animations and demonstrations. The viewer takes care of playback timing and looping.
+- **Animation(interval, loops, interpolate)**: stores precomputed frames and playback settings.
+- **Viewer.play(animation, width, height)**: *recommended* for precomputed animations and demonstrations. The viewer takes care of playback timing and looping.
 
 **Why prefer `play` for demos?**
 - Single call API (hand off responsibility to the viewer).
 - Built-in timing & loop control.
-- Optional `smooth` interpolation between frames for visually pleasing playback even when input frame rate is low.
+- Optional `interpolate` mode between frames for visually pleasing playback even when input frame rate is low.
 
 **Why keep `update`?**
 - `update` is ideal for real-time simulations, MD runs, or streaming data where frames are not precomputed. It provides strict fidelity (no interpolation) and minimal latency.
@@ -70,7 +71,7 @@ scene.add_shape_with_id("molecule", mol)
 
 viewer = Viewer.render(scene, width=800, height=500)
 
-viewer.save_image("screenshot.png")
+viewer.save_image("screenshot.png")  # Native desktop backend.
 
 print("Press Any Key to exit...", end='', flush=True)
 _ = input()  # Keep the viewer open until you decide to close
@@ -81,7 +82,7 @@ _ = input()  # Keep the viewer open until you decide to close
 ```python
 from cosmol_viewer import Scene, Viewer, Molecule, Animation
 
-anim = Animation(interval=0.05, loops=-1, smooth=False)
+anim = Animation(interval=0.05, loops=-1, interpolate=False)
 for i in range(1, 10):
     with open(f"frames/frame_{i}.sdf", "r") as f:
         mol = Molecule.from_sdf(f.read())
@@ -90,7 +91,7 @@ for i in range(1, 10):
     scene.add_shape(mol)
     anim.add_frame(scene)
 
-Viewer.play(anim, width=800, height=500) # loops=-1 for infinite repeat
+Viewer.play(anim, width=800, height=500)  # loops=-1 for infinite repeat
 ```
 
 more examples can be found in the [examples](https://github.com/COSMol-repl/COSMol-viewer/tree/main/cosmol_viewer/examples) folder:

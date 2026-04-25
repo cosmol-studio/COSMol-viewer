@@ -270,12 +270,7 @@ pub struct SphereInstance {
 }
 
 impl SphereInstance {
-    pub fn new(
-        position: [f32; 3],
-        radius: f32,
-        color: [f32; 4],
-        material: [f32; 2],
-    ) -> Self {
+    pub fn new(position: [f32; 3], radius: f32, color: [f32; 4], material: [f32; 2]) -> Self {
         Self {
             position,
             radius,

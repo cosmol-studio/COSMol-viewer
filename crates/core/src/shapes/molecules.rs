@@ -455,9 +455,6 @@ impl IntoInstanceGroups for Molecule {
                 offset[2] / off_norm,
             ];
 
-            // 偏移距离（可调）
-            let d = 0.22;
-
             // 颜色和半径与原来一致
             let color_a = self.visual_style.color.unwrap_or(
                 self.atom_types
@@ -486,9 +483,13 @@ impl IntoInstanceGroups for Molecule {
                 BondType::AROMATIC => (2, 0.09),
                 _ => (1, 0.05), // aromatic等以后再处理
             };
+            let offset_step = match bond_type {
+                BondType::TRIPLE => 0.14,
+                _ => 0.22,
+            };
 
             for k in 0..num_sticks {
-                let offset_mul = (k as f32 - (num_sticks - 1) as f32 * 0.5) * d;
+                let offset_mul = (k as f32 - (num_sticks - 1) as f32 * 0.5) * offset_step;
 
                 let pos_a_k = [
                     pos_a[0] + off_n[0] * offset_mul,
