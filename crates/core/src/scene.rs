@@ -31,7 +31,26 @@ pub struct Scene {
     pub viewport: Option<[usize; 2]>,
     pub scene_center: [f32; 3],
     pub camera_lights: Option<Lighting>,
+    #[serde(default)]
+    pub outline: OutlineSettings,
     // pub _world_lights: Lighting,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+pub struct OutlineSettings {
+    pub enabled: bool,
+    pub color: Vec3,
+    pub width: f32,
+}
+
+impl Default for OutlineSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            color: Vec3::new(0.02, 0.02, 0.02),
+            width: 0.035,
+        }
+    }
 }
 
 #[derive(Error, Debug)]
@@ -53,6 +72,7 @@ impl Default for Scene {
             viewport: None,
             scene_center: [0.0, 0.0, 0.0],
             camera_lights: None,
+            outline: OutlineSettings::default(),
         }
     }
 }
@@ -82,6 +102,21 @@ impl Scene {
 
     pub fn get_instances_grouped(&self) -> InstanceGroups {
         let scale = self.scale;
+        let shape_count = self.named_shapes.len() + self.unnamed_shapes.len();
+
+        if shape_count <= 128 {
+            let mut groups = InstanceGroups::default();
+
+            for shape in self.named_shapes.values() {
+                groups.merge(shape.to_instance_group(scale));
+            }
+
+            for shape in &self.unnamed_shapes {
+                groups.merge(shape.to_instance_group(scale));
+            }
+
+            return groups;
+        }
 
         // 分别处理两部分
         let (named_groups, unnamed_groups) = rayon::join(
@@ -162,6 +197,22 @@ impl Scene {
         self.background_color = Vec3::ZERO;
     }
 
+    pub fn set_outline(&mut self, enabled: bool, color: Vec3, width: f32) {
+        self.outline = OutlineSettings {
+            enabled,
+            color,
+            width: width.max(0.0),
+        };
+    }
+
+    pub fn enable_outline(&mut self) {
+        self.outline.enabled = true;
+    }
+
+    pub fn disable_outline(&mut self) {
+        self.outline.enabled = false;
+    }
+
     pub fn prepare_for_wasm(&mut self) {
         for shape in self.named_shapes.values_mut() {
             if let Shape::Protein(protein) = shape {
@@ -234,6 +285,7 @@ impl Interpolatable for Scene {
             viewport: self.viewport,
             scene_center: [scene_center.x, scene_center.y, scene_center.z],
             camera_lights: None,
+            outline: self.outline,
         }
     }
 }

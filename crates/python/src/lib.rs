@@ -4,7 +4,6 @@ use cosmol_viewer_core::scene::Animation as _Animation;
 use pyo3::exceptions::PyIndexError;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::exceptions::PyValueError;
-use std::env;
 use std::ffi::CStr;
 use std::sync::OnceLock;
 
@@ -13,13 +12,16 @@ use pyo3::{ffi::c_str, prelude::*};
 use crate::shapes::{PyMolecule, PyProtein, PySphere, PyStick};
 use cosmol_viewer_core::{NativeGuiViewer, scene::Scene as _Scene};
 use cosmol_viewer_wasm::NotebookViewer;
+#[cfg(feature = "stubgen")]
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
+#[cfg(not(feature = "stubgen"))]
+use pyo3_stub_gen_derive::remove_gen_stub;
 
 mod shapes;
 mod utils;
 
 #[derive(Clone)]
-#[gen_stub_pyclass]
+#[cfg_attr(feature = "stubgen", gen_stub_pyclass)]
 #[pyclass(from_py_object)]
 #[doc = r#"
 A container for handling frame-based animations in the viewer.
@@ -51,7 +53,8 @@ pub struct Animation {
     inner: _Animation,
 }
 
-#[gen_stub_pymethods]
+#[cfg_attr(feature = "stubgen", gen_stub_pymethods)]
+#[cfg_attr(not(feature = "stubgen"), remove_gen_stub)]
 #[pymethods]
 impl Animation {
     #[new]
@@ -134,7 +137,7 @@ scene : Scene
 }
 
 #[derive(Clone)]
-#[gen_stub_pyclass]
+#[cfg_attr(feature = "stubgen", gen_stub_pyclass)]
 #[pyclass(from_py_object)]
 #[doc = r#"
 A 3D scene container for visualizing molecular or geometric shapes.
@@ -155,7 +158,8 @@ pub struct Scene {
     inner: _Scene,
 }
 
-#[gen_stub_pymethods]
+#[cfg_attr(feature = "stubgen", gen_stub_pymethods)]
+#[cfg_attr(not(feature = "stubgen"), remove_gen_stub)]
 #[pymethods]
 impl Scene {
     #[new]
@@ -343,6 +347,68 @@ Set the background color of the scene to black.
         self.inner.use_black_background();
     }
 
+    #[doc = r#"
+Configure the scene outline pass.
+
+Parameters
+----------
+enabled : bool
+    Whether to render outlines around supported shapes.
+color : tuple[int, int, int] or str, optional
+    The outline color as an RGB tuple or a hex string. If omitted, the current
+    outline color is kept.
+width : float, optional
+    The outline width in scene units. If omitted, the current outline width is kept.
+"#]
+    #[pyo3(signature = (enabled, color=None, width=None))]
+    pub fn set_outline(
+        &mut self,
+        enabled: bool,
+        color: Option<Bound<'_, PyAny>>,
+        width: Option<f32>,
+    ) -> PyResult<()> {
+        let color = match color {
+            Some(color) => py_to_color(color)?.into(),
+            None => self.inner.outline.color,
+        };
+        let width = width.unwrap_or(self.inner.outline.width);
+        self.inner.set_outline(enabled, color, width);
+        Ok(())
+    }
+
+    #[doc = r#"
+Enable outlines around supported shapes.
+
+Parameters
+----------
+color : tuple[int, int, int] or str, optional
+    The outline color as an RGB tuple or a hex string. If omitted, the current
+    outline color is kept.
+width : float, optional
+    The outline width in scene units. If omitted, the current outline width is kept.
+"#]
+    #[pyo3(signature = (color=None, width=None))]
+    pub fn enable_outline(
+        &mut self,
+        color: Option<Bound<'_, PyAny>>,
+        width: Option<f32>,
+    ) -> PyResult<()> {
+        let color = match color {
+            Some(color) => py_to_color(color)?.into(),
+            None => self.inner.outline.color,
+        };
+        let width = width.unwrap_or(self.inner.outline.width);
+        self.inner.set_outline(true, color, width);
+        Ok(())
+    }
+
+    #[doc = r#"
+Disable outlines around shapes in the scene.
+"#]
+    pub fn disable_outline(&mut self) {
+        self.inner.disable_outline();
+    }
+
     #[gen_stub(skip)]
     fn __repr__(&self) -> String {
         format!("RustScene({:?})", self.inner)
@@ -375,7 +441,7 @@ impl std::fmt::Display for RuntimeEnv {
     }
 }
 
-#[gen_stub_pyclass]
+#[cfg_attr(feature = "stubgen", gen_stub_pyclass)]
 #[pyclass]
 #[pyo3(crate = "pyo3", unsendable)]
 #[doc = r#"
@@ -442,7 +508,8 @@ def detect_env():
     Ok(env)
 }
 
-#[gen_stub_pymethods]
+#[cfg_attr(feature = "stubgen", gen_stub_pymethods)]
+#[cfg_attr(not(feature = "stubgen"), remove_gen_stub)]
 #[pymethods]
 impl Viewer {
     #[staticmethod]
@@ -748,5 +815,7 @@ pub fn setup_wasm_if_needed(py: Python, env: RuntimeEnv) -> PyResult<()> {
     Ok(())
 }
 
+#[cfg(feature = "stubgen")]
 use pyo3_stub_gen::define_stub_info_gatherer;
+#[cfg(feature = "stubgen")]
 define_stub_info_gatherer!(stub_info);

@@ -12,6 +12,7 @@ license.workspace = true
 
 [dependencies]
 cosmol_viewer_core.workspace = true
+cosmolkit.workspace = true
 
 [features]
 default = []

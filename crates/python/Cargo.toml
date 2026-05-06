@@ -12,15 +12,23 @@ serde_json.workspace = true
 base64.workspace = true
 eframe.workspace = true
 pyo3.workspace = true
-pyo3-stub-gen = { version = "0.22.1", default-features = false }
+pyo3-stub-gen = { version = "0.22.2", default-features = false, optional = true }
+pyo3-stub-gen-derive = "0.22.2"
 
 [lib]
 name = "cosmol_viewer"
 crate-type = ["cdylib", "rlib"]
 
+[[bin]]
+name = "stub_gen"
+required-features = ["stubgen"]
+
 [features]
-default = ["extension-module"]
-extension-module = ["pyo3/extension-module", "pyo3/abi3-py310"]
-stubgen = []
+default = ["release-abi3-py39"]
+extension-module = ["pyo3/macros", "pyo3/extension-module"]
+release-abi3-py39 = ["extension-module", "pyo3/abi3-py39"]
+dev-abi3-py310 = ["extension-module", "pyo3/abi3-py310"]
+dev-stub = ["dev-abi3-py310", "stubgen"]
+stubgen = ["dep:pyo3-stub-gen"]
 wayland = ["cosmol_viewer_core/wayland"]
 x11 = ["cosmol_viewer_core/x11"]

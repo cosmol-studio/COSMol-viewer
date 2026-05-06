@@ -1,7 +1,8 @@
 #[macro_export]
 macro_rules! impl_stylable_pymethods {
     ($pyclass:ident, $return_ty:ident) => {
-        #[gen_stub_pymethods]
+        #[cfg_attr(feature = "stubgen", gen_stub_pymethods)]
+        #[cfg_attr(not(feature = "stubgen"), remove_gen_stub)]
         #[pymethods]
         impl $pyclass {
             #[gen_stub(skip)]

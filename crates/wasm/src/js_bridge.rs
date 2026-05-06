@@ -242,7 +242,7 @@ impl NotebookViewer {
 
         let py_result = output.call1((combined_js,))?;
 
-        let res: &str = py_result.extract()?;
+        let res: String = py_result.extract()?;
 
         let result: R = decompress_data(&res).map_err(|e| {
             PyErr::new::<PyRuntimeError, _>(format!(

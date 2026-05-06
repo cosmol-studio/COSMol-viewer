@@ -12,7 +12,7 @@ use eframe::{
 use glam::{Quat, Vec3};
 
 use crate::Scene;
-use crate::scene::{Animation, Lighting};
+use crate::scene::{Animation, Lighting, OutlineSettings};
 use crate::shapes::Sphere;
 use crate::shapes::SphereInstance;
 use crate::shapes::Stick;
@@ -182,9 +182,13 @@ struct Shader {
     program_bg: glow::Program,
     program_sphere: Option<glow::Program>,
     program_stick: Option<glow::Program>,
+    program_sphere_outline: Option<glow::Program>,
+    program_stick_outline: Option<glow::Program>,
     vao_mesh: Option<glow::VertexArray>,
     vao_sphere: Option<glow::VertexArray>,
     vao_stick: Option<glow::VertexArray>,
+    vao_sphere_outline: Option<glow::VertexArray>,
+    vao_stick_outline: Option<glow::VertexArray>,
     camera_lighting: Lighting,
     vertex3d: Vec<Vertex3d>,
     indices: Vec<u32>,
@@ -202,6 +206,7 @@ struct Shader {
     instance_groups: Option<InstanceGroups>,
     u_model: Mat4,
     u_normal_matrix: Mat3,
+    outline: OutlineSettings,
 }
 
 #[expect(unsafe_code)] // we need unsafe code to use glow
@@ -391,12 +396,16 @@ impl Shader {
                 program_bg,
                 program_sphere: None,
                 program_stick: None,
+                program_sphere_outline: None,
+                program_stick_outline: None,
                 vertex3d: vec![],
                 indices: vec![],
                 camera_lighting: Lighting::default(),
                 vao_mesh: None,
                 vao_sphere: None,
                 vao_stick: None,
+                vao_sphere_outline: None,
+                vao_stick_outline: None,
                 sphere_instance_buffer,
                 stick_instance_buffer,
                 sphere_index_count: indices_sphere.len(),
@@ -411,6 +420,7 @@ impl Shader {
                 instance_groups: None,
                 u_model: scene.model_matrix(),
                 u_normal_matrix: scene.normal_matrix(),
+                outline: scene.outline,
             };
 
             // =========================
@@ -636,7 +646,120 @@ impl Shader {
         self.vao_stick = Some(vao);
     }
 
-    fn update_scene(&mut self, scene_opt: Option<&Scene>, static_scene_opt: Option<&Scene>) {
+    #[allow(unsafe_op_in_unsafe_fn)]
+    unsafe fn ensure_sphere_outline_pipeline(&mut self, gl: &glow::Context) {
+        use glow::HasContext as _;
+
+        if self.program_sphere_outline.is_some() {
+            return;
+        }
+
+        let shader_version = egui_glow::ShaderVersion::get(gl);
+        let program = Self::compile_program(
+            gl,
+            shader_version,
+            "custom_3d_glow_sphere_outline",
+            include_str!("./vertex_sphere_outline.glsl"),
+            include_str!("./fragment_outline.glsl"),
+        );
+
+        let vao = gl
+            .create_vertex_array()
+            .expect("Cannot create sphere outline vertex array");
+        gl.bind_vertex_array(Some(vao));
+
+        let pos_loc = gl.get_attrib_location(program, "a_position").unwrap();
+        let i_pos_loc = gl.get_attrib_location(program, "i_position").unwrap();
+        let i_radius_loc = gl.get_attrib_location(program, "i_radius").unwrap();
+        let stride_vertex_3d = std::mem::size_of::<Vertex3d>() as i32;
+
+        gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.sphere_vbo));
+        gl.enable_vertex_attrib_array(pos_loc);
+        gl.vertex_attrib_pointer_f32(pos_loc, 3, glow::FLOAT, false, stride_vertex_3d, 0);
+
+        gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.sphere_instance_buffer));
+        let stride_instance = std::mem::size_of::<SphereInstance>() as i32;
+        gl.enable_vertex_attrib_array(i_pos_loc);
+        gl.vertex_attrib_pointer_f32(i_pos_loc, 3, glow::FLOAT, false, stride_instance, 0);
+        gl.vertex_attrib_divisor(i_pos_loc, 1);
+        gl.enable_vertex_attrib_array(i_radius_loc);
+        gl.vertex_attrib_pointer_f32(i_radius_loc, 1, glow::FLOAT, false, stride_instance, 3 * 4);
+        gl.vertex_attrib_divisor(i_radius_loc, 1);
+
+        gl.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, Some(self.sphere_ebo));
+        gl.bind_vertex_array(None);
+
+        self.program_sphere_outline = Some(program);
+        self.vao_sphere_outline = Some(vao);
+    }
+
+    #[allow(unsafe_op_in_unsafe_fn)]
+    unsafe fn ensure_stick_outline_pipeline(&mut self, gl: &glow::Context) {
+        use glow::HasContext as _;
+
+        if self.program_stick_outline.is_some() {
+            return;
+        }
+
+        let shader_version = egui_glow::ShaderVersion::get(gl);
+        let program = Self::compile_program(
+            gl,
+            shader_version,
+            "custom_3d_glow_stick_outline",
+            include_str!("./vertex_stick_outline.glsl"),
+            include_str!("./fragment_outline.glsl"),
+        );
+
+        let vao = gl
+            .create_vertex_array()
+            .expect("Cannot create stick outline vertex array");
+        gl.bind_vertex_array(Some(vao));
+
+        let pos_a_position = gl.get_attrib_location(program, "a_position").unwrap();
+        let instance_i_start = gl.get_attrib_location(program, "i_start").unwrap();
+        let instance_i_end = gl.get_attrib_location(program, "i_end").unwrap();
+        let instance_i_radius = gl.get_attrib_location(program, "i_radius").unwrap();
+        let stride_vertex_3d = std::mem::size_of::<Vertex3d>() as i32;
+
+        gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.stick_vbo));
+        gl.enable_vertex_attrib_array(pos_a_position);
+        gl.vertex_attrib_pointer_f32(pos_a_position, 3, glow::FLOAT, false, stride_vertex_3d, 0);
+        gl.vertex_attrib_divisor(pos_a_position, 0);
+
+        gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.stick_instance_buffer));
+        let stride_instance = std::mem::size_of::<StickInstance>() as i32;
+        gl.enable_vertex_attrib_array(instance_i_start);
+        gl.vertex_attrib_pointer_f32(instance_i_start, 3, glow::FLOAT, false, stride_instance, 0);
+        gl.vertex_attrib_divisor(instance_i_start, 1);
+        gl.enable_vertex_attrib_array(instance_i_end);
+        gl.vertex_attrib_pointer_f32(
+            instance_i_end,
+            3,
+            glow::FLOAT,
+            false,
+            stride_instance,
+            3 * 4,
+        );
+        gl.vertex_attrib_divisor(instance_i_end, 1);
+        gl.enable_vertex_attrib_array(instance_i_radius);
+        gl.vertex_attrib_pointer_f32(
+            instance_i_radius,
+            1,
+            glow::FLOAT,
+            false,
+            stride_instance,
+            6 * 4,
+        );
+        gl.vertex_attrib_divisor(instance_i_radius, 1);
+
+        gl.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, Some(self.stick_ebo));
+        gl.bind_vertex_array(None);
+
+        self.program_stick_outline = Some(program);
+        self.vao_stick_outline = Some(vao);
+    }
+
+    fn update_scene(&mut self, scene_opt: Option<&Scene>, _static_scene_opt: Option<&Scene>) {
         let scene = if let Some(scene_data) = scene_opt {
             scene_data
         } else {
@@ -674,6 +797,8 @@ impl Shader {
         }
 
         self.instance_groups = Some(scene.get_instances_grouped());
+        self.outline = scene.outline;
+        self.outline.width *= scene.scale;
 
         if let Some(lighting) = scene.camera_lights.as_ref() {
             self.camera_lighting = lighting.clone();
@@ -931,6 +1056,105 @@ impl Shader {
                     0,
                     instance_groups.sticks.len() as i32,
                 );
+            }
+
+            if self.outline.enabled && self.outline.width > 0.0 && (has_spheres || has_sticks) {
+                let sphere_count = self
+                    .instance_groups
+                    .as_ref()
+                    .map_or(0, |groups| groups.spheres.len());
+                let stick_count = self
+                    .instance_groups
+                    .as_ref()
+                    .map_or(0, |groups| groups.sticks.len());
+
+                gl.cull_face(glow::FRONT);
+                gl.depth_mask(false);
+                gl.depth_func(glow::LEQUAL);
+                gl.enable(glow::POLYGON_OFFSET_FILL);
+                gl.polygon_offset(1.0, 1.0);
+
+                if has_spheres {
+                    self.ensure_sphere_outline_pipeline(gl);
+                    let program = self.program_sphere_outline.unwrap();
+
+                    gl.use_program(Some(program));
+                    gl.uniform_matrix_4_f32_slice(
+                        gl.get_uniform_location(program, "u_model").as_ref(),
+                        false,
+                        (self.u_model).as_ref(),
+                    );
+                    gl.uniform_matrix_4_f32_slice(
+                        gl.get_uniform_location(program, "u_view").as_ref(),
+                        false,
+                        (u_view).as_ref(),
+                    );
+                    gl.uniform_matrix_4_f32_slice(
+                        gl.get_uniform_location(program, "u_projection").as_ref(),
+                        false,
+                        (u_projection).as_ref(),
+                    );
+                    gl.uniform_1_f32(
+                        gl.get_uniform_location(program, "u_outline_width").as_ref(),
+                        self.outline.width,
+                    );
+                    gl.uniform_3_f32_slice(
+                        gl.get_uniform_location(program, "u_outline_color").as_ref(),
+                        self.outline.color.as_ref(),
+                    );
+
+                    gl.bind_vertex_array(self.vao_sphere_outline);
+                    gl.draw_elements_instanced(
+                        glow::TRIANGLES,
+                        self.sphere_index_count as i32,
+                        glow::UNSIGNED_INT,
+                        0,
+                        sphere_count as i32,
+                    );
+                }
+
+                if has_sticks {
+                    self.ensure_stick_outline_pipeline(gl);
+                    let program = self.program_stick_outline.unwrap();
+
+                    gl.use_program(Some(program));
+                    gl.uniform_matrix_4_f32_slice(
+                        gl.get_uniform_location(program, "u_model").as_ref(),
+                        false,
+                        (self.u_model).as_ref(),
+                    );
+                    gl.uniform_matrix_4_f32_slice(
+                        gl.get_uniform_location(program, "u_view").as_ref(),
+                        false,
+                        (u_view).as_ref(),
+                    );
+                    gl.uniform_matrix_4_f32_slice(
+                        gl.get_uniform_location(program, "u_projection").as_ref(),
+                        false,
+                        (u_projection).as_ref(),
+                    );
+                    gl.uniform_1_f32(
+                        gl.get_uniform_location(program, "u_outline_width").as_ref(),
+                        self.outline.width,
+                    );
+                    gl.uniform_3_f32_slice(
+                        gl.get_uniform_location(program, "u_outline_color").as_ref(),
+                        self.outline.color.as_ref(),
+                    );
+
+                    gl.bind_vertex_array(self.vao_stick_outline);
+                    gl.draw_elements_instanced(
+                        glow::TRIANGLES,
+                        self.stick_index_count as i32,
+                        glow::UNSIGNED_INT,
+                        0,
+                        stick_count as i32,
+                    );
+                }
+
+                gl.disable(glow::POLYGON_OFFSET_FILL);
+                gl.depth_mask(true);
+                gl.cull_face(glow::BACK);
             }
         }
     }

@@ -1,8 +1,11 @@
 use pyo3_stub_gen::Result;
+use std::env;
 use std::fs;
 use std::path::Path;
 
 fn main() -> Result<()> {
+    env::set_current_dir(env!("CARGO_MANIFEST_DIR"))?;
+
     let stub = cosmol_viewer::stub_info()?;
     stub.generate()?;
 

@@ -4,8 +4,12 @@ use crate::utils::InstanceGroups;
 pub use crate::utils::Logger;
 use crate::{
     Shape,
-    shapes::{sphere::Sphere, stick::Stick},
+    shapes::{sphere::SphereInstance, stick::StickInstance},
     utils::{Interaction, Interpolatable, IntoInstanceGroups, Material, MeshData, Stylable},
+};
+use cosmolkit::{
+    BondOrder as CosmolkitBondOrder, Molecule as CosmolkitMolecule,
+    io::sdf::{SdfCoordinateMode, read_sdf_from_str_with_coordinate_mode},
 };
 use glam::Vec3;
 use na_seq::Element;
@@ -214,9 +218,214 @@ pub enum ParseSdfError {
 
 impl Molecule {
     pub fn from_sdf(sdf: &str) -> Result<Self, ParseSdfError> {
-        let molecule_data =
-            Sdf::new(sdf).map_err(|e| ParseSdfError::ParsingError(e.to_string()))?;
-        Self::new(molecule_data)
+        match Self::from_sdf_with_cosmolkit(sdf) {
+            Ok(molecule) => Ok(molecule),
+            Err(cosmolkit_error) => {
+                eprintln!(
+                    "[WARN] COSMolKit SDF parser failed; falling back to legacy SDF parser: {cosmolkit_error}"
+                );
+                let molecule_data = Sdf::new(sdf).map_err(|fallback_error| {
+                    ParseSdfError::ParsingError(format!(
+                        "COSMolKit parser failed: {cosmolkit_error}; fallback parser failed: {fallback_error}"
+                    ))
+                })?;
+                Self::new(molecule_data)
+            }
+        }
+    }
+
+    fn from_sdf_with_cosmolkit(sdf: &str) -> Result<Self, ParseSdfError> {
+        let record = read_sdf_from_str_with_coordinate_mode(sdf, SdfCoordinateMode::Force3D)
+            .map_err(|e| ParseSdfError::ParsingError(e.to_string()))?;
+        let mut molecule = record.molecule;
+        molecule.props_mut().sdf_data_fields = record.data_fields;
+        Self::from_cosmolkit(&molecule)
+    }
+
+    pub fn from_cosmolkit(molecule: &CosmolkitMolecule) -> Result<Self, ParseSdfError> {
+        let molecule = match molecule.with_kekulized_bonds(true) {
+            Ok(molecule) => molecule,
+            Err(error) => {
+                eprintln!(
+                    "[WARN] COSMolKit kekulize failed; keeping original aromatic bond representation: {error}"
+                );
+                molecule.clone()
+            }
+        };
+
+        let molecule = if molecule.coords_3d().is_none() && molecule.coords_2d().is_none() {
+            molecule
+                .with_2d_coords()
+                .map_err(|e| ParseSdfError::ParsingError(e.to_string()))?
+        } else {
+            molecule
+        };
+
+        let atom_posits = if let Some(coords) = molecule.coords_3d() {
+            let atom_count = molecule.atoms().len();
+            if coords.len() < atom_count {
+                return Err(ParseSdfError::ParsingError(format!(
+                    "COSMolKit atom/coordinate count mismatch: {} atoms, {} coordinates",
+                    atom_count,
+                    coords.len()
+                )));
+            }
+            if coords.len() > atom_count {
+                eprintln!(
+                    "[WARN] COSMolKit exposed {} coordinates for {atom_count} atoms; ignoring trailing coordinates",
+                    coords.len()
+                );
+            }
+            coords
+                .iter()
+                .take(atom_count)
+                .map(|coord| Vec3::new(coord.x as f32, coord.y as f32, coord.z as f32))
+                .collect()
+        } else if let Some(coords) = molecule.coords_2d() {
+            let atom_count = molecule.atoms().len();
+            if coords.len() < atom_count {
+                return Err(ParseSdfError::ParsingError(format!(
+                    "COSMolKit atom/coordinate count mismatch: {} atoms, {} coordinates",
+                    atom_count,
+                    coords.len()
+                )));
+            }
+            if coords.len() > atom_count {
+                eprintln!(
+                    "[WARN] COSMolKit exposed {} coordinates for {atom_count} atoms; ignoring trailing coordinates",
+                    coords.len()
+                );
+            }
+            coords
+                .iter()
+                .take(atom_count)
+                .map(|coord| Vec3::new(coord.x as f32, coord.y as f32, 0.0))
+                .collect()
+        } else {
+            return Err(ParseSdfError::ParsingError(
+                "COSMolKit did not expose coordinates".to_string(),
+            ));
+        };
+
+        let atom_types = molecule
+            .atoms()
+            .iter()
+            .map(|atom| Element::from_atomic_number(atom.atomic_num).unwrap_or(Element::Other))
+            .collect();
+        let atom_colors = atom_colors_from_cosmolkit_weights(&molecule);
+
+        let mut bond_indices = Vec::with_capacity(molecule.bonds().len());
+        let mut bond_types = Vec::with_capacity(molecule.bonds().len());
+        for bond in molecule.bonds() {
+            if bond.begin_atom >= molecule.atoms().len() || bond.end_atom >= molecule.atoms().len()
+            {
+                return Err(ParseSdfError::ParsingError(format!(
+                    "COSMolKit bond {} references out-of-range atoms {}-{}",
+                    bond.index, bond.begin_atom, bond.end_atom
+                )));
+            }
+            bond_indices.push([bond.begin_atom, bond.end_atom]);
+            bond_types.push(match bond.order {
+                CosmolkitBondOrder::Single => BondType::SINGLE,
+                CosmolkitBondOrder::Double => BondType::DOUBLE,
+                CosmolkitBondOrder::Triple => BondType::TRIPLE,
+                CosmolkitBondOrder::Aromatic if bond.is_aromatic => BondType::AROMATIC,
+                CosmolkitBondOrder::Aromatic => BondType::AROMATIC,
+                _ => BondType::UNKNOWN,
+            });
+        }
+
+        Ok(Self {
+            style: MoleculeStyle::BallAndStick,
+            atom_types,
+            atom_posits,
+            atom_colors,
+            bond_types,
+            bond_indices,
+            quality: 6,
+            visual_style: Material {
+                opacity: 1.0,
+                visible: true,
+                ..Default::default()
+            },
+            interaction: Default::default(),
+        })
+    }
+
+    pub fn from_atom_bond_data(
+        atom_atomic_numbers: Vec<u8>,
+        atom_posits: Vec<[f32; 3]>,
+        bond_order_codes: Vec<i64>,
+        bond_indices: Vec<[usize; 2]>,
+        atom_colors: Option<Vec<Option<Vec3>>>,
+    ) -> Result<Self, ParseSdfError> {
+        if atom_atomic_numbers.len() != atom_posits.len() {
+            return Err(ParseSdfError::ParsingError(format!(
+                "atom/coordinate count mismatch: {} atoms, {} coordinates",
+                atom_atomic_numbers.len(),
+                atom_posits.len()
+            )));
+        }
+        if bond_order_codes.len() != bond_indices.len() {
+            return Err(ParseSdfError::ParsingError(format!(
+                "bond order/index count mismatch: {} bond orders, {} bond indices",
+                bond_order_codes.len(),
+                bond_indices.len()
+            )));
+        }
+        if let Some(colors) = atom_colors.as_ref()
+            && colors.len() != atom_atomic_numbers.len()
+        {
+            return Err(ParseSdfError::ParsingError(format!(
+                "atom/color count mismatch: {} atoms, {} colors",
+                atom_atomic_numbers.len(),
+                colors.len()
+            )));
+        }
+
+        let atom_count = atom_atomic_numbers.len();
+        for [begin, end] in &bond_indices {
+            if *begin >= atom_count || *end >= atom_count {
+                return Err(ParseSdfError::ParsingError(format!(
+                    "bond references out-of-range atoms {begin}-{end}; atom count is {atom_count}"
+                )));
+            }
+        }
+
+        let atom_types = atom_atomic_numbers
+            .into_iter()
+            .map(|atomic_num| Element::from_atomic_number(atomic_num).unwrap_or(Element::Other))
+            .collect();
+        let atom_posits = atom_posits
+            .into_iter()
+            .map(|posit| Vec3::new(posit[0], posit[1], posit[2]))
+            .collect();
+        let bond_types = bond_order_codes
+            .into_iter()
+            .map(|code| match code {
+                1 => BondType::SINGLE,
+                2 => BondType::DOUBLE,
+                3 => BondType::TRIPLE,
+                5 => BondType::AROMATIC,
+                _ => BondType::UNKNOWN,
+            })
+            .collect();
+
+        Ok(Self {
+            style: MoleculeStyle::BallAndStick,
+            atom_types,
+            atom_posits,
+            atom_colors,
+            bond_types,
+            bond_indices,
+            quality: 6,
+            visual_style: Material {
+                opacity: 1.0,
+                visible: true,
+                ..Default::default()
+            },
+            interaction: Default::default(),
+        })
     }
 
     fn new(sdf: Sdf) -> Result<Self, ParseSdfError> {
@@ -338,21 +547,74 @@ impl Molecule {
                 .unwrap_or_else(|| self.atom_types.get(index).map(my_color).unwrap())
         }
     }
+
+    fn first_atom_neighbors(&self) -> Vec<[usize; 2]> {
+        let mut neighbors = vec![[usize::MAX; 2]; self.atom_posits.len()];
+
+        for [a, b] in &self.bond_indices {
+            if *a < neighbors.len() && *b < neighbors.len() {
+                add_first_neighbor(&mut neighbors[*a], *b);
+                add_first_neighbor(&mut neighbors[*b], *a);
+            }
+        }
+
+        neighbors
+    }
+
+    fn get_bond_atom_color(&self, index: usize) -> Vec3 {
+        self.visual_style.color.unwrap_or_else(|| {
+            self.atom_types
+                .get(index)
+                .map(|x| match x {
+                    Element::Carbon => Vec3::new(0.75, 0.75, 0.75),
+                    _ => my_color(x),
+                })
+                .unwrap()
+        })
+    }
+}
+
+fn add_first_neighbor(neighbors: &mut [usize; 2], atom: usize) {
+    if neighbors.contains(&atom) {
+        return;
+    }
+
+    if neighbors[0] == usize::MAX {
+        neighbors[0] = atom;
+    } else if neighbors[1] == usize::MAX {
+        neighbors[1] = atom;
+    }
+}
+
+fn first_neighbor_except(neighbors: [usize; 2], excluded: usize) -> Option<usize> {
+    neighbors
+        .into_iter()
+        .find(|neighbor| *neighbor != usize::MAX && *neighbor != excluded)
+}
+
+fn scaled_point(point: [f32; 3], scale: f32) -> [f32; 3] {
+    [point[0] * scale, point[1] * scale, point[2] * scale]
 }
 
 impl IntoInstanceGroups for Molecule {
     fn to_instance_group(&self, scale: f32) -> InstanceGroups {
-        let mut groups = InstanceGroups::default();
+        let mut groups = InstanceGroups {
+            spheres: Vec::with_capacity(self.atom_posits.len()),
+            sticks: Vec::with_capacity(self.bond_indices.len() * 6),
+        };
+
+        let first_neighbors = self.first_atom_neighbors();
+        let alpha = self.visual_style.opacity.clamp(0.0, 1.0);
+        let material = [Material::default().roughness, Material::default().metallic];
 
         for (i, pos) in self.atom_posits.iter().enumerate() {
-            let sphere_instance = Sphere::new(
-                pos.to_array(),
-                self.atom_types.get(i).map(|x| my_radius(x) * 0.2).unwrap(),
-            )
-            .color(self.get_atom_colors(i))
-            .opacity(self.visual_style.opacity);
-
-            groups.spheres.push(sphere_instance.to_instance(scale));
+            let color = self.get_atom_colors(i);
+            groups.spheres.push(SphereInstance::new(
+                [pos[0] * scale, pos[1] * scale, pos[2] * scale],
+                self.atom_types.get(i).map(|x| my_radius(x) * 0.2).unwrap() * scale,
+                [color[0], color[1], color[2], alpha],
+                material,
+            ));
         }
 
         for (i, bond) in self.bond_indices.iter().enumerate() {
@@ -374,50 +636,26 @@ impl IntoInstanceGroups for Molecule {
             let dir_n = [dir[0] / norm, dir[1] / norm, dir[2] / norm];
 
             // === Step 1: 先找 A 的邻居方向（排除 B）===
-            let mut neighbor_dir_opt = None;
-            for (_j, other_bond) in self.bond_indices.iter().enumerate() {
-                let [x, y] = other_bond;
-                if x == a && y != b {
-                    let pos_n = self.atom_posits[*y];
-                    neighbor_dir_opt = Some([
+            let mut neighbor_dir_opt =
+                first_neighbor_except(first_neighbors[*a], *b).map(|neighbor| {
+                    let pos_n = self.atom_posits[neighbor];
+                    [
                         pos_n[0] - pos_a[0],
                         pos_n[1] - pos_a[1],
                         pos_n[2] - pos_a[2],
-                    ]);
-                    break;
-                } else if y == a && x != b {
-                    let pos_n = self.atom_posits[*x];
-                    neighbor_dir_opt = Some([
-                        pos_n[0] - pos_a[0],
-                        pos_n[1] - pos_a[1],
-                        pos_n[2] - pos_a[2],
-                    ]);
-                    break;
-                }
-            }
+                    ]
+                });
 
             // ✅ 若 A 没有邻居，则去找 B 的邻居
             if neighbor_dir_opt.is_none() {
-                for (_j, other_bond) in self.bond_indices.iter().enumerate() {
-                    let [x, y] = other_bond;
-                    if x == b && y != a {
-                        let pos_n = self.atom_posits[*y];
-                        neighbor_dir_opt = Some([
-                            pos_n[0] - pos_b[0],
-                            pos_n[1] - pos_b[1],
-                            pos_n[2] - pos_b[2],
-                        ]);
-                        break;
-                    } else if y == b && x != a {
-                        let pos_n = self.atom_posits[*x];
-                        neighbor_dir_opt = Some([
-                            pos_n[0] - pos_b[0],
-                            pos_n[1] - pos_b[1],
-                            pos_n[2] - pos_b[2],
-                        ]);
-                        break;
-                    }
-                }
+                neighbor_dir_opt = first_neighbor_except(first_neighbors[*b], *a).map(|neighbor| {
+                    let pos_n = self.atom_posits[neighbor];
+                    [
+                        pos_n[0] - pos_b[0],
+                        pos_n[1] - pos_b[1],
+                        pos_n[2] - pos_b[2],
+                    ]
+                });
             }
 
             // === Step 2: 计算 offset 方向 ===
@@ -456,24 +694,10 @@ impl IntoInstanceGroups for Molecule {
             ];
 
             // 颜色和半径与原来一致
-            let color_a = self.visual_style.color.unwrap_or(
-                self.atom_types
-                    .get(*a)
-                    .map(|x| match x {
-                        Element::Carbon => Vec3::new(0.75, 0.75, 0.75),
-                        _ => my_color(x),
-                    })
-                    .unwrap(),
-            );
-            let color_b = self.visual_style.color.unwrap_or(
-                self.atom_types
-                    .get(*b)
-                    .map(|x| match x {
-                        Element::Carbon => Vec3::new(0.75, 0.75, 0.75),
-                        _ => my_color(x),
-                    })
-                    .unwrap(),
-            );
+            let color_a = self.get_bond_atom_color(*a);
+            let color_b = self.get_bond_atom_color(*b);
+            let color_a = [color_a[0], color_a[1], color_a[2], alpha];
+            let color_b = [color_b[0], color_b[1], color_b[2], alpha];
 
             // 根据键类型生成多个 stick
             let (num_sticks, radius) = match bond_type {
@@ -502,35 +726,27 @@ impl IntoInstanceGroups for Molecule {
                     pos_b[2] + off_n[2] * offset_mul,
                 ];
 
-                // A -> 中点
-                let stick_a = Stick::new(
-                    pos_a_k,
-                    [
-                        0.5 * (pos_a_k[0] + pos_b_k[0]),
-                        0.5 * (pos_a_k[1] + pos_b_k[1]),
-                        0.5 * (pos_a_k[2] + pos_b_k[2]),
-                    ],
-                    radius,
-                )
-                .color(color_a)
-                .opacity(self.visual_style.opacity);
+                let midpoint = [
+                    0.5 * (pos_a_k[0] + pos_b_k[0]),
+                    0.5 * (pos_a_k[1] + pos_b_k[1]),
+                    0.5 * (pos_a_k[2] + pos_b_k[2]),
+                ];
 
-                groups.sticks.push(stick_a.to_instance(scale));
+                groups.sticks.push(StickInstance::new(
+                    scaled_point(pos_a_k, scale),
+                    scaled_point(midpoint, scale),
+                    radius * scale,
+                    color_a,
+                    material,
+                ));
 
-                // B -> 中点
-                let stick_b = Stick::new(
-                    pos_b_k,
-                    [
-                        0.5 * (pos_a_k[0] + pos_b_k[0]),
-                        0.5 * (pos_a_k[1] + pos_b_k[1]),
-                        0.5 * (pos_a_k[2] + pos_b_k[2]),
-                    ],
-                    radius,
-                )
-                .color(color_b)
-                .opacity(self.visual_style.opacity);
-
-                groups.sticks.push(stick_b.to_instance(scale));
+                groups.sticks.push(StickInstance::new(
+                    scaled_point(pos_b_k, scale),
+                    scaled_point(midpoint, scale),
+                    radius * scale,
+                    color_b,
+                    material,
+                ));
             }
         }
         groups
@@ -540,5 +756,309 @@ impl IntoInstanceGroups for Molecule {
 impl Stylable for Molecule {
     fn style_mut(&mut self) -> &mut Material {
         &mut self.visual_style
+    }
+}
+
+fn color_from_weight(weight: f64) -> Vec3 {
+    Vec3::new(weight as f32, 1.0 - weight as f32, 0.0)
+}
+
+fn parse_f64_lines(value: &str) -> Option<Vec<f64>> {
+    value
+        .split_whitespace()
+        .map(str::parse::<f64>)
+        .collect::<Result<Vec<_>, _>>()
+        .ok()
+}
+
+fn parse_usize_lines(value: &str) -> Option<Vec<usize>> {
+    value
+        .split_whitespace()
+        .map(str::parse::<usize>)
+        .collect::<Result<Vec<_>, _>>()
+        .ok()
+}
+
+fn sdf_data_field<'a>(molecule: &'a CosmolkitMolecule, name: &str) -> Option<&'a str> {
+    molecule
+        .props()
+        .sdf_data_fields
+        .iter()
+        .rev()
+        .find(|(field_name, _)| field_name.eq_ignore_ascii_case(name))
+        .map(|(_, value)| value.as_str())
+}
+
+fn parse_dummy_atom_weights(
+    indices_value: Option<&str>,
+    weights_value: &str,
+    atom_count: usize,
+) -> Option<Vec<Option<Vec3>>> {
+    let weights = parse_f64_lines(weights_value)?;
+
+    if let Some(indices_value) = indices_value {
+        let indices = parse_usize_lines(indices_value)?;
+        if indices.len() != weights.len() {
+            eprintln!(
+                "[WARN] Ignoring DUMMY_ATOM_INDICES/DUMMY_WEIGHTS: expected matching lengths, got {} indices and {} weights",
+                indices.len(),
+                weights.len()
+            );
+            return None;
+        }
+
+        let mut colors = vec![None; atom_count];
+        for (atom_index, weight) in indices.into_iter().zip(weights) {
+            if atom_index == 0 || atom_index > atom_count {
+                eprintln!(
+                    "[WARN] Ignoring DUMMY_ATOM_INDICES/DUMMY_WEIGHTS: atom index {atom_index} out of range 1..={atom_count}"
+                );
+                return None;
+            }
+            colors[atom_index - 1] = Some(color_from_weight(weight));
+        }
+
+        return Some(colors);
+    }
+
+    if weights.len() != atom_count {
+        eprintln!(
+            "[WARN] Ignoring DUMMY_WEIGHTS: expected {atom_count} values for all atoms, got {}",
+            weights.len()
+        );
+        return None;
+    }
+
+    Some(
+        weights
+            .into_iter()
+            .map(|weight| Some(color_from_weight(weight)))
+            .collect(),
+    )
+}
+
+fn atom_colors_from_cosmolkit_weights(molecule: &CosmolkitMolecule) -> Option<Vec<Option<Vec3>>> {
+    if let Some(colors) = sdf_data_field(molecule, "DUMMY_WEIGHTS").and_then(|weights_value| {
+        parse_dummy_atom_weights(
+            sdf_data_field(molecule, "DUMMY_ATOM_INDICES"),
+            weights_value,
+            molecule.atoms().len(),
+        )
+    }) {
+        return Some(colors);
+    }
+
+    let atom_colors = molecule
+        .atoms()
+        .iter()
+        .map(|atom| atom.prop_f64("WEIGHT").map(color_from_weight))
+        .collect::<Vec<_>>();
+
+    if atom_colors.iter().any(Option::is_some) {
+        Some(atom_colors)
+    } else {
+        None
+    }
+}
+
+impl TryFrom<&CosmolkitMolecule> for Molecule {
+    type Error = ParseSdfError;
+
+    fn try_from(molecule: &CosmolkitMolecule) -> Result<Self, Self::Error> {
+        Self::from_cosmolkit(molecule)
+    }
+}
+
+impl TryFrom<CosmolkitMolecule> for Molecule {
+    type Error = ParseSdfError;
+
+    fn try_from(molecule: CosmolkitMolecule) -> Result<Self, Self::Error> {
+        Self::from_cosmolkit(&molecule)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn from_sdf_kekulizes_aromatic_bonds() {
+        let sdf = "\
+benzene
+  cosmol_viewer
+
+  6  6  0  0  0  0  0  0  0  0999 V2000
+    1.3960    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.6980    1.2090    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.6980    1.2090    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.3960    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.6980   -1.2090    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.6980   -1.2090    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  4  0  0  0  0
+  2  3  4  0  0  0  0
+  3  4  4  0  0  0  0
+  4  5  4  0  0  0  0
+  5  6  4  0  0  0  0
+  6  1  4  0  0  0  0
+M  END
+$$$$
+";
+
+        let molecule = Molecule::from_sdf(sdf).expect("benzene SDF should parse");
+        let single_count = molecule
+            .bond_types
+            .iter()
+            .filter(|bond_type| **bond_type == BondType::SINGLE)
+            .count();
+        let double_count = molecule
+            .bond_types
+            .iter()
+            .filter(|bond_type| **bond_type == BondType::DOUBLE)
+            .count();
+
+        assert_eq!(single_count, 3);
+        assert_eq!(double_count, 3);
+    }
+
+    #[test]
+    fn from_cosmolkit_molecule_generates_coords_and_kekulizes() {
+        let cosmolkit_molecule =
+            CosmolkitMolecule::from_smiles("c1ccccc1").expect("SMILES should parse");
+        let molecule = Molecule::from_cosmolkit(&cosmolkit_molecule)
+            .expect("COSMolKit molecule should convert");
+
+        assert_eq!(molecule.atom_types.len(), 6);
+        assert_eq!(molecule.atom_posits.len(), 6);
+        assert_eq!(molecule.bond_types.len(), 6);
+        assert!(
+            molecule
+                .atom_posits
+                .iter()
+                .any(|posit| posit.length() > 0.0)
+        );
+
+        let single_count = molecule
+            .bond_types
+            .iter()
+            .filter(|bond_type| **bond_type == BondType::SINGLE)
+            .count();
+        let double_count = molecule
+            .bond_types
+            .iter()
+            .filter(|bond_type| **bond_type == BondType::DOUBLE)
+            .count();
+
+        assert_eq!(single_count, 3);
+        assert_eq!(double_count, 3);
+    }
+
+    #[test]
+    fn from_sdf_reads_dummy_weights_data_field() {
+        let sdf = "\
+DummyPoints
+  COSMolKit
+
+  0  0  0     0  0            999 V3000
+M  V30 BEGIN CTAB
+M  V30 COUNTS 2 0 0 0 0
+M  V30 BEGIN ATOM
+M  V30 1 * 1.0 2.0 3.0 0
+M  V30 2 * 4.0 5.0 6.0 0
+M  V30 END ATOM
+M  V30 END CTAB
+M  END
+>  <DUMMY_WEIGHTS>
+0.25
+0.75
+
+$$$$
+";
+
+        let record = read_sdf_from_str_with_coordinate_mode(sdf, SdfCoordinateMode::Force3D)
+            .expect("COSMolKit should parse dummy point SDF");
+        assert_eq!(
+            record.data_fields,
+            vec![("DUMMY_WEIGHTS".to_string(), "0.25\n0.75".to_string())]
+        );
+
+        let molecule = Molecule::from_sdf(sdf).expect("dummy point SDF should convert");
+
+        assert_eq!(molecule.atom_types, vec![Element::Other, Element::Other]);
+        assert_eq!(molecule.bond_types.len(), 0);
+        assert_eq!(
+            molecule.atom_colors,
+            Some(vec![
+                Some(Vec3::new(0.25, 0.75, 0.0)),
+                Some(Vec3::new(0.75, 0.25, 0.0)),
+            ])
+        );
+    }
+
+    #[test]
+    fn from_sdf_reads_indexed_dummy_weights_data_fields() {
+        let sdf = "\
+GraphWithDummyPoints
+  COSMolKit
+
+  0  0  0     0  0            999 V3000
+M  V30 BEGIN CTAB
+M  V30 COUNTS 4 2 0 0 0
+M  V30 BEGIN ATOM
+M  V30 1 C 0.0 0.0 0.0 0
+M  V30 2 O 1.0 0.0 0.0 0
+M  V30 3 * 2.0 0.0 0.0 0
+M  V30 4 * 3.0 0.0 0.0 0
+M  V30 END ATOM
+M  V30 BEGIN BOND
+M  V30 1 1 1 2
+M  V30 2 1 2 3
+M  V30 END BOND
+M  V30 END CTAB
+M  END
+>  <DUMMY_ATOM_INDICES>
+3
+4
+
+>  <DUMMY_WEIGHTS>
+0.25
+0.75
+
+$$$$
+";
+
+        let record = read_sdf_from_str_with_coordinate_mode(sdf, SdfCoordinateMode::Force3D)
+            .expect("COSMolKit should parse indexed dummy point SDF");
+        assert_eq!(
+            record.data_fields,
+            vec![
+                ("DUMMY_ATOM_INDICES".to_string(), "3\n4".to_string()),
+                ("DUMMY_WEIGHTS".to_string(), "0.25\n0.75".to_string()),
+            ]
+        );
+
+        let molecule = Molecule::from_sdf(sdf).expect("indexed dummy point SDF should convert");
+
+        assert_eq!(
+            molecule.atom_types,
+            vec![
+                Element::Carbon,
+                Element::Oxygen,
+                Element::Other,
+                Element::Other
+            ]
+        );
+        assert_eq!(
+            molecule.bond_types,
+            vec![BondType::SINGLE, BondType::SINGLE]
+        );
+        assert_eq!(
+            molecule.atom_colors,
+            Some(vec![
+                None,
+                None,
+                Some(Vec3::new(0.25, 0.75, 0.0)),
+                Some(Vec3::new(0.75, 0.25, 0.0)),
+            ])
+        );
     }
 }
