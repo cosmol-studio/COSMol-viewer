@@ -217,7 +217,7 @@ shape : Sphere or Stick or Molecule or Protein
 
 Notes
 -----
-If a shape with the same ID already exists, this method may fail or behave strictly.
+If a shape with the same ID already exists, it is replaced.
 "#]
     pub fn add_shape_with_id(&mut self, id: &str, shape: &Bound<'_, PyAny>) -> PyResult<()> {
         macro_rules! try_add {

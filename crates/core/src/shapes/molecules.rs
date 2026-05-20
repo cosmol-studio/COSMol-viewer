@@ -235,10 +235,12 @@ impl Molecule {
     }
 
     fn from_sdf_with_cosmolkit(sdf: &str) -> Result<Self, ParseSdfError> {
-        let record = read_sdf_from_str_with_coordinate_mode(sdf, SdfCoordinateMode::Force3D)
+        let record = read_sdf_from_str_with_coordinate_mode(sdf, SdfCoordinateMode::Require3D)
             .map_err(|e| ParseSdfError::ParsingError(e.to_string()))?;
         let mut molecule = record.molecule;
-        molecule.props_mut().sdf_data_fields = record.data_fields;
+        for (field_name, field_value) in record.data_fields {
+            molecule = molecule.with_sdf_data_field(field_name, field_value);
+        }
         Self::from_cosmolkit(&molecule)
     }
 
@@ -253,15 +255,16 @@ impl Molecule {
             }
         };
 
-        let molecule = if molecule.coords_3d().is_none() && molecule.coords_2d().is_none() {
+        let molecule = if molecule.conformers_3d().is_empty() && molecule.coords_2d().is_none() {
             molecule
-                .with_2d_coords()
+                .with_2d_coordinates()
                 .map_err(|e| ParseSdfError::ParsingError(e.to_string()))?
         } else {
             molecule
         };
 
-        let atom_posits = if let Some(coords) = molecule.coords_3d() {
+        let atom_posits = if let Some(conformer) = molecule.conformers_3d().first() {
+            let coords = conformer.coords();
             let atom_count = molecule.atoms().len();
             if coords.len() < atom_count {
                 return Err(ParseSdfError::ParsingError(format!(
@@ -279,7 +282,7 @@ impl Molecule {
             coords
                 .iter()
                 .take(atom_count)
-                .map(|coord| Vec3::new(coord.x as f32, coord.y as f32, coord.z as f32))
+                .map(|coord| Vec3::new(coord[0] as f32, coord[1] as f32, coord[2] as f32))
                 .collect()
         } else if let Some(coords) = molecule.coords_2d() {
             let atom_count = molecule.atoms().len();
@@ -299,7 +302,7 @@ impl Molecule {
             coords
                 .iter()
                 .take(atom_count)
-                .map(|coord| Vec3::new(coord.x as f32, coord.y as f32, 0.0))
+                .map(|coord| Vec3::new(coord[0] as f32, coord[1] as f32, 0.0))
                 .collect()
         } else {
             return Err(ParseSdfError::ParsingError(
@@ -310,26 +313,29 @@ impl Molecule {
         let atom_types = molecule
             .atoms()
             .iter()
-            .map(|atom| Element::from_atomic_number(atom.atomic_num).unwrap_or(Element::Other))
+            .map(|atom| Element::from_atomic_number(atom.atomic_number()).unwrap_or(Element::Other))
             .collect();
         let atom_colors = atom_colors_from_cosmolkit_weights(&molecule);
 
         let mut bond_indices = Vec::with_capacity(molecule.bonds().len());
         let mut bond_types = Vec::with_capacity(molecule.bonds().len());
         for bond in molecule.bonds() {
-            if bond.begin_atom >= molecule.atoms().len() || bond.end_atom >= molecule.atoms().len()
-            {
+            let begin_atom = bond.begin().index();
+            let end_atom = bond.end().index();
+            if begin_atom >= molecule.atoms().len() || end_atom >= molecule.atoms().len() {
                 return Err(ParseSdfError::ParsingError(format!(
                     "COSMolKit bond {} references out-of-range atoms {}-{}",
-                    bond.index, bond.begin_atom, bond.end_atom
+                    bond.id().index(),
+                    begin_atom,
+                    end_atom
                 )));
             }
-            bond_indices.push([bond.begin_atom, bond.end_atom]);
-            bond_types.push(match bond.order {
+            bond_indices.push([begin_atom, end_atom]);
+            bond_types.push(match bond.order() {
                 CosmolkitBondOrder::Single => BondType::SINGLE,
                 CosmolkitBondOrder::Double => BondType::DOUBLE,
                 CosmolkitBondOrder::Triple => BondType::TRIPLE,
-                CosmolkitBondOrder::Aromatic if bond.is_aromatic => BondType::AROMATIC,
+                CosmolkitBondOrder::Aromatic if bond.is_aromatic() => BondType::AROMATIC,
                 CosmolkitBondOrder::Aromatic => BondType::AROMATIC,
                 _ => BondType::UNKNOWN,
             });
@@ -781,8 +787,8 @@ fn parse_usize_lines(value: &str) -> Option<Vec<usize>> {
 
 fn sdf_data_field<'a>(molecule: &'a CosmolkitMolecule, name: &str) -> Option<&'a str> {
     molecule
-        .props()
-        .sdf_data_fields
+        .properties()
+        .sdf_data_fields()
         .iter()
         .rev()
         .find(|(field_name, _)| field_name.eq_ignore_ascii_case(name))
@@ -851,7 +857,11 @@ fn atom_colors_from_cosmolkit_weights(molecule: &CosmolkitMolecule) -> Option<Ve
     let atom_colors = molecule
         .atoms()
         .iter()
-        .map(|atom| atom.prop_f64("WEIGHT").map(color_from_weight))
+        .map(|atom| {
+            atom.prop("WEIGHT")
+                .and_then(|value| value.parse::<f64>().ok())
+                .map(color_from_weight)
+        })
         .collect::<Vec<_>>();
 
     if atom_colors.iter().any(Option::is_some) {
@@ -974,7 +984,7 @@ M  END
 $$$$
 ";
 
-        let record = read_sdf_from_str_with_coordinate_mode(sdf, SdfCoordinateMode::Force3D)
+        let record = read_sdf_from_str_with_coordinate_mode(sdf, SdfCoordinateMode::Require3D)
             .expect("COSMolKit should parse dummy point SDF");
         assert_eq!(
             record.data_fields,
@@ -1026,7 +1036,7 @@ M  END
 $$$$
 ";
 
-        let record = read_sdf_from_str_with_coordinate_mode(sdf, SdfCoordinateMode::Force3D)
+        let record = read_sdf_from_str_with_coordinate_mode(sdf, SdfCoordinateMode::Require3D)
             .expect("COSMolKit should parse indexed dummy point SDF");
         assert_eq!(
             record.data_fields,

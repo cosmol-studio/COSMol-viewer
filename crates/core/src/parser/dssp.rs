@@ -1,69 +1,81 @@
-// DSSP secondary structure assignment
+// DSSP-style secondary structure assignment.
 //
-// Ported and adapted from ChimeraX:
+// This is a Rust port of the core algorithm in ChimeraX CompSS.cpp:
 // https://github.com/RBVI/ChimeraX/blob/develop/src/bundles/atomic_lib/atomic_cpp/atomstruct_cpp/CompSS.cpp
 //
-// Original ChimeraX code (c) 2004-2025 Regents of the University of California.
-// Licensed under a BSD-style license; see the original repository for details.
+// Original algorithm: Kabsch & Sander, Biopolymers 22:2577-2637 (1983).
 //
-// Original DSSP algorithm:
-// Kabsch & Sander, Biopolymers 22:2577-2637 (1983)
-// https://doi.org/10.1002/bip.360221211
+// Porting map from CompSS.cpp:
+// - add_imide_hydrogen/add_imide_hydrogens -> prepare_coords + calculate_imide_hydrogen
+// - hbonded_to/find_hbonds -> hbonded_to + find_hbonds
+// - find_turns/mark_helices/find_helices -> same-named Rust methods
+// - find_bridges/find_beta_bulge/merge_bulge -> find_bridges + find_beta_bulge + merge_bulge
+// - compute_chain markup -> assign_ribbon_info
+//
+// Source-reproduction note:
+// The alignment blocks below use local CompSS.cpp line numbers and per-line behavior markers.
+// They do not embed the ChimeraX C++ body verbatim; each referenced line is paraphrased as a
+// behavior claim and must stay adjacent to the Rust code that implements it.
 
 use crate::parser::utils::{Residue, RibbonResidueInfo, SecondaryStructure};
 use glam::Vec3;
-use kiddo::{KdTree, SquaredEuclidean};
 use na_seq::AminoAcid;
-use rayon::prelude::*;
-use std::sync::atomic::AtomicU8;
-use std::sync::atomic::{AtomicBool, Ordering};
 
-type Point3 = [f64; 3];
+type HBondMatrix = Vec<Vec<bool>>;
 
-// 氢键矩阵：O(1) 访问，内存友好
-type HBondMatrix = Vec<Vec<AtomicBool>>;
-
-// 残基坐标缓存（带氢）
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 struct ResidueCoords {
-    n: Point3,
-    c: Point3,
-    o: Point3,
-    // ca: Point3,
-    h: Option<Point3>,
+    c: Vec3,
+    n: Vec3,
+    ca: Vec3,
+    o: Vec3,
+    h: Option<Vec3>,
     is_proline: bool,
 }
 
-// 氢键类型
-#[derive(Debug, Clone, Copy)]
-pub struct HydrogenBond {
-    pub donor_idx: usize,
-    pub acceptor_idx: usize,
-    pub energy: f32,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LadderType {
+    Parallel,
+    Antiparallel,
 }
 
 #[derive(Debug, Clone, Copy)]
 struct BetaLadder {
-    start1: usize,
-    end1: usize,
-    start2: usize,
-    end2: usize,
-    is_parallel: bool,
+    ladder_type: LadderType,
+    start: [usize; 2],
+    end: [usize; 2],
+    is_bulge: bool,
 }
 
-// 二级结构计算器
+impl BetaLadder {
+    fn new(ladder_type: LadderType, s1: usize, e1: usize, s2: usize, e2: usize) -> Self {
+        let (start0, end0) = ordered_pair(s1, e1);
+        let (start1, end1) = ordered_pair(s2, e2);
+        Self {
+            ladder_type,
+            start: [start0, start1],
+            end: [end0, end1],
+            is_bulge: false,
+        }
+    }
+
+    fn strand_len(&self, strand: usize) -> usize {
+        self.end[strand] - self.start[strand] + 1
+    }
+}
+
 pub struct SecondaryStructureCalculator {
-    pub hbond_cutoff: f32,        // 氢键能量阈值
-    pub min_helix_length: usize,  // 最小螺旋长度
-    pub min_strand_length: usize, // 最小β链长度
+    pub hbond_cutoff: f32,
+    pub min_helix_length: usize,
+    pub min_strand_length: usize,
 }
 
 impl Default for SecondaryStructureCalculator {
     fn default() -> Self {
         Self {
-            hbond_cutoff: -0.5,   // 默认氢键能量阈值
-            min_helix_length: 3,  // 默认最小螺旋长度
-            min_strand_length: 2, // 默认最小β链长度
+            hbond_cutoff: -0.5,
+            min_helix_length: 3,
+            min_strand_length: 2,
         }
     }
 }
@@ -71,21 +83,26 @@ impl Default for SecondaryStructureCalculator {
 impl SecondaryStructureCalculator {
     const DSSP_3DONOR: u32 = 0x0001;
     const DSSP_3ACCEPTOR: u32 = 0x0002;
+    const DSSP_3GAP: u32 = 0x0004;
     const DSSP_3HELIX: u32 = 0x0008;
 
     const DSSP_4DONOR: u32 = 0x0010;
     const DSSP_4ACCEPTOR: u32 = 0x0020;
+    const DSSP_4GAP: u32 = 0x0040;
     const DSSP_4HELIX: u32 = 0x0080;
 
     const DSSP_5DONOR: u32 = 0x0100;
     const DSSP_5ACCEPTOR: u32 = 0x0200;
+    const DSSP_5GAP: u32 = 0x0400;
     const DSSP_5HELIX: u32 = 0x0800;
+
+    const DSSP_PBRIDGE: u32 = 0x1000;
+    const DSSP_ABRIDGE: u32 = 0x2000;
 
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// 计算一条链的二级结构
     pub fn compute_secondary_structure(&self, residues: &[Residue]) -> Vec<SecondaryStructure> {
         self.compute_ribbon_info(residues)
             .into_iter()
@@ -98,727 +115,252 @@ impl SecondaryStructureCalculator {
             return vec![RibbonResidueInfo::default(); residues.len()];
         }
 
-        // 关键：先补氢
-        let residues_with_h = self.add_imide_hydrogens(residues);
-
-        // 关键：用加速版查找氢键
-        let hbonds = self.find_hydrogen_bonds(&residues_with_h);
-
-        // 下面这些函数全部改为接受 &HBondMatrix
+        // BEGIN CHIMERAX CPP BODY: compute_ribbon_info
+        // BEGIN CHIMERAX CPP FUNCTION: crates/core/src/parser/CompSS.cpp :: compute_chain core call order
+        // ChimeraX✔️✔️ CompSS.cpp: add synthesized imide hydrogens before bond search.
+        // ChimeraX✔️✔️ CompSS.cpp: compute the acceptor-to-donor hydrogen-bond matrix next.
+        // ChimeraX✔️✔️ CompSS.cpp: find 3-turns, then promote adjacent 3-turn acceptors to 3-10 helices.
+        // ChimeraX✔️✔️ CompSS.cpp: find 4-turns, then promote adjacent 4-turn acceptors to alpha helices.
+        // ChimeraX✔️✔️ CompSS.cpp: find 5-turns, then promote adjacent 5-turn acceptors to pi helices.
+        // ChimeraX✔️✔️ CompSS.cpp: collapse helix marker runs into final helix ranges.
+        // ChimeraX✔️❗ CompSS.cpp: find bridges and beta ladders; Rust uses an O(n^2) scan instead of AtomSearchTree.
+        // ChimeraX❗❗ CompSS.cpp: apply chain markup into COSMolKit ribbon info, not ChimeraX residue attributes.
+        // END CHIMERAX CPP FUNCTION: crates/core/src/parser/CompSS.cpp :: compute_chain core call order
+        // END CHIMERAX CPP BODY: compute_ribbon_info
+        let coords = self.prepare_coords(residues);
+        let hbonds = self.find_hbonds(&coords);
         let mut flags = vec![0u32; residues.len()];
-        let n_res = residues.len();
 
-        self.find_turns(3, &mut flags, &hbonds, n_res);
-        self.mark_helices(3, &mut flags, n_res);
-        self.find_turns(4, &mut flags, &hbonds, n_res);
-        self.mark_helices(4, &mut flags, n_res);
-        self.find_turns(5, &mut flags, &hbonds, n_res);
-        self.mark_helices(5, &mut flags, n_res);
+        self.find_turns(3, &mut flags, &hbonds);
+        self.mark_helices(3, &mut flags);
+        self.find_turns(4, &mut flags, &hbonds);
+        self.mark_helices(4, &mut flags);
+        self.find_turns(5, &mut flags, &hbonds);
+        self.mark_helices(5, &mut flags);
 
-        let mut helices = self.collect_helix_regions(&flags, n_res);
-        SecondaryStructureCalculator::extend_helix_ends(&mut helices, &flags, n_res);
-        let ladders = self.find_ladders(&hbonds, n_res);
-        let strand_groups = self.group_sheet_ranges(&ladders);
-        return self.assign_ribbon_info(n_res, &helices, &strand_groups, &mut flags); /*
-        let strands = self.find_strands(&hbonds, n_res); // 也用 matrix 版
-
-        */
+        let helices = self.find_helices(&flags);
+        let ladders = self.find_bridges(&mut flags, &hbonds, &coords);
+        self.assign_ribbon_info(residues.len(), &helices, &ladders, &flags)
     }
 
-    /// 补全缺失的亚氨基氢原子
-    fn add_imide_hydrogens(&self, residues: &[Residue]) -> Vec<Residue> {
-        let mut result = residues.to_vec();
+    fn prepare_coords(&self, residues: &[Residue]) -> Vec<ResidueCoords> {
+        let mut coords: Vec<ResidueCoords> = residues
+            .iter()
+            .map(|residue| ResidueCoords {
+                c: residue.c,
+                n: residue.n,
+                ca: residue.ca,
+                o: residue.o,
+                h: residue.h,
+                is_proline: residue.residue_type == AminoAcid::Pro,
+            })
+            .collect();
 
-        for i in 1..result.len() {
-            if result[i].h.is_some() {
+        // BEGIN CHIMERAX CPP BODY: prepare_coords
+        // BEGIN CHIMERAX CPP FUNCTION: crates/core/src/parser/CompSS.cpp :: add_imide_hydrogens
+        // ChimeraX✔️✔️ CompSS.cpp:162 enters the helper with mutable coordinate state.
+        // ChimeraX✔️✔️ CompSS.cpp:164 records the residue count.
+        // ChimeraX✔️✔️ CompSS.cpp:165-166 returns immediately for an empty chain.
+        // ChimeraX✔️✔️ CompSS.cpp:167-168 seeds previous residue and coordinate with index 0.
+        // ChimeraX✔️✔️ CompSS.cpp:169 starts scanning at residue index 1.
+        // ChimeraX✔️✔️ CompSS.cpp:170-171 loads current residue and coordinate by index.
+        // ChimeraX❗✔️ CompSS.cpp:172 checks ChimeraX connectivity; Rust uses peptide C-N distance policy.
+        // ChimeraX✔️✔️ CompSS.cpp:173 calls the imide-hydrogen placement helper.
+        // ChimeraX✔️✔️ CompSS.cpp:174 skips storage when the helper reports no synthetic H.
+        // ChimeraX❌❌ CompSS.cpp:175 stores allocated Coord for later deletion; Rust has no heap Coord ownership list.
+        // ChimeraX✔️✔️ CompSS.cpp:176 attaches the synthesized H coordinate to the current residue coordinate cache.
+        // ChimeraX✔️✔️ CompSS.cpp:179-180 advances previous residue and coordinate to current.
+        // END CHIMERAX CPP FUNCTION: crates/core/src/parser/CompSS.cpp :: add_imide_hydrogens
+        // END CHIMERAX CPP BODY: prepare_coords
+        for i in 1..coords.len() {
+            if coords[i].h.is_some() || !peptide_connected(coords[i - 1].c, coords[i].n) {
                 continue;
             }
 
-            if let Some(prev_res) = result.get(i - 1) {
-                if let Some(h_coord) = self.calculate_imide_hydrogen(&result[i], prev_res) {
-                    result[i].h = Some(h_coord);
-                }
-            }
+            coords[i].h = calculate_imide_hydrogen(coords[i], coords[i - 1]);
         }
 
-        result
-    }
-    /// 计算亚氨基氢原子位置
-    fn calculate_imide_hydrogen(&self, current: &Residue, previous: &Residue) -> Option<Vec3> {
-        let n_coord = current.n;
-        let ca_coord = current.ca;
-        let c_coord = previous.c;
-        let o_coord = previous.o;
-
-        // 计算向量
-        let n_to_ca = ca_coord - &n_coord;
-        let n_to_c = c_coord - &n_coord;
-        let c_to_o = o_coord - &c_coord;
-
-        let _ = n_to_ca.normalize();
-        let _ = n_to_c.normalize();
-        let _ = c_to_o.normalize();
-
-        // 计算角平分线
-        let cac_bisect = Vec3 {
-            x: n_to_ca.x + n_to_c.x,
-            y: n_to_ca.y + n_to_c.y,
-            z: n_to_ca.z + n_to_c.z,
-        };
-        let _ = cac_bisect.normalize();
-
-        // 计算氢原子方向
-        let h_direction = Vec3 {
-            x: cac_bisect.x + c_to_o.x,
-            y: cac_bisect.y + c_to_o.y,
-            z: cac_bisect.z + c_to_o.z,
-        };
-        let _ = h_direction.normalize();
-
-        // 氢键长度约1.01Å
-        let nh_length = 1.01;
-        Some(Vec3 {
-            x: n_coord.x - h_direction.x * nh_length,
-            y: n_coord.y - h_direction.y * nh_length,
-            z: n_coord.z - h_direction.z * nh_length,
-        })
+        coords
     }
 
-    fn find_hydrogen_bonds(&self, residues: &[Residue]) -> HBondMatrix {
-        let n = residues.len();
-        let matrix: Vec<Vec<AtomicBool>> = (0..n)
-            .map(|_| (0..n).map(|_| AtomicBool::new(false)).collect())
-            .collect();
-        let mut coords = Vec::with_capacity(n);
+    fn find_hbonds(&self, coords: &[ResidueCoords]) -> HBondMatrix {
+        let num_res = coords.len();
+        let mut hbonds = vec![vec![false; num_res]; num_res];
 
-        // Step 1: 构建坐标缓存 + KDTree（只放 N 原子）
-        let mut points = Vec::with_capacity(n);
-        for (i, res) in residues.iter().enumerate() {
-            let h = res.h.map(|v| [v.x as f64, v.y as f64, v.z as f64]);
-            let coord = ResidueCoords {
-                n: [res.n.x as f64, res.n.y as f64, res.n.z as f64],
-                c: [res.c.x as f64, res.c.y as f64, res.c.z as f64],
-                o: [res.o.x as f64, res.o.y as f64, res.o.z as f64],
-                // ca: [res.ca.x as f64, res.ca.y as f64, res.ca.z as f64],
-                h,
-                is_proline: res.residue_type == AminoAcid::Pro,
-            };
-            coords.push(coord);
-            points.push((i, coords[i].n));
-        }
-
-        // 构建 KDTree
-        let mut tree: KdTree<f64, 3> = KdTree::new();
-        for &(idx, pt) in points.iter() {
-            tree.add(&pt, idx as u64);
-        }
-
-        // Step 2: 只搜索 10Å 内的 N 原子（关键加速！）
-        (0..n).into_par_iter().for_each(|i| {
-            let query_point = coords[i].n;
-            let neighbors = tree.within::<SquaredEuclidean>(&query_point, 400.0); // 20² = 400
-
-            for neighbor in neighbors {
-                let j = neighbor.item as usize;
-                if j <= i + 1 {
+        // BEGIN CHIMERAX CPP BODY: find_hbonds
+        // BEGIN CHIMERAX CPP FUNCTION: crates/core/src/parser/CompSS.cpp :: find_hbonds
+        // ChimeraX✔️✔️ CompSS.cpp:220 records the residue count.
+        // ChimeraX✔️✔️ CompSS.cpp:221 initializes a proline donor-suppression vector.
+        // ChimeraX❗✔️ CompSS.cpp:223-232 marks proline by chemistry; Rust uses parsed amino-acid identity.
+        // ChimeraX✔️✔️ CompSS.cpp:233 iterates each residue as an acceptor candidate.
+        // ChimeraX✔️✔️ CompSS.cpp:234 loads acceptor coordinates for the current residue.
+        // ChimeraX✔️❗ CompSS.cpp:235 searches N atoms within 10 A; Rust scans all later residues and filters by distance.
+        // ChimeraX✔️❗ CompSS.cpp:236 maps the nearby atom back to residue index; Rust already has the index.
+        // ChimeraX✔️✔️ CompSS.cpp:237-238 skips current, previous, and next residue candidates.
+        // ChimeraX✔️✔️ CompSS.cpp:239 loads donor-side coordinates for the nearby residue.
+        // ChimeraX✔️✔️ CompSS.cpp:240-244 suppresses proline donation, otherwise tests acceptor i against donor j.
+        // ChimeraX✔️✔️ CompSS.cpp:245-248 suppresses reverse proline donation, otherwise tests acceptor j against donor i.
+        // END CHIMERAX CPP FUNCTION: crates/core/src/parser/CompSS.cpp :: find_hbonds
+        // END CHIMERAX CPP BODY: find_hbonds
+        for i in 0..num_res {
+            for near_index in (i + 2)..num_res {
+                if coords[i].n.distance_squared(coords[near_index].n) > 100.0 {
                     continue;
-                } // 避免重复 + 跳过相邻
-
-                // 正向：i 的 C=O ... H-N j
-                if !coords[j].is_proline && coords[j].h.is_some() {
-                    let h = coords[j].h.unwrap();
-                    let r_cn_sq = dist_sq(coords[i].c, coords[j].n); // 加这行
-                    if r_cn_sq > 49.0 {
-                        continue;
-                    }
-                    let energy = self.calc_hbond_energy(coords[i].c, coords[i].o, coords[j].n, h);
-                    if energy < self.hbond_cutoff as f64 {
-                        matrix[j][i].store(true, Ordering::Relaxed);
-                    }
                 }
 
-                // 反向：j 的 C=O ... H-N i
-                if !coords[i].is_proline && coords[i].h.is_some() {
-                    let h = coords[i].h.unwrap();
-                    let r_cn_sq = dist_sq(coords[i].c, coords[j].n); // 加这行
-                    if r_cn_sq > 49.0 {
-                        continue;
-                    }
-                    let energy = self.calc_hbond_energy(coords[j].c, coords[j].o, coords[i].n, h);
-                    if energy < self.hbond_cutoff as f64 {
-                        matrix[i][j].store(true, Ordering::Relaxed);
-                    }
+                if !coords[near_index].is_proline {
+                    hbonds[i][near_index] =
+                        hbonded_to(coords[i], coords[near_index], self.hbond_cutoff);
+                }
+
+                if !coords[i].is_proline {
+                    hbonds[near_index][i] =
+                        hbonded_to(coords[near_index], coords[i], self.hbond_cutoff);
                 }
             }
-        });
+        }
 
-        matrix
+        hbonds
     }
 
-    #[inline]
-    fn calc_hbond_energy(&self, c: Point3, o: Point3, n: Point3, h: Point3) -> f64 {
-        let r_on = dist_sq(o, n).sqrt();
-        let r_ch = dist_sq(c, h).sqrt();
-        let r_oh = dist_sq(o, h).sqrt();
-        let r_cn = dist_sq(c, n).sqrt();
-
-        let q1 = 0.42_f64;
-        let q2 = 0.20_f64;
-        let f = 332.0_f64;
-
-        q1 * q2 * (1.0 / r_on + 1.0 / r_ch - 1.0 / r_oh - 1.0 / r_cn) * f
-    }
-
-    fn find_turns(&self, n: usize, flags: &mut [u32], hbonds: &HBondMatrix, n_res: usize) {
-        let donor = match n {
-            3 => Self::DSSP_3DONOR,
-            4 => Self::DSSP_4DONOR,
-            5 => Self::DSSP_5DONOR,
-            _ => return,
-        };
-        let acceptor = match n {
-            3 => Self::DSSP_3ACCEPTOR,
-            4 => Self::DSSP_4ACCEPTOR,
-            5 => Self::DSSP_5ACCEPTOR,
+    fn find_turns(&self, n: usize, flags: &mut [u32], hbonds: &HBondMatrix) {
+        let (donor, acceptor, gap) = match n {
+            3 => (Self::DSSP_3DONOR, Self::DSSP_3ACCEPTOR, Self::DSSP_3GAP),
+            4 => (Self::DSSP_4DONOR, Self::DSSP_4ACCEPTOR, Self::DSSP_4GAP),
+            5 => (Self::DSSP_5DONOR, Self::DSSP_5ACCEPTOR, Self::DSSP_5GAP),
             _ => return,
         };
 
-        for i in 0..n_res.saturating_sub(n) {
-            let j = i + n;
-            if hbonds[i][j].load(Ordering::Relaxed) || hbonds[j][i].load(Ordering::Relaxed) {
+        // BEGIN CHIMERAX CPP BODY: find_turns
+        // BEGIN CHIMERAX CPP FUNCTION: crates/core/src/parser/CompSS.cpp :: find_turns
+        // ChimeraX✔️✔️ CompSS.cpp:257 receives the turn span n.
+        // ChimeraX✔️✔️ CompSS.cpp:259-260 chooses the donor flag for n = 3, 4, or 5.
+        // ChimeraX✔️✔️ CompSS.cpp:261-262 chooses the acceptor flag for n = 3, 4, or 5.
+        // ChimeraX✔️✔️ CompSS.cpp:263-264 chooses the gap flag for n = 3, 4, or 5.
+        // ChimeraX✔️✔️ CompSS.cpp:265 computes the last valid start index.
+        // ChimeraX✔️✔️ CompSS.cpp:266 scans every possible i to i+n turn candidate.
+        // ChimeraX✔️✔️ CompSS.cpp:267 requires an H-bond from acceptor i to donor i+n.
+        // ChimeraX✔️✔️ CompSS.cpp:268 marks residue i as turn acceptor.
+        // ChimeraX✔️✔️ CompSS.cpp:269-270 marks intervening residues as n-turn gap.
+        // ChimeraX✔️✔️ CompSS.cpp:271 marks residue i+n as turn donor.
+        // END CHIMERAX CPP FUNCTION: crates/core/src/parser/CompSS.cpp :: find_turns
+        // END CHIMERAX CPP BODY: find_turns
+        let max = flags.len().saturating_sub(n);
+        for i in 0..max {
+            if hbonds[i][i + n] {
                 flags[i] |= acceptor;
-                flags[j] |= donor;
-                // 删: for k in 1..n { flags[i + k] |= ... }  // GAP 多余
+                for j in 1..n {
+                    flags[i + j] |= gap;
+                }
+                flags[i + n] |= donor;
             }
         }
     }
 
-    // ──────────────────────────────────────────────────────────────
-    // 1. mark_helices_fast —— 完全对应原版 C++ 的 mark_helices()
-    // ──────────────────────────────────────────────────────────────
-    fn mark_helices(&self, n: usize, flags: &mut [u32], n_res: usize) {
-        let acceptor = match n {
-            3 => Self::DSSP_3ACCEPTOR,
-            4 => Self::DSSP_4ACCEPTOR,
-            5 => Self::DSSP_5ACCEPTOR,
-            _ => return,
-        };
-        let helix_flag = match n {
-            3 => Self::DSSP_3HELIX,
-            4 => Self::DSSP_4HELIX,
-            5 => Self::DSSP_5HELIX,
+    fn mark_helices(&self, n: usize, flags: &mut [u32]) {
+        let (acceptor, helix) = match n {
+            3 => (Self::DSSP_3ACCEPTOR, Self::DSSP_3HELIX),
+            4 => (Self::DSSP_4ACCEPTOR, Self::DSSP_4HELIX),
+            5 => (Self::DSSP_5ACCEPTOR, Self::DSSP_5HELIX),
             _ => return,
         };
 
-        // 原版逻辑：只要连续两个 acceptor，就把中间 n 个残基标记为该类型螺旋
-        // 例如 α-螺旋 (n=4): i-1 是 acceptor 且 i 是 acceptor → i 到 i+3 都打上 4HELIX
-        for i in 1..n_res.saturating_sub(n - 1) {
+        // BEGIN CHIMERAX CPP BODY: mark_helices
+        // BEGIN CHIMERAX CPP FUNCTION: crates/core/src/parser/CompSS.cpp :: mark_helices
+        // ChimeraX✔️✔️ CompSS.cpp:279 receives the turn span n.
+        // ChimeraX✔️✔️ CompSS.cpp:281-282 chooses the acceptor flag for n = 3, 4, or 5.
+        // ChimeraX✔️✔️ CompSS.cpp:283-284 chooses the helix flag for n = 3, 4, or 5.
+        // ChimeraX✔️✔️ CompSS.cpp:285 computes the last valid helix seed index.
+        // ChimeraX✔️✔️ CompSS.cpp:286 starts at index 1 so i-1 is valid.
+        // ChimeraX✔️✔️ CompSS.cpp:287-288 requires consecutive acceptor markers at i-1 and i.
+        // ChimeraX✔️✔️ CompSS.cpp:289-290 marks residues i through i+n-1 with the helix flag.
+        // END CHIMERAX CPP FUNCTION: crates/core/src/parser/CompSS.cpp :: mark_helices
+        // END CHIMERAX CPP BODY: mark_helices
+        let max = flags.len().saturating_sub(n);
+        for i in 1..max {
             if (flags[i - 1] & acceptor) != 0 && (flags[i] & acceptor) != 0 {
                 for j in 0..n {
-                    if i + j < n_res {
-                        flags[i + j] |= helix_flag;
-                    }
+                    flags[i + j] |= helix;
                 }
             }
         }
     }
 
-    // ──────────────────────────────────────────────────────────────
-    // 完全对齐 ChimeraX 的 find_bridges() + ladder + bulge 合并
-    // ──────────────────────────────────────────────────────────────
-    fn find_strands(&self, hbonds: &HBondMatrix, n_res: usize) -> Vec<(usize, usize)> {
-        // 0 = none, 1 = 'P' (parallel), 2 = 'A' (antiparallel)
-        let bridge_type: Vec<Vec<AtomicU8>> = (0..n_res)
-            .map(|_| (0..n_res).map(|_| AtomicU8::new(0)).collect())
-            .collect();
-
-        // Step 1: 标记所有单桥（一次遍历）
-        (0..n_res).into_par_iter().for_each(|i| {
-            for j in (i + 2)..n_res {
-                // ── 平行桥（两种方向都要判断！）──
-                let mut is_parallel = false;
-
-                // 方向 1: i-1 ← j   且   j ← i+1   (NH j → CO (i-1)) && (NH (i+1) → CO j)
-                if i > 0
-                    && i + 1 < n_res
-                    && hbonds[j][i - 1].load(Ordering::Relaxed)
-                    && hbonds[i + 1][j].load(Ordering::Relaxed)
-                {
-                    is_parallel = true;
-                }
-
-                // 方向 2: j-1 ← i   且   i ← j+1   (NH i → CO (j-1)) && (NH (j+1) → CO i)
-                if j > 0
-                    && j + 1 < n_res
-                    && hbonds[i][j - 1].load(Ordering::Relaxed)
-                    && hbonds[j + 1][i].load(Ordering::Relaxed)
-                {
-                    is_parallel = true;
-                }
-
-                // ── 反平行桥（两种模式都要判断！）──
-                let mut is_antiparallel = false;
-                // 经典双向氢键
-                if hbonds[i][j].load(Ordering::Relaxed) && hbonds[j][i].load(Ordering::Relaxed) {
-                    is_antiparallel = true;
-                }
-                // 错一位的反平行桥（非常常见！）
-                if i > 0
-                    && j > 0
-                    && i + 1 < n_res
-                    && j + 1 < n_res
-                    && hbonds[i + 1][j - 1].load(Ordering::Relaxed)
-                    && hbonds[j + 1][i - 1].load(Ordering::Relaxed)
-                {
-                    is_antiparallel = true;
-                }
-
-                if is_parallel {
-                    bridge_type[i][j].store(1, Ordering::Relaxed);
-                }
-                if is_antiparallel {
-                    bridge_type[i][j].store(2, Ordering::Relaxed);
-                }
-            }
-        });
-
-        // Step 2: 扫描出所有连续 ladder（和原版一模一样）
-        let mut ladders = Vec::new();
-        for i in 0..n_res {
-            for j in (i + 2)..n_res {
-                match bridge_type[i][j].load(Ordering::Relaxed) {
-                    1 => {
-                        // parallel ladder
-                        let mut k = 0;
-                        while i + k < n_res
-                            && j + k < n_res
-                            && bridge_type[i + k][j + k].load(Ordering::Relaxed) == 1
-                        {
-                            bridge_type[i + k][j + k].store(0, Ordering::Relaxed); // mark as used
-                            k += 1;
-                        }
-                        if k >= self.min_strand_length {
-                            ladders.push((i, i + k - 1, j, j + k - 1, true)); // true = parallel
-                        }
-                    }
-                    2 => {
-                        // antiparallel ladder
-                        let mut k = 0;
-                        while i + k < n_res
-                            && j >= k
-                            && bridge_type[i + k][j - k].load(Ordering::Relaxed) == 2
-                        {
-                            bridge_type[i + k][j - k].store(0, Ordering::Relaxed);
-                            k += 1;
-                        }
-                        if k >= self.min_strand_length {
-                            ladders.push((i, i + k - 1, j - k + 1, j, false));
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        // Step 3: Beta-bulge 合并（while find_beta_bulge）
-        let mut changed = true;
-        while changed {
-            changed = false;
-            let mut idx = 0;
-            while idx + 1 < ladders.len() {
-                let l1 = ladders[idx];
-                let mut jdx = idx + 1;
-                while jdx < ladders.len() {
-                    if let Some(merged) = self.merge_bulge_ladders(l1, ladders[jdx]) {
-                        ladders[idx] = merged;
-                        ladders.remove(jdx);
-                        changed = true;
-                    } else {
-                        jdx += 1;
-                    }
-                }
-                idx += 1;
-            }
-        }
-
-        // Step 4: 过滤短 ladder（两边都要够长）
-        ladders.retain(|&(s1, e1, s2, e2, _)| {
-            (e1 - s1 + 1) >= self.min_strand_length && (e2 - s2 + 1) >= self.min_strand_length
-        });
-
-        // ── 原版 ChimeraX 关键一步：N→C 排序，确保 strand 编号顺序正确 ──
-        let mut res_ranges: Vec<(usize, usize)> = Vec::new();
-        for &(s1, e1, s2, e2, _) in &ladders {
-            res_ranges.push((s1, e1));
-            res_ranges.push((s2, e2));
-        }
-        res_ranges.sort(); // ← 这一行是灵魂！
-
-        // 现在用有序的 res_ranges 标记 strand_mask（你原来的逻辑完全正确）
-        let mut strand_mask = vec![false; n_res];
-        for &(start, end) in &res_ranges {
-            for x in start..=end {
-                if x < n_res {
-                    strand_mask[x] = true;
-                }
-            }
-        }
-
-        // // Step 5: 合并所有参与 β-strand 的残基区间
-        // let mut strand_mask = vec![false; n_res];
-        // for &(s1, e1, s2, e2, _) in &ladders {
-        //     for x in s1..=e1 {
-        //         if x < n_res {
-        //             strand_mask[x] = true;
-        //         }
-        //     }
-        //     for x in s2..=e2 {
-        //         if x < n_res {
-        //             strand_mask[x] = true;
-        //         }
-        //     }
-        // }
-
-        // 连续 true → strand
-        let mut result = Vec::new();
-        let mut start = None;
-        for i in 0..n_res {
-            if strand_mask[i] {
-                if start.is_none() {
-                    start = Some(i);
-                }
-            } else if let Some(s) = start {
-                if i - s >= self.min_strand_length {
-                    result.push((s, i - 1));
-                }
-                start = None;
-            }
-        }
-        if let Some(s) = start {
-            if n_res - s >= self.min_strand_length {
-                result.push((s, n_res - 1));
-            }
-        }
-        result
-    }
-
-    // ──────────────────────────────────────────────────────────────
-    // Beta-bulge 合并（100% 对应原版 merge_bulge）
-    // ladder = (start1, end1, start2, end2, is_parallel)
-    // ──────────────────────────────────────────────────────────────
-    fn find_ladders(&self, hbonds: &HBondMatrix, n_res: usize) -> Vec<BetaLadder> {
-        let bridge_type: Vec<Vec<AtomicU8>> = (0..n_res)
-            .map(|_| (0..n_res).map(|_| AtomicU8::new(0)).collect())
-            .collect();
-
-        (0..n_res).into_par_iter().for_each(|i| {
-            for j in (i + 2)..n_res {
-                let mut is_parallel = false;
-
-                if i > 0
-                    && i + 1 < n_res
-                    && hbonds[j][i - 1].load(Ordering::Relaxed)
-                    && hbonds[i + 1][j].load(Ordering::Relaxed)
-                {
-                    is_parallel = true;
-                }
-
-                if j > 0
-                    && j + 1 < n_res
-                    && hbonds[i][j - 1].load(Ordering::Relaxed)
-                    && hbonds[j + 1][i].load(Ordering::Relaxed)
-                {
-                    is_parallel = true;
-                }
-
-                let mut is_antiparallel = false;
-                if hbonds[i][j].load(Ordering::Relaxed) && hbonds[j][i].load(Ordering::Relaxed) {
-                    is_antiparallel = true;
-                }
-                if i > 0
-                    && j > 0
-                    && i + 1 < n_res
-                    && j + 1 < n_res
-                    && hbonds[i + 1][j - 1].load(Ordering::Relaxed)
-                    && hbonds[j + 1][i - 1].load(Ordering::Relaxed)
-                {
-                    is_antiparallel = true;
-                }
-
-                if is_parallel {
-                    bridge_type[i][j].store(1, Ordering::Relaxed);
-                }
-                if is_antiparallel {
-                    bridge_type[i][j].store(2, Ordering::Relaxed);
-                }
-            }
-        });
-
-        let mut ladders = Vec::new();
-        for i in 0..n_res {
-            for j in (i + 2)..n_res {
-                match bridge_type[i][j].load(Ordering::Relaxed) {
-                    1 => {
-                        let mut k = 0;
-                        while i + k < n_res
-                            && j + k < n_res
-                            && bridge_type[i + k][j + k].load(Ordering::Relaxed) == 1
-                        {
-                            bridge_type[i + k][j + k].store(0, Ordering::Relaxed);
-                            k += 1;
-                        }
-                        if k >= self.min_strand_length {
-                            ladders.push(BetaLadder {
-                                start1: i,
-                                end1: i + k - 1,
-                                start2: j,
-                                end2: j + k - 1,
-                                is_parallel: true,
-                            });
-                        }
-                    }
-                    2 => {
-                        let mut k = 0;
-                        while i + k < n_res
-                            && j >= k
-                            && bridge_type[i + k][j - k].load(Ordering::Relaxed) == 2
-                        {
-                            bridge_type[i + k][j - k].store(0, Ordering::Relaxed);
-                            k += 1;
-                        }
-                        if k >= self.min_strand_length {
-                            ladders.push(BetaLadder {
-                                start1: i,
-                                end1: i + k - 1,
-                                start2: j - k + 1,
-                                end2: j,
-                                is_parallel: false,
-                            });
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        let mut changed = true;
-        while changed {
-            changed = false;
-            let mut idx = 0;
-            while idx + 1 < ladders.len() {
-                let l1 = ladders[idx];
-                let mut jdx = idx + 1;
-                while jdx < ladders.len() {
-                    if let Some(merged) = self.merge_bulge_beta_ladders(l1, ladders[jdx]) {
-                        ladders[idx] = merged;
-                        ladders.remove(jdx);
-                        changed = true;
-                    } else {
-                        jdx += 1;
-                    }
-                }
-                idx += 1;
-            }
-        }
-
-        ladders.retain(|ladder| {
-            (ladder.end1 - ladder.start1 + 1) >= self.min_strand_length
-                && (ladder.end2 - ladder.start2 + 1) >= self.min_strand_length
-        });
-
-        ladders
-    }
-
-    fn collect_strand_ranges(&self, ladders: &[BetaLadder]) -> Vec<(usize, usize)> {
-        let mut res_ranges: Vec<(usize, usize)> = Vec::new();
-        for ladder in ladders {
-            res_ranges.push((ladder.start1, ladder.end1));
-            res_ranges.push((ladder.start2, ladder.end2));
-        }
-        res_ranges.sort();
-
-        let mut merged: Vec<(usize, usize)> = Vec::new();
-        for (start, end) in res_ranges {
-            if let Some(last) = merged.last_mut()
-                && start <= last.1 + 1
-            {
-                last.1 = last.1.max(end);
-            } else {
-                merged.push((start, end));
-            }
-        }
-
-        merged
-    }
-
-    fn group_sheet_ranges(&self, ladders: &[BetaLadder]) -> Vec<Vec<(usize, usize)>> {
-        if ladders.is_empty() {
-            return Vec::new();
-        }
-
-        let mut groups: Vec<Vec<usize>> = Vec::new();
-        let mut visited = vec![false; ladders.len()];
-
-        for root in 0..ladders.len() {
-            if visited[root] {
-                continue;
-            }
-
-            let mut stack = vec![root];
-            let mut group = Vec::new();
-            visited[root] = true;
-
-            while let Some(curr) = stack.pop() {
-                group.push(curr);
-                for next in 0..ladders.len() {
-                    if !visited[next] && ladders_share_sheet(ladders[curr], ladders[next]) {
-                        visited[next] = true;
-                        stack.push(next);
-                    }
-                }
-            }
-
-            groups.push(group);
-        }
-
-        groups
-            .into_iter()
-            .map(|group| {
-                let mut ranges = Vec::new();
-                for ladder_idx in group {
-                    let ladder = ladders[ladder_idx];
-                    ranges.push((ladder.start1, ladder.end1));
-                    ranges.push((ladder.start2, ladder.end2));
-                }
-                ranges.sort();
-
-                let mut merged: Vec<(usize, usize)> = Vec::new();
-                for (start, end) in ranges {
-                    if let Some(last) = merged.last_mut()
-                        && start <= last.1 + 1
-                    {
-                        last.1 = last.1.max(end);
-                    } else {
-                        merged.push((start, end));
-                    }
-                }
-                merged
-            })
-            .collect()
-    }
-
-    fn merge_bulge_beta_ladders(&self, l1: BetaLadder, l2: BetaLadder) -> Option<BetaLadder> {
-        self.merge_bulge_ladders(
-            (l1.start1, l1.end1, l1.start2, l1.end2, l1.is_parallel),
-            (l2.start1, l2.end1, l2.start2, l2.end2, l2.is_parallel),
-        )
-        .map(|(start1, end1, start2, end2, is_parallel)| BetaLadder {
-            start1,
-            end1,
-            start2,
-            end2,
-            is_parallel,
-        })
-    }
-
-    fn merge_bulge_ladders(
-        &self,
-        l1: (usize, usize, usize, usize, bool),
-        l2: (usize, usize, usize, usize, bool),
-    ) -> Option<(usize, usize, usize, usize, bool)> {
-        let (mut s1, mut e1, mut s2, mut e2, para1) = l1;
-        let (mut c1, mut c2, mut d1, mut d2, para2) = l2;
-
-        if para1 != para2 {
-            return None;
-        }
-
-        // 保证 l1 在前
-        if s1 > c1 {
-            std::mem::swap(&mut s1, &mut c1);
-            std::mem::swap(&mut e1, &mut c2);
-            std::mem::swap(&mut s2, &mut d1);
-            std::mem::swap(&mut e2, &mut d2);
-        }
-
-        let d0 = c1 as isize - e1 as isize - 1; // 链1 上的间隙
-        let gap2 = if para1 {
-            d1 as isize - e2 as isize - 1 // 平行：l2.start2 - l1.end2
-        } else {
-            s2 as isize - d2 as isize - 1 // 反平行：l1.start2 - l2.end2
-        };
-
-        // K&S 定义：两边最多一个 1-res bulge，另一边最多 4-res
-        if d0 < 0 || d0 > 4 || gap2 < 0 || gap2 > 4 || (d0 > 1 && gap2 > 1) {
-            return None;
-        }
-
-        let new_s1 = s1;
-        let new_e1 = c2;
-        let new_s2 = s2.min(d1); // 修复: 用 d1 (l2 start2) 而非 c1
-        let new_e2 = e2.max(d2); // 统一 max
-        Some((new_s1, new_e1, new_s2, new_e2, para1))
-    }
-
-    /// 合并螺旋区域：优先级 4 > 5 > 3，允许单残基中断，处理边界
-    fn collect_helix_regions(&self, flags: &[u32], n_res: usize) -> Vec<(usize, usize)> {
-        let mut helices = vec![];
-        let mut first = None;
+    fn find_helices(&self, flags: &[u32]) -> Vec<(usize, usize)> {
+        // BEGIN CHIMERAX CPP BODY: find_helices
+        // BEGIN CHIMERAX CPP FUNCTION: crates/core/src/parser/CompSS.cpp :: find_helices
+        // ChimeraX✔️✔️ CompSS.cpp:302 stores residue count.
+        // ChimeraX✔️✔️ CompSS.cpp:303 initializes the current helix start to none.
+        // ChimeraX✔️✔️ CompSS.cpp:304 stores the current helix type once a run starts.
+        // ChimeraX✔️✔️ CompSS.cpp:305 counts consecutive acceptor-only residues after the initial run.
+        // ChimeraX✔️✔️ CompSS.cpp:306 tracks whether the run is still in its initial acceptor-only prefix.
+        // ChimeraX✔️✔️ CompSS.cpp:307 scans all residues.
+        // ChimeraX✔️✔️ CompSS.cpp:308 reads the residue flags.
+        // ChimeraX✔️✔️ CompSS.cpp:309-311 resets per-residue helix type, relevant flags, and acceptor-only status.
+        // ChimeraX✔️✔️ CompSS.cpp:312-315 maps 3-helix flags to 3-10 helix state.
+        // ChimeraX✔️✔️ CompSS.cpp:316-320 maps 4- or 5-helix flags to alpha-family helix state.
+        // ChimeraX✔️✔️ CompSS.cpp:322 requires both a helix type and one relevant turn flag.
+        // ChimeraX✔️✔️ CompSS.cpp:323-326 starts a new helix run at the current residue.
+        // ChimeraX✔️✔️ CompSS.cpp:327-332 closes the previous run when the helix type changes.
+        // ChimeraX✔️✔️ CompSS.cpp:333-335 updates initial acceptor-only tracking for same-type continuation.
+        // ChimeraX✔️✔️ CompSS.cpp:336-338 keeps an initial acceptor-only prefix from splitting the run.
+        // ChimeraX✔️✔️ CompSS.cpp:338-348 lets one later acceptor-only residue pass, but splits at two.
+        // ChimeraX✔️✔️ CompSS.cpp:349-351 clears acceptor-only count on a donor-containing residue.
+        // ChimeraX✔️✔️ CompSS.cpp:352-357 closes a run when the current residue is no longer helix-marked.
+        // ChimeraX✔️✔️ CompSS.cpp:359-362 closes a final run at end of chain.
+        // END CHIMERAX CPP FUNCTION: crates/core/src/parser/CompSS.cpp :: find_helices
+        // END CHIMERAX CPP BODY: find_helices
+        let mut helices = Vec::new();
+        let mut first: Option<usize> = None;
         let mut cur_helix_type = 0;
         let mut acc_only_run = 0;
         let mut in_initial_acc_only = false;
 
-        for i in 0..n_res {
+        for i in 0..flags.len() {
             let f = flags[i];
+            let mut helix_type = 0;
+            let mut helix_flags = 0;
+            let mut acc_only = false;
 
-            // 优先级：4 > 5 > 3，且 4 和 5 都算 α-螺旋
-            let (helix_type, acc_only) = if (f & Self::DSSP_4HELIX) != 0 {
-                (4, (f & Self::DSSP_4DONOR) == 0)
-            } else if (f & Self::DSSP_5HELIX) != 0 {
-                (4, (f & Self::DSSP_5DONOR) == 0) // 5 也算 4
-            } else if (f & Self::DSSP_3HELIX) != 0 {
-                (3, (f & Self::DSSP_3DONOR) == 0)
-            } else {
-                (0, false)
-            };
+            if (f & Self::DSSP_3HELIX) != 0 {
+                helix_type = 3;
+                helix_flags = Self::DSSP_3ACCEPTOR | Self::DSSP_3DONOR | Self::DSSP_3GAP;
+                acc_only = (f & Self::DSSP_3DONOR) == 0;
+            } else if (f & (Self::DSSP_4HELIX | Self::DSSP_5HELIX)) != 0 {
+                helix_type = 4;
+                helix_flags = Self::DSSP_4ACCEPTOR
+                    | Self::DSSP_4DONOR
+                    | Self::DSSP_4GAP
+                    | Self::DSSP_5ACCEPTOR
+                    | Self::DSSP_5DONOR
+                    | Self::DSSP_5GAP;
+                acc_only = (f & Self::DSSP_4ACCEPTOR) != 0 && (f & Self::DSSP_4DONOR) == 0;
+            }
 
-            // 必须有实际的氢键标记才算
-            let helix_flags = if helix_type == 4 {
-                Self::DSSP_4ACCEPTOR | Self::DSSP_4DONOR | Self::DSSP_5ACCEPTOR | Self::DSSP_5DONOR
-            } else if helix_type == 3 {
-                Self::DSSP_3ACCEPTOR | Self::DSSP_3DONOR
-            } else {
-                0
-            };
-
-            if helix_type > 0 && (f & helix_flags) != 0 {
-                // —— 真正的螺旋残基 ——
+            if helix_type != 0 && (f & helix_flags) != 0 {
                 if first.is_none() {
                     first = Some(i);
                     cur_helix_type = helix_type;
                     in_initial_acc_only = true;
                 } else if helix_type != cur_helix_type {
-                    if let Some(s) = first {
-                        if i - s >= self.min_helix_length {
-                            helices.push((s, i - 1));
-                        }
+                    let start = first.unwrap();
+                    if i - start >= self.min_helix_length {
+                        helices.push((start, i - 1));
                     }
                     first = Some(i);
                     cur_helix_type = helix_type;
                     acc_only_run = 0;
-                    in_initial_acc_only = true;
+                } else {
+                    in_initial_acc_only = in_initial_acc_only && acc_only;
                 }
 
-                // acceptor-only 处理（和原版一模一样）
                 if in_initial_acc_only {
-                    in_initial_acc_only = acc_only || (i == first.unwrap());
+                    in_initial_acc_only = acc_only || Some(i) == first;
                 } else if acc_only {
                     if acc_only_run > 0 {
-                        // 连续两个 >> → 截断
-                        if let Some(s) = first {
-                            if i - 1 - s >= self.min_helix_length {
-                                helices.push((s, i - 2));
-                            }
+                        let start = first.unwrap();
+                        if i - 1 - start >= self.min_helix_length {
+                            helices.push((start, i - 2));
                         }
                         first = Some(i - 1);
                         cur_helix_type = helix_type;
@@ -830,215 +372,409 @@ impl SecondaryStructureCalculator {
                 } else {
                     acc_only_run = 0;
                 }
-            } else if let Some(s) = first {
-                // 螺旋结束
-                if i - s >= self.min_helix_length {
-                    helices.push((s, i - 1));
+            } else if let Some(start) = first {
+                if i - start >= self.min_helix_length {
+                    helices.push((start, i - 1));
                 }
                 first = None;
                 acc_only_run = 0;
-                in_initial_acc_only = false;
             }
         }
 
-        if let Some(s) = first {
-            if n_res - s >= self.min_helix_length {
-                helices.push((s, n_res - 1));
+        if let Some(start) = first {
+            if flags.len() - start >= self.min_helix_length {
+                helices.push((start, flags.len() - 1));
             }
         }
 
         helices
     }
 
-    // 在 collect_helix_regions 返回后，加上 helix capping
-    fn extend_helix_ends(helices: &mut Vec<(usize, usize)>, flags: &[u32], n_res: usize) {
-        for (start, end) in helices.iter_mut() {
-            // N-端延伸
-            if *start > 0 && (flags[*start - 1] & (Self::DSSP_4DONOR | Self::DSSP_5DONOR)) != 0 {
-                *start -= 1;
-            }
-            // C-端延伸
-            if *end + 1 < n_res
-                && (flags[*end + 1] & (Self::DSSP_4ACCEPTOR | Self::DSSP_5ACCEPTOR)) != 0
-            {
-                *end += 1;
+    fn find_bridges(
+        &self,
+        flags: &mut [u32],
+        hbonds: &HBondMatrix,
+        coords: &[ResidueCoords],
+    ) -> Vec<BetaLadder> {
+        let max = flags.len();
+        let mut bridge = vec![vec!['\0'; max]; max];
+
+        // BEGIN CHIMERAX CPP BODY: find_bridges
+        // BEGIN CHIMERAX CPP FUNCTION: crates/core/src/parser/CompSS.cpp :: find_bridges
+        // ChimeraX✔️✔️ CompSS.cpp:454 stores residue count as a signed loop domain.
+        // ChimeraX✔️✔️ CompSS.cpp:456-461 allocates a square bridge marker matrix.
+        // ChimeraX✔️✔️ CompSS.cpp:463 declares the outer scan index.
+        // ChimeraX✔️✔️ CompSS.cpp:464 scans i while i+1 remains valid.
+        // ChimeraX✔️❗ CompSS.cpp:465-466 searches N atoms within 20 A; Rust scans all later residues and filters by distance.
+        // ChimeraX✔️❗ CompSS.cpp:467 maps the nearby atom to residue index; Rust already has the index.
+        // ChimeraX✔️✔️ CompSS.cpp:468-469 skips self and previously visited residue pairs.
+        // ChimeraX✔️✔️ CompSS.cpp:470-472 detects a parallel bridge from the two offset H-bond patterns.
+        // ChimeraX✔️✔️ CompSS.cpp:473-474 marks both participating residues with the parallel-bridge flag.
+        // ChimeraX✔️✔️ CompSS.cpp:476-479 detects an antiparallel bridge from reciprocal or crossed offset H-bonds.
+        // ChimeraX✔️✔️ CompSS.cpp:480-481 marks both participating residues with the antiparallel-bridge flag.
+        // ChimeraX✔️✔️ CompSS.cpp:486-489 scans the bridge matrix to construct ladder runs.
+        // ChimeraX✔️✔️ CompSS.cpp:490 switches on the unconsumed bridge marker.
+        // ChimeraX✔️✔️ CompSS.cpp:491-495 consumes a parallel +/+ diagonal and appends one parallel ladder.
+        // ChimeraX✔️✔️ CompSS.cpp:497-501 consumes an antiparallel +/- diagonal and appends one antiparallel ladder.
+        // ChimeraX✔️✔️ CompSS.cpp:507-509 repeatedly merges beta-bulge-linked ladders until no merge remains.
+        // ChimeraX✔️✔️ CompSS.cpp:511-520 removes ladders shorter than min_strand_length on either strand.
+        // END CHIMERAX CPP FUNCTION: crates/core/src/parser/CompSS.cpp :: find_bridges
+        // END CHIMERAX CPP BODY: find_bridges
+        for i in 0..max.saturating_sub(1) {
+            for near_index in (i + 1)..max {
+                if coords[i].n.distance_squared(coords[near_index].n) > 400.0 {
+                    continue;
+                }
+
+                if (i > 0 && hbonds[i - 1][near_index] && hbonds[near_index][i + 1])
+                    || (near_index < max - 1
+                        && hbonds[near_index - 1][i]
+                        && hbonds[i][near_index + 1])
+                {
+                    bridge[i][near_index] = 'P';
+                    flags[i] |= Self::DSSP_PBRIDGE;
+                    flags[near_index] |= Self::DSSP_PBRIDGE;
+                } else if (hbonds[i][near_index] && hbonds[near_index][i])
+                    || (i > 0
+                        && near_index < max - 1
+                        && hbonds[i - 1][near_index + 1]
+                        && hbonds[near_index - 1][i + 1])
+                {
+                    bridge[i][near_index] = 'A';
+                    flags[i] |= Self::DSSP_ABRIDGE;
+                    flags[near_index] |= Self::DSSP_ABRIDGE;
+                }
             }
         }
+
+        let mut ladders = Vec::new();
+        for i in 0..max {
+            for j in (i + 1)..max {
+                match bridge[i][j] {
+                    'P' => {
+                        let mut k = 0;
+                        while i + k < max && j + k < max && bridge[i + k][j + k] == 'P' {
+                            bridge[i + k][j + k] = 'p';
+                            k += 1;
+                        }
+                        let k = k - 1;
+                        ladders.push(BetaLadder::new(LadderType::Parallel, i, i + k, j, j + k));
+                    }
+                    'A' => {
+                        let mut k = 0;
+                        while i + k < max && j >= k && bridge[i + k][j - k] == 'A' {
+                            bridge[i + k][j - k] = 'a';
+                            k += 1;
+                        }
+                        let k = k - 1;
+                        ladders.push(BetaLadder::new(
+                            LadderType::Antiparallel,
+                            i,
+                            i + k,
+                            j - k,
+                            j,
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        while find_beta_bulge(&mut ladders) {}
+
+        ladders
+            .into_iter()
+            .filter(|ladder| {
+                ladder.strand_len(0) >= self.min_strand_length
+                    && ladder.strand_len(1) >= self.min_strand_length
+            })
+            .collect()
     }
 
-    /// 分配二级结构标签
     fn assign_ribbon_info(
         &self,
         num_residues: usize,
         helices: &[(usize, usize)],
-        sheet_groups: &[Vec<(usize, usize)>],
+        ladders: &[BetaLadder],
         flags: &[u32],
     ) -> Vec<RibbonResidueInfo> {
         let mut info = vec![RibbonResidueInfo::default(); num_residues];
 
-        for (helix_id, &(start, end)) in helices.iter().enumerate() {
-            for residue_idx in start..=end {
-                if residue_idx < num_residues {
-                    info[residue_idx].ss = SecondaryStructure::Helix;
-                    info[residue_idx].helix_id = Some(helix_id);
-                    info[residue_idx].sheet_id = None;
-                }
-            }
-        }
+        // BEGIN CHIMERAX CPP BODY: assign_ribbon_info
+        // BEGIN CHIMERAX CPP FUNCTION: crates/core/src/parser/CompSS.cpp :: make_summary sheet grouping and residue summary
+        // ChimeraX✔️✔️ CompSS.cpp:551-552 creates the sheet collection from merged ladders.
+        // ChimeraX✔️✔️ CompSS.cpp:553 iterates every ladder.
+        // ChimeraX✔️✔️ CompSS.cpp:554-567 expands both ladder strands into one residue-index set.
+        // ChimeraX✔️✔️ CompSS.cpp:568-577 finds existing sheets that share at least one residue index.
+        // ChimeraX✔️✔️ CompSS.cpp:578-584 merges all overlapping sheets and appends the new combined sheet.
+        // ChimeraX❌❌ CompSS.cpp:587-599 assigns printable sheet letters; COSMolKit stores numeric sheet ids.
+        // ChimeraX✔️✔️ CompSS.cpp:603-614 maps helix flags before bridge flags in the residue summary.
+        // ChimeraX✔️✔️ CompSS.cpp:615-654 maps 3/4/5 turn flags; Rust exposes these as Turn only when no helix/sheet wins.
+        // END CHIMERAX CPP FUNCTION: crates/core/src/parser/CompSS.cpp :: make_summary sheet grouping and residue summary
+        // END CHIMERAX CPP BODY: assign_ribbon_info
+        let sheet_groups = sheet_groups_from_ladders(ladders);
+        for (sheet_id, sheet) in sheet_groups.iter().enumerate() {
+            let mut ranges: Vec<(usize, usize)> = sheet
+                .iter()
+                .flat_map(|ladder| {
+                    [
+                        (ladder.start[0], ladder.end[0]),
+                        (ladder.start[1], ladder.end[1]),
+                    ]
+                })
+                .collect();
+            ranges.sort_unstable();
 
-        for (sheet_id, ranges) in sheet_groups.iter().enumerate() {
-            for &(start, end) in ranges {
-                for residue_idx in start..=end {
-                    if residue_idx < num_residues
-                        && info[residue_idx].ss == SecondaryStructure::Coil
-                    {
-                        info[residue_idx].ss = SecondaryStructure::Sheet;
-                        info[residue_idx].sheet_id = Some(sheet_id);
+            let mut merged_ranges: Vec<(usize, usize)> = Vec::new();
+            for (start, end) in ranges {
+                if let Some(last) = merged_ranges.last_mut() {
+                    if start <= last.1 {
+                        last.1 = last.1.max(end);
+                        continue;
                     }
                 }
+                merged_ranges.push((start, end));
+            }
+
+            for (start, end) in merged_ranges {
+                for residue_idx in start..=end {
+                    info[residue_idx].ss = SecondaryStructure::Sheet;
+                    info[residue_idx].sheet_id = Some(sheet_id);
+                }
             }
         }
 
-        self.identify_turns_info(&mut info, flags);
+        for (helix_id, &(start, end)) in helices.iter().enumerate() {
+            for residue_idx in start..=end {
+                info[residue_idx].ss = SecondaryStructure::Helix;
+                info[residue_idx].helix_id = Some(helix_id);
+                info[residue_idx].sheet_id = None;
+            }
+        }
+
+        self.assign_turns(&mut info, flags);
         info
     }
 
-    fn identify_turns_info(&self, info: &mut [RibbonResidueInfo], flags: &[u32]) {
+    fn assign_turns(&self, info: &mut [RibbonResidueInfo], flags: &[u32]) {
         for i in 0..info.len() {
             if info[i].ss != SecondaryStructure::Coil {
                 continue;
             }
 
-            let f = flags[i];
-            if (f & (Self::DSSP_3DONOR | Self::DSSP_3ACCEPTOR)) != 0
-                || (f & (Self::DSSP_4DONOR | Self::DSSP_4ACCEPTOR)) != 0
-                || (f & (Self::DSSP_5DONOR | Self::DSSP_5ACCEPTOR)) != 0
+            if (flags[i]
+                & (Self::DSSP_3DONOR
+                    | Self::DSSP_3ACCEPTOR
+                    | Self::DSSP_3GAP
+                    | Self::DSSP_4DONOR
+                    | Self::DSSP_4ACCEPTOR
+                    | Self::DSSP_4GAP
+                    | Self::DSSP_5DONOR
+                    | Self::DSSP_5ACCEPTOR
+                    | Self::DSSP_5GAP))
+                != 0
             {
                 info[i].ss = SecondaryStructure::Turn;
             }
         }
+    }
+}
 
-        let mut i = 0;
-        while i < info.len() {
-            if info[i].ss == SecondaryStructure::Coil {
-                let start = i;
-                while i < info.len() && info[i].ss == SecondaryStructure::Coil {
-                    i += 1;
-                }
-                if (2..=4).contains(&(i - start)) {
-                    for residue_idx in start..i {
-                        info[residue_idx].ss = SecondaryStructure::Turn;
-                    }
-                }
+fn calculate_imide_hydrogen(current: ResidueCoords, previous: ResidueCoords) -> Option<Vec3> {
+    // BEGIN CHIMERAX CPP BODY: calculate_imide_hydrogen
+    // BEGIN CHIMERAX CPP FUNCTION: crates/core/src/parser/CompSS.cpp :: add_imide_hydrogen
+    // ChimeraX✔️✔️ CompSS.cpp:131 enters the missing-imide-H placement helper.
+    // ChimeraX✔️✔️ CompSS.cpp:133-134 returns no new coordinate when H already exists.
+    // ChimeraX✔️✔️ CompSS.cpp:136-139 copies current N/CA and previous C/O coordinates.
+    // ChimeraX✔️✔️ CompSS.cpp:141-143 builds N-to-CA, N-to-previous-C, and previous-C-to-O vectors.
+    // ChimeraX❗✔️ CompSS.cpp:144-146 normalizes vectors; Rust zero-protects degenerate vectors instead of throwing/asserting.
+    // ChimeraX❗✔️ CompSS.cpp:147-150 normalizes the summed bisector/carbonyl direction with the same zero protection.
+    // ChimeraX✔️✔️ CompSS.cpp:152 uses an N-H bond length of 1.01 A.
+    // ChimeraX❌❌ CompSS.cpp:153 heap-allocates Coord; Rust returns an owned Vec3.
+    // ChimeraX✔️✔️ CompSS.cpp:154 places H at N minus the normalized direction scaled by 1.01.
+    // ChimeraX✔️✔️ CompSS.cpp:155 returns the synthesized coordinate.
+    // END CHIMERAX CPP FUNCTION: crates/core/src/parser/CompSS.cpp :: add_imide_hydrogen
+    // END CHIMERAX CPP BODY: calculate_imide_hydrogen
+    let n_to_ca = (current.ca - current.n).normalize_or_zero();
+    let n_to_c = (previous.c - current.n).normalize_or_zero();
+    let c_to_o = (previous.o - previous.c).normalize_or_zero();
+    let cac_bisect = (n_to_ca + n_to_c).normalize_or_zero();
+    let opp_n = (cac_bisect + c_to_o).normalize_or_zero();
+
+    (opp_n.length_squared() > 1e-6).then_some(current.n - opp_n * 1.01)
+}
+
+fn hbonded_to(acceptor: ResidueCoords, donor: ResidueCoords, cutoff: f32) -> bool {
+    // BEGIN CHIMERAX CPP BODY: hbonded_to
+    // BEGIN CHIMERAX CPP FUNCTION: crates/core/src/parser/CompSS.cpp :: hbonded_to
+    // ChimeraX✔️✔️ CompSS.cpp:188 receives acceptor coordinates, donor coordinates, and cutoff.
+    // ChimeraX✔️✔️ CompSS.cpp:190-192 uses electrostatic constants q1 = 0.42, q2 = 0.20, f = 332.
+    // ChimeraX✔️✔️ CompSS.cpp:194-195 rejects donor residues with no H coordinate.
+    // ChimeraX✔️✔️ CompSS.cpp:196-199 binds H, acceptor C/O, and donor N coordinates.
+    // ChimeraX✔️✔️ CompSS.cpp:201 computes squared C-N distance.
+    // ChimeraX✔️✔️ CompSS.cpp:202-203 rejects C-N distances above 7 A as an early cutoff.
+    // ChimeraX✔️✔️ CompSS.cpp:204 converts C-N distance to linear distance.
+    // ChimeraX✔️✔️ CompSS.cpp:205-207 computes O-N, C-H, and O-H distances.
+    // ChimeraX❗✔️ CompSS.cpp:209 computes DSSP energy; Rust guards zero distances before division.
+    // ChimeraX✔️✔️ CompSS.cpp:210 accepts the H-bond only when energy is below cutoff.
+    // END CHIMERAX CPP FUNCTION: crates/core/src/parser/CompSS.cpp :: hbonded_to
+    // END CHIMERAX CPP BODY: hbonded_to
+    let Some(h) = donor.h else {
+        return false;
+    };
+
+    let r_cn_sq = acceptor.c.distance_squared(donor.n);
+    if r_cn_sq > 49.0 {
+        return false;
+    }
+
+    let r_cn = r_cn_sq.sqrt();
+    let r_on = acceptor.o.distance(donor.n);
+    let r_ch = acceptor.c.distance(h);
+    let r_oh = acceptor.o.distance(h);
+
+    if r_cn <= 1e-6 || r_on <= 1e-6 || r_ch <= 1e-6 || r_oh <= 1e-6 {
+        return false;
+    }
+
+    let energy = 0.42 * 0.20 * (1.0 / r_on + 1.0 / r_ch - 1.0 / r_oh - 1.0 / r_cn) * 332.0;
+    energy < cutoff
+}
+
+fn peptide_connected(prev_c: Vec3, next_n: Vec3) -> bool {
+    prev_c.distance_squared(next_n) <= 4.0
+}
+
+fn merge_bulge(lr1: BetaLadder, lr2: BetaLadder) -> Option<BetaLadder> {
+    // BEGIN CHIMERAX CPP BODY: merge_bulge
+    // BEGIN CHIMERAX CPP FUNCTION: crates/core/src/parser/CompSS.cpp :: merge_bulge
+    // ChimeraX✔️✔️ CompSS.cpp:377 receives two ladder records.
+    // ChimeraX✔️✔️ CompSS.cpp:379-380 creates mutable aliases for ordering.
+    // ChimeraX✔️✔️ CompSS.cpp:381-382 rejects ladders of different type.
+    // ChimeraX✔️✔️ CompSS.cpp:384-388 orders ladders by first-strand start position.
+    // ChimeraX✔️✔️ CompSS.cpp:390-392 rejects first-strand gaps outside 0..=4.
+    // ChimeraX✔️✔️ CompSS.cpp:393-397 computes second-strand gap using parallel or antiparallel geometry.
+    // ChimeraX✔️✔️ CompSS.cpp:398-399 rejects second-strand gaps outside 0..=4.
+    // ChimeraX✔️✔️ CompSS.cpp:400-401 rejects cases with more than one extra residue on both strands.
+    // ChimeraX✔️✔️ CompSS.cpp:403-413 computes merged strand bounds by ladder orientation.
+    // ChimeraX❌❌ CompSS.cpp:414 heap-allocates a ladder; Rust constructs the value directly.
+    // ChimeraX✔️✔️ CompSS.cpp:415 marks the merged ladder as a beta bulge.
+    // ChimeraX✔️✔️ CompSS.cpp:416 returns the merged ladder.
+    // END CHIMERAX CPP FUNCTION: crates/core/src/parser/CompSS.cpp :: merge_bulge
+    // END CHIMERAX CPP BODY: merge_bulge
+    if lr1.is_bulge || lr2.is_bulge || lr1.ladder_type != lr2.ladder_type {
+        return None;
+    }
+
+    let (l1, l2) = if lr1.start[0] <= lr2.start[0] {
+        (lr1, lr2)
+    } else {
+        (lr2, lr1)
+    };
+
+    let d0 = l2.start[0] as isize - l1.end[0] as isize;
+    if !(0..=4).contains(&d0) {
+        return None;
+    }
+
+    let d1 = match l1.ladder_type {
+        LadderType::Parallel => l2.start[1] as isize - l1.end[1] as isize,
+        LadderType::Antiparallel => l1.start[1] as isize - l2.end[1] as isize,
+    };
+    if !(0..=4).contains(&d1) || (d0 > 1 && d1 > 1) {
+        return None;
+    }
+
+    let (s1, e1) = match l1.ladder_type {
+        LadderType::Parallel => (l1.start[1], l2.end[1]),
+        LadderType::Antiparallel => (l2.start[1], l1.end[1]),
+    };
+
+    let mut ladder = BetaLadder::new(l1.ladder_type, l1.start[0], l2.end[0], s1, e1);
+    ladder.is_bulge = true;
+    Some(ladder)
+}
+
+fn find_beta_bulge(ladders: &mut Vec<BetaLadder>) -> bool {
+    // BEGIN CHIMERAX CPP BODY: find_beta_bulge
+    // BEGIN CHIMERAX CPP FUNCTION: crates/core/src/parser/CompSS.cpp :: find_beta_bulge
+    // ChimeraX✔️✔️ CompSS.cpp:425 starts scanning the ladder list with the first iterator.
+    // ChimeraX✔️✔️ CompSS.cpp:426 reads the first ladder.
+    // ChimeraX✔️✔️ CompSS.cpp:427-428 skips first ladders that are already beta bulges.
+    // ChimeraX✔️✔️ CompSS.cpp:429-430 scans later ladders as the second candidate.
+    // ChimeraX✔️✔️ CompSS.cpp:431 reads the second ladder.
+    // ChimeraX✔️✔️ CompSS.cpp:432-433 skips second ladders that are already beta bulges.
+    // ChimeraX✔️✔️ CompSS.cpp:434 attempts to merge the pair.
+    // ChimeraX✔️✔️ CompSS.cpp:435 enters the replacement path when merge succeeds.
+    // ChimeraX✔️✔️ CompSS.cpp:436-438 removes both source ladders and appends the merged ladder.
+    // ChimeraX❌❌ CompSS.cpp:439 deletes heap allocation; Rust has no explicit delete.
+    // ChimeraX✔️✔️ CompSS.cpp:440 returns true after exactly one merge.
+    // ChimeraX✔️✔️ CompSS.cpp:444 returns false when no eligible pair exists.
+    // END CHIMERAX CPP FUNCTION: crates/core/src/parser/CompSS.cpp :: find_beta_bulge
+    // END CHIMERAX CPP BODY: find_beta_bulge
+    let mut i = 0;
+    while i < ladders.len() {
+        if ladders[i].is_bulge {
+            i += 1;
+            continue;
+        }
+
+        let mut j = i + 1;
+        while j < ladders.len() {
+            if ladders[j].is_bulge {
+                j += 1;
+                continue;
+            }
+
+            if let Some(merged) = merge_bulge(ladders[i], ladders[j]) {
+                ladders.remove(j);
+                ladders.remove(i);
+                ladders.push(merged);
+                return true;
+            }
+
+            j += 1;
+        }
+
+        i += 1;
+    }
+
+    false
+}
+
+fn sheet_groups_from_ladders(ladders: &[BetaLadder]) -> Vec<Vec<BetaLadder>> {
+    let mut groups: Vec<Vec<BetaLadder>> = Vec::new();
+
+    for &ladder in ladders {
+        let mut group = vec![ladder];
+        let mut idx = 0;
+        while idx < groups.len() {
+            if groups[idx]
+                .iter()
+                .any(|existing| ladders_share_residue(*existing, ladder))
+            {
+                group.extend(groups.remove(idx));
             } else {
-                i += 1;
+                idx += 1;
             }
         }
+        groups.push(group);
     }
 
-    fn assign_ss_labels(
-        &self,
-        num_residues: usize,
-        helices: &[(usize, usize)],
-        strands: &[(usize, usize)],
-        flags: &[u32],
-    ) -> Vec<SecondaryStructure> {
-        let mut labels = vec![SecondaryStructure::Coil; num_residues];
-
-        // 优先分配螺旋(螺旋优先级高于β折叠)
-        for &(start, end) in helices {
-            for i in start..=end {
-                if i < num_residues {
-                    labels[i] = SecondaryStructure::Helix;
-                }
-            }
-        }
-
-        // 分配β折叠
-        for &(start, end) in strands {
-            for i in start..=end {
-                if i < num_residues && labels[i] == SecondaryStructure::Coil {
-                    labels[i] = SecondaryStructure::Sheet;
-                }
-            }
-        }
-
-        // 识别转角(基于氢键模式，这里简化处理)
-        self.identify_turns(&mut labels, flags);
-
-        labels
-    }
-
-    /// 识别转角
-    fn identify_turns(&self, labels: &mut [SecondaryStructure], flags: &[u32]) {
-        // 第一步：基于原始 turn 信息标记 Turn（原版 ChimeraX 就是这么干的！）
-        // 包括：
-        // - 'X'：同时是 donor 和 acceptor（双向氢键）
-        // - '>'：只有 acceptor
-        // - '<'：只有 donor
-        // - '3','4','5'：中间 GAP 残基
-        for i in 0..labels.len() {
-            if labels[i] != SecondaryStructure::Coil {
-                continue;
-            }
-
-            let f = flags[i];
-
-            // 3-turn 相关
-            if (f & (Self::DSSP_3DONOR | Self::DSSP_3ACCEPTOR)) != 0 {
-                labels[i] = SecondaryStructure::Turn;
-                continue;
-            }
-
-            // 4-turn 相关（最常见的 β-turn / γ-turn）
-            if (f & (Self::DSSP_4DONOR | Self::DSSP_4ACCEPTOR)) != 0 {
-                labels[i] = SecondaryStructure::Turn;
-                continue;
-            }
-
-            // 5-turn（较少见）
-            if (f & (Self::DSSP_5DONOR | Self::DSSP_5ACCEPTOR)) != 0 {
-                labels[i] = SecondaryStructure::Turn;
-            }
-        }
-
-        // 第二步：你的“短 Coil 片段”补丁保留！（原版没有，但很好用）
-        // 它能抓住一些 DSSP 没标记的紧凑转角（尤其是 β-hairpin）
-        let mut i = 0;
-        while i < labels.len() {
-            if labels[i] == SecondaryStructure::Coil {
-                let start = i;
-                while i < labels.len() && labels[i] == SecondaryStructure::Coil {
-                    i += 1;
-                }
-                let length = i - start;
-                if length >= 2 && length <= 4 {
-                    for j in start..i {
-                        labels[j] = SecondaryStructure::Turn;
-                    }
-                }
-            } else {
-                i += 1;
-            }
-        }
-    }
+    groups
 }
 
-#[inline]
-fn dist_sq(a: Point3, b: Point3) -> f64 {
-    let dx = a[0] - b[0];
-    let dy = a[1] - b[1];
-    let dz = a[2] - b[2];
-    dx * dx + dy * dy + dz * dz
+fn ladders_share_residue(a: BetaLadder, b: BetaLadder) -> bool {
+    ranges_overlap((a.start[0], a.end[0]), (b.start[0], b.end[0]))
+        || ranges_overlap((a.start[0], a.end[0]), (b.start[1], b.end[1]))
+        || ranges_overlap((a.start[1], a.end[1]), (b.start[0], b.end[0]))
+        || ranges_overlap((a.start[1], a.end[1]), (b.start[1], b.end[1]))
 }
 
-fn ladders_share_sheet(a: BetaLadder, b: BetaLadder) -> bool {
-    ranges_overlap_or_touch((a.start1, a.end1), (b.start1, b.end1))
-        || ranges_overlap_or_touch((a.start1, a.end1), (b.start2, b.end2))
-        || ranges_overlap_or_touch((a.start2, a.end2), (b.start1, b.end1))
-        || ranges_overlap_or_touch((a.start2, a.end2), (b.start2, b.end2))
+fn ranges_overlap(a: (usize, usize), b: (usize, usize)) -> bool {
+    a.0 <= b.1 && b.0 <= a.1
 }
 
-fn ranges_overlap_or_touch(a: (usize, usize), b: (usize, usize)) -> bool {
-    a.0 <= b.1.saturating_add(1) && b.0 <= a.1.saturating_add(1)
+fn ordered_pair(a: usize, b: usize) -> (usize, usize) {
+    if a <= b { (a, b) } else { (b, a) }
 }

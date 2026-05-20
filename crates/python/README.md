@@ -94,6 +94,23 @@ for i in range(1, 10):
 Viewer.play(anim, width=800, height=500)  # loops=-1 for infinite repeat
 ```
 
+### 3. Protein cartoon rendering
+
+```python
+from cosmol_viewer import Protein, Scene, Viewer
+
+mmcif_data = open("protein.cif", "r", encoding="utf-8").read()
+protein = Protein.from_mmcif(mmcif_data).centered().color("#10ACBF")
+
+scene = Scene()
+scene.add_shape_with_id("protein", protein)
+
+viewer = Viewer.render(scene, width=800, height=500)
+```
+
+`Protein.from_mmcif()` and `Protein.from_pdb()` parse backbone atoms and use the Rust core to assign
+secondary structure before rendering a ChimeraX-style cartoon ribbon mesh.
+
 more examples can be found in the [examples](https://github.com/COSMol-repl/COSMol-viewer/tree/main/cosmol_viewer/examples) folder:
 ```bash
 cd cosmol_viewer

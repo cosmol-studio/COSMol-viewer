@@ -2,12 +2,14 @@ use cosmol_viewer::{Scene, Viewer, cosmolkit, shapes::Molecule, utils::Stylable}
 use std::path::Path;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let cosmolkit_mol = cosmolkit::Molecule::from_smiles("c1ccccc1")?;
+    let cosmolkit_mol =
+        cosmolkit::Molecule::from_smiles("COc1cc(C=Nn2c(SC)nnc2c3ccccc3)c(Br)cc1O")?;
     let mol = Molecule::from_cosmolkit(&cosmolkit_mol)?
         .centered()
-        .color("#5B8DEF");
+        .color([255, 128, 0]);
 
     let mut scene = Scene::new();
+    scene.set_scale(0.8);
     scene.enable_outline();
     scene.outline.width = 0.04;
     scene.add_shape_with_id("mol", mol);

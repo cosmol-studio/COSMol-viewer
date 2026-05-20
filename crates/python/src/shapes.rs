@@ -428,7 +428,10 @@ impl_stylable_pymethods!(PyMolecule, Molecule);
 #[doc = r#"
 A protein shape object.
 
-This class is typically created by parsing an mmCIF-format string.
+This class is typically created by parsing an mmCIF- or PDB-format string.
+Protein rendering uses the Rust core cartoon pipeline: secondary structure is
+assigned from backbone geometry, and the displayed ribbon mesh is generated with
+the ChimeraX-style spline, cross-section, and cap/extrusion path.
 
 Examples
 --------
@@ -452,6 +455,9 @@ impl PyProtein {
     #[doc = r#"
 Create a protein from an mmCIF-format string.
 
+The parser reads backbone atoms needed for cartoon rendering. Secondary
+structure is assigned by the Rust core before mesh generation.
+
 Parameters
 ----------
 mmcif : str
@@ -465,6 +471,30 @@ Protein
     pub fn from_mmcif(mmcif: &str) -> PyResult<Self> {
         Ok(Self {
             inner: Protein::from_mmcif(mmcif)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?,
+        })
+    }
+
+    #[staticmethod]
+    #[doc = r#"
+Create a protein from a PDB-format string.
+
+The parser reads backbone atoms needed for cartoon rendering. Secondary
+structure is assigned by the Rust core before mesh generation.
+
+Parameters
+----------
+pdb : str
+    The PDB file content as a string.
+
+Returns
+-------
+Protein
+    The parsed protein object.
+"#]
+    pub fn from_pdb(pdb: &str) -> PyResult<Self> {
+        Ok(Self {
+            inner: Protein::from_pdb(pdb)
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?,
         })
     }

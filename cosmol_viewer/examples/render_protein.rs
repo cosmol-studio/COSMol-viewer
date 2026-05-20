@@ -2,7 +2,8 @@ use cosmol_viewer::utils::Stylable;
 use cosmol_viewer::{RenderQuality, Scene, Viewer, shapes::Protein};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let prot = Protein::from_mmcif(include_str!("../examples/6fi1.cif"))?.color("#10ACBF");
+    let prot = Protein::from_pdb(include_str!("../examples/4gll.pdb"))?.color("#10ACBF");
+    // let prot = Protein::from_mmcif(include_str!("../examples/6fi1.cif"))?.color("#10ACBF");
 
     let mut scene = Scene::new();
     scene.set_background_color("#F9FAFB");
