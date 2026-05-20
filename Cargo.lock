@@ -612,7 +612,7 @@ dependencies = [
 
 [[package]]
 name = "cosmol_viewer"
-version = "0.2.16"
+version = "0.2.17"
 dependencies = [
  "cosmol_viewer_core",
  "cosmolkit",
@@ -620,7 +620,7 @@ dependencies = [
 
 [[package]]
 name = "cosmol_viewer_core"
-version = "0.2.16"
+version = "0.2.17"
 dependencies = [
  "base64",
  "bytemuck",
@@ -671,7 +671,7 @@ dependencies = [
 
 [[package]]
 name = "cosmol_viewer_wasm"
-version = "0.2.16"
+version = "0.2.17"
 dependencies = [
  "base64",
  "cosmol_viewer_core",

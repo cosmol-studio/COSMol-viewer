@@ -393,12 +393,17 @@ width : float, optional
         color: Option<Bound<'_, PyAny>>,
         width: Option<f32>,
     ) -> PyResult<()> {
-        let color = match color {
-            Some(color) => py_to_color(color)?.into(),
-            None => self.inner.outline.color,
-        };
-        let width = width.unwrap_or(self.inner.outline.width);
-        self.inner.set_outline(true, color, width);
+        match color {
+            Some(color) => {
+                let color = py_to_color(color)?.into();
+                let width = width.unwrap_or(self.inner.outline.width);
+                self.inner.set_outline(true, color, width);
+            }
+            None => {
+                self.inner
+                    .enable_outline(width.unwrap_or(self.inner.outline.width));
+            }
+        }
         Ok(())
     }
 

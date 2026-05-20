@@ -5,8 +5,7 @@ mol_data = open("./examples/6fi1_ligand.sdf", "r", encoding="utf-8").read()
 mol = Molecule.from_sdf(mol_data).centered()
 
 scene = Scene()
-
-scene.set_scale(1.0)
+scene.enable_outline(width=0.04)
 
 scene.add_shape_with_id("molecule", mol)
 

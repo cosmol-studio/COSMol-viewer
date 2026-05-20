@@ -205,8 +205,9 @@ impl Scene {
         };
     }
 
-    pub fn enable_outline(&mut self) {
+    pub fn enable_outline(&mut self, width: f32) {
         self.outline.enabled = true;
+        self.outline.width = width.max(0.0);
     }
 
     pub fn disable_outline(&mut self) {

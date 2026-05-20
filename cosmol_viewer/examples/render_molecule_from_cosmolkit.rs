@@ -10,8 +10,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut scene = Scene::new();
     scene.set_scale(0.8);
-    scene.enable_outline();
-    scene.outline.width = 0.04;
+    scene.enable_outline(0.04);
     scene.add_shape_with_id("mol", mol);
 
     let viewer = Viewer::render(&scene, 800.0, 500.0)?;

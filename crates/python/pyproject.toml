@@ -1,6 +1,6 @@
 [project]
 name = "cosmol-viewer"
-version = "0.2.16"
+version = "0.2.17"
 description = "Molecular visualization tools"
 authors = [{name = "95028", email = "wjt@cosmol.org"}]
 readme = "README.md"

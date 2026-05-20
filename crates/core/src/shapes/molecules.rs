@@ -9,7 +9,7 @@ use crate::{
 };
 use cosmolkit::{
     BondOrder as CosmolkitBondOrder, Molecule as CosmolkitMolecule,
-    io::sdf::{SdfCoordinateMode, read_sdf_from_str_with_coordinate_mode},
+    io::sdf::{SdfCoordinateMode, SdfReadParams, read_sdf_from_str_with_params},
 };
 use glam::Vec3;
 use na_seq::Element;
@@ -235,8 +235,16 @@ impl Molecule {
     }
 
     fn from_sdf_with_cosmolkit(sdf: &str) -> Result<Self, ParseSdfError> {
-        let record = read_sdf_from_str_with_coordinate_mode(sdf, SdfCoordinateMode::Require3D)
-            .map_err(|e| ParseSdfError::ParsingError(e.to_string()))?;
+        let record = read_sdf_from_str_with_params(
+            sdf,
+            SdfReadParams {
+                sanitize: false,
+                remove_hs: false,
+                coordinate_mode: SdfCoordinateMode::Require3D,
+                ..Default::default()
+            },
+        )
+        .map_err(|e| ParseSdfError::ParsingError(e.to_string()))?;
         let mut molecule = record.molecule;
         for (field_name, field_value) in record.data_fields {
             molecule = molecule.with_sdf_data_field(field_name, field_value);
@@ -890,6 +898,7 @@ impl TryFrom<CosmolkitMolecule> for Molecule {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cosmolkit::io::sdf::read_sdf_from_str_with_coordinate_mode;
 
     #[test]
     fn from_sdf_kekulizes_aromatic_bonds() {
@@ -928,6 +937,40 @@ $$$$
 
         assert_eq!(single_count, 3);
         assert_eq!(double_count, 3);
+    }
+
+    #[test]
+    fn from_sdf_preserves_explicit_hydrogens() {
+        let sdf = "\
+methane
+  cosmol_viewer
+
+  5  4  0  0  0  0  0  0  0  0999 V2000
+    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.6291    0.6291    0.6291 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.6291   -0.6291    0.6291 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.6291    0.6291   -0.6291 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.6291   -0.6291   -0.6291 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  1  0  0  0  0
+  1  3  1  0  0  0  0
+  1  4  1  0  0  0  0
+  1  5  1  0  0  0  0
+M  END
+$$$$
+";
+
+        let molecule = Molecule::from_sdf(sdf).expect("methane SDF should parse");
+
+        assert_eq!(molecule.atom_types.len(), 5);
+        assert_eq!(
+            molecule
+                .atom_types
+                .iter()
+                .filter(|element| **element == Element::Hydrogen)
+                .count(),
+            4
+        );
+        assert_eq!(molecule.bond_indices.len(), 4);
     }
 
     #[test]

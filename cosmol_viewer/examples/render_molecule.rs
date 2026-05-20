@@ -5,8 +5,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mol = Molecule::from_sdf(include_str!("../examples/6fi1_ligand.sdf"))?.centered();
 
     let mut scene = Scene::new();
-    scene.enable_outline();
-    scene.outline.width = 0.04;
+    scene.enable_outline(0.04);
 
     scene.add_shape_with_id("mol", mol);
 
