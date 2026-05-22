@@ -325,9 +325,9 @@ dependencies = [
 
 [[package]]
 name = "built"
-version = "0.8.0"
+version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f4ad8f11f288f48ca24471bbd51ac257aaeaaa07adae295591266b792902ae64"
+checksum = "5c0e531d93d39c34eef561e929e8a7f86d77a5af08aac4f6d6e39976c51858e9"
 
 [[package]]
 name = "bumpalo"
@@ -612,7 +612,7 @@ dependencies = [
 
 [[package]]
 name = "cosmol_viewer"
-version = "0.2.17"
+version = "0.2.18"
 dependencies = [
  "cosmol_viewer_core",
  "cosmolkit",
@@ -620,7 +620,7 @@ dependencies = [
 
 [[package]]
 name = "cosmol_viewer_core"
-version = "0.2.17"
+version = "0.2.18"
 dependencies = [
  "base64",
  "bytemuck",
@@ -630,7 +630,7 @@ dependencies = [
  "eframe",
  "egui-winit",
  "egui_extras",
- "glam",
+ "glam 0.33.0",
  "image",
  "kiddo",
  "na_seq",
@@ -671,7 +671,7 @@ dependencies = [
 
 [[package]]
 name = "cosmol_viewer_wasm"
-version = "0.2.17"
+version = "0.2.18"
 dependencies = [
  "base64",
  "cosmol_viewer_core",
@@ -693,24 +693,25 @@ dependencies = [
 
 [[package]]
 name = "cosmolkit"
-version = "0.2.0-beta.1"
+version = "0.2.0-beta.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fc638a6d95ab22767d3bcec73ed3f6161f1bca69e22f1c4925fdf95be70cfc24"
+checksum = "fa34e61f6bcc71b1cef2d4b178a748ea2a7134bb91b6cadade7165fef563815e"
 dependencies = [
  "cosmolkit-core",
 ]
 
 [[package]]
 name = "cosmolkit-core"
-version = "0.2.0-beta.1"
+version = "0.2.0-beta.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f1bb548c251dbf6cbe6df56f0a36658de344dab170c91da2e887ec5cac96a0a"
+checksum = "f7d9987ff67d9c92c1c31be569e5281a6b4352145142f0e5640e8090f1760233"
 dependencies = [
  "cosmolkit-macros",
  "cosmolkit-ringdecomposer",
- "glam",
+ "glam 0.32.1",
  "log",
  "resvg",
+ "serde_json",
  "thiserror 2.0.18",
  "tiny-skia",
  "usvg",
@@ -718,9 +719,9 @@ dependencies = [
 
 [[package]]
 name = "cosmolkit-macros"
-version = "0.2.0-beta.1"
+version = "0.2.0-beta.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4deda9a3064424608fd2998942fc89ec9e14c199af89dfd62a18120db6a71efa"
+checksum = "974b378c465c00892993b269ff586de4dc8e169a5ff8e95c3b5d0a78f9df9700"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -729,9 +730,9 @@ dependencies = [
 
 [[package]]
 name = "cosmolkit-ringdecomposer"
-version = "0.2.0-beta.1"
+version = "0.2.0-beta.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e27ced86fdc3131e36fbc497e630512c15e9b296c9db62c6e46b8e680763bf04"
+checksum = "edd933a88437aef9f58a46166664e5e9bba42c8c79dd37a8c974c3b8a1b8247e"
 dependencies = [
  "thiserror 2.0.18",
 ]
@@ -1016,9 +1017,9 @@ dependencies = [
 
 [[package]]
 name = "either"
-version = "1.15.0"
+version = "1.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
+checksum = "91622ff5e7162018101f2fea40d6ebf4a78bbe5a49736a2020649edf9693679e"
 
 [[package]]
 name = "emath"
@@ -1416,6 +1417,12 @@ name = "glam"
 version = "0.32.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f70749695b063ecbf6b62949ccccde2e733ec3ecbbd71d467dca4e5c6c97cca0"
+
+[[package]]
+name = "glam"
+version = "0.33.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8fb167719045debebe9f532320accc7b5c993c5a3b813f5696a11d5ca7bdc57b"
 dependencies = [
  "bytemuck",
  "serde_core",
@@ -3516,9 +3523,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.149"
+version = "1.0.150"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "83fc039473c5595ace860d8c4fafa220ff474b3fc6bfdb4293327f1a37e94d86"
+checksum = "e8014e44b4736ed0538adeecded0fce2a272f22dc9578a7eb6b2d9993c74cfb9"
 dependencies = [
  "itoa",
  "memchr",

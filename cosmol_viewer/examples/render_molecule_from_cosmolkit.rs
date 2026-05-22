@@ -1,4 +1,4 @@
-use cosmol_viewer::{Scene, Viewer, cosmolkit, shapes::Molecule, utils::Stylable};
+use cosmol_viewer::{Scene, Viewer, cosmolkit, shapes::Molecule};
 use std::path::Path;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -6,11 +6,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         cosmolkit::Molecule::from_smiles("COc1cc(C=Nn2c(SC)nnc2c3ccccc3)c(Br)cc1O")?;
     let mol = Molecule::from_cosmolkit(&cosmolkit_mol)?
         .centered()
-        .color([255, 128, 0]);
+        .enable_outline(0.04);
 
     let mut scene = Scene::new();
     scene.set_scale(0.8);
-    scene.enable_outline(0.04);
     scene.add_shape_with_id("mol", mol);
 
     let viewer = Viewer::render(&scene, 800.0, 500.0)?;

@@ -1,7 +1,7 @@
 use crate::parser::sdf::Sdf;
 use crate::parser::utils::BondType as SdfBondType;
-use crate::utils::InstanceGroups;
 pub use crate::utils::Logger;
+use crate::utils::{Color, InstanceGroups, OutlineInstanceGroup, OutlineSettings};
 use crate::{
     Shape,
     shapes::{sphere::SphereInstance, stick::StickInstance},
@@ -115,6 +115,8 @@ pub struct Molecule {
 
     pub visual_style: Material,
     pub interaction: Interaction,
+    #[serde(default)]
+    pub outline: OutlineSettings,
 }
 
 impl Interpolatable for Molecule {
@@ -199,6 +201,7 @@ impl Interpolatable for Molecule {
             quality: ((self.quality as f32) * (1.0 - t) + (other.quality as f32) * t) as u32,
             visual_style: self.visual_style.clone(),
             interaction: self.interaction.clone(),
+            outline: self.outline,
         }
     }
 }
@@ -363,6 +366,7 @@ impl Molecule {
                 ..Default::default()
             },
             interaction: Default::default(),
+            outline: OutlineSettings::default(),
         })
     }
 
@@ -439,6 +443,7 @@ impl Molecule {
                 ..Default::default()
             },
             interaction: Default::default(),
+            outline: OutlineSettings::default(),
         })
     }
 
@@ -498,6 +503,7 @@ impl Molecule {
                 ..Default::default()
             },
             interaction: Default::default(),
+            outline: OutlineSettings::default(),
         })
     }
 
@@ -538,6 +544,26 @@ impl Molecule {
 
     pub fn reset_color(mut self) -> Self {
         self.style_mut().color = None;
+        self
+    }
+
+    pub fn set_outline<C: Into<Color>>(mut self, enabled: bool, color: C, width: f32) -> Self {
+        self.outline = OutlineSettings {
+            enabled,
+            color: color.into().into(),
+            width: width.max(0.0),
+        };
+        self
+    }
+
+    pub fn enable_outline(mut self, width: f32) -> Self {
+        self.outline.enabled = true;
+        self.outline.width = width.max(0.0);
+        self
+    }
+
+    pub fn disable_outline(mut self) -> Self {
+        self.outline.enabled = false;
         self
     }
 
@@ -615,6 +641,7 @@ impl IntoInstanceGroups for Molecule {
         let mut groups = InstanceGroups {
             spheres: Vec::with_capacity(self.atom_posits.len()),
             sticks: Vec::with_capacity(self.bond_indices.len() * 6),
+            outlines: Vec::new(),
         };
 
         let first_neighbors = self.first_atom_neighbors();
@@ -763,6 +790,16 @@ impl IntoInstanceGroups for Molecule {
                 ));
             }
         }
+        if self.outline.enabled && self.outline.width > 0.0 {
+            let mut settings = self.outline;
+            settings.width *= scale;
+            groups.outlines.push(OutlineInstanceGroup {
+                settings,
+                spheres: groups.spheres.clone(),
+                sticks: groups.sticks.clone(),
+            });
+        }
+
         groups
     }
 }
@@ -772,6 +809,8 @@ impl Stylable for Molecule {
         &mut self.visual_style
     }
 }
+
+crate::impl_stylable_methods!(Molecule, visual_style);
 
 fn color_from_weight(weight: f64) -> Vec3 {
     Vec3::new(weight as f32, 1.0 - weight as f32, 0.0)

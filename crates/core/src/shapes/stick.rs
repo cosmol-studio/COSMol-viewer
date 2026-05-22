@@ -262,6 +262,8 @@ impl Stylable for Stick {
     }
 }
 
+crate::impl_stylable_methods!(Stick, style);
+
 pub trait _UpdateStick {
     fn update_stick(&mut self, id: &str, f: impl FnOnce(&mut Stick));
 }

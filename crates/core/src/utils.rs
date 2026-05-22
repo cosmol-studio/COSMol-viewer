@@ -102,13 +102,39 @@ impl Interpolatable for Shape {
 pub struct InstanceGroups {
     pub spheres: Vec<SphereInstance>,
     pub sticks: Vec<StickInstance>,
+    pub outlines: Vec<OutlineInstanceGroup>,
 }
 
 impl InstanceGroups {
     pub fn merge(&mut self, mut other: InstanceGroups) {
         self.spheres.append(&mut other.spheres);
         self.sticks.append(&mut other.sticks);
+        self.outlines.append(&mut other.outlines);
     }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+pub struct OutlineSettings {
+    pub enabled: bool,
+    pub color: Vec3,
+    pub width: f32,
+}
+
+impl Default for OutlineSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            color: Vec3::new(0.02, 0.02, 0.02),
+            width: 0.035,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct OutlineInstanceGroup {
+    pub settings: OutlineSettings,
+    pub spheres: Vec<SphereInstance>,
+    pub sticks: Vec<StickInstance>,
 }
 
 impl IntoInstanceGroups for Shape {
@@ -270,6 +296,39 @@ pub trait Stylable {
         self.style_mut().metallic = metallic;
         self
     }
+}
+
+#[macro_export]
+macro_rules! impl_stylable_methods {
+    ($ty:ty, $style:ident) => {
+        impl $ty {
+            pub fn color<C: Into<$crate::utils::Color>>(mut self, color: C) -> Self {
+                self.$style.color = Some(color.into().into());
+                self
+            }
+
+            pub fn opacity(mut self, opacity: f32) -> Self {
+                self.$style.opacity = opacity;
+                self
+            }
+
+            pub fn roughness(mut self, roughness: f32) -> Self {
+                if !(0.0..=1.0).contains(&roughness) {
+                    panic!("roughness must be between 0.0 and 1.0, got {}", roughness);
+                }
+                self.$style.roughness = roughness;
+                self
+            }
+
+            pub fn metallic(mut self, metallic: f32) -> Self {
+                if !(0.0..=1.0).contains(&metallic) {
+                    panic!("metallic must be between 0.0 and 1.0, got {}", metallic);
+                }
+                self.$style.metallic = metallic;
+                self
+            }
+        }
+    };
 }
 
 pub enum RenderQuality {

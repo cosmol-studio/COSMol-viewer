@@ -2,10 +2,9 @@ from cosmol_viewer import Molecule, Scene, Viewer
 
 mol_data = open("./examples/6fi1_ligand.sdf", "r", encoding="utf-8").read()
 
-mol = Molecule.from_sdf(mol_data).centered()
+mol = Molecule.from_sdf(mol_data).centered().enable_outline(width=0.04)
 
 scene = Scene()
-scene.enable_outline(width=0.04)
 
 scene.add_shape_with_id("molecule", mol)
 

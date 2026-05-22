@@ -292,6 +292,86 @@ Molecule
         slf.inner = slf.inner.clone().centered();
         slf
     }
+
+    #[doc = r#"
+Configure the molecule outline.
+
+Parameters
+----------
+enabled : bool
+    Whether to render an outline around this molecule.
+color : tuple[int, int, int] or str, optional
+    The outline color as an RGB tuple or a hex string. If omitted, the current
+    outline color is kept.
+width : float, optional
+    The outline width in scene units. If omitted, the current outline width is kept.
+
+Returns
+-------
+Molecule
+    The updated molecule object.
+"#]
+    #[pyo3(signature = (enabled, color=None, width=None))]
+    pub fn set_outline<'a>(
+        mut slf: PyRefMut<'a, Self>,
+        enabled: bool,
+        color: Option<Bound<'_, PyAny>>,
+        width: Option<f32>,
+    ) -> PyResult<PyRefMut<'a, Self>> {
+        let color = match color {
+            Some(color) => py_to_color(color)?,
+            None => Color::from(slf.inner.outline.color),
+        };
+        let width = width.unwrap_or(slf.inner.outline.width);
+        slf.inner = slf.inner.clone().set_outline(enabled, color, width);
+        Ok(slf)
+    }
+
+    #[doc = r#"
+Enable an outline around this molecule.
+
+Parameters
+----------
+color : tuple[int, int, int] or str, optional
+    The outline color as an RGB tuple or a hex string. If omitted, the current
+    outline color is kept.
+width : float, optional
+    The outline width in scene units. If omitted, the current outline width is kept.
+
+Returns
+-------
+Molecule
+    The updated molecule object.
+"#]
+    #[pyo3(signature = (color=None, width=None))]
+    pub fn enable_outline<'a>(
+        mut slf: PyRefMut<'a, Self>,
+        color: Option<Bound<'_, PyAny>>,
+        width: Option<f32>,
+    ) -> PyResult<PyRefMut<'a, Self>> {
+        let width = width.unwrap_or(slf.inner.outline.width);
+        slf.inner = match color {
+            Some(color) => {
+                let color = py_to_color(color)?;
+                slf.inner.clone().set_outline(true, color, width)
+            }
+            None => slf.inner.clone().enable_outline(width),
+        };
+        Ok(slf)
+    }
+
+    #[doc = r#"
+Disable the outline around this molecule.
+
+Returns
+-------
+Molecule
+    The updated molecule object.
+"#]
+    pub fn disable_outline(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
+        slf.inner = slf.inner.clone().disable_outline();
+        slf
+    }
 }
 
 fn cosmolkit_molecule_to_viewer_molecule(molecule: &Bound<'_, PyAny>) -> PyResult<Molecule> {
@@ -438,7 +518,9 @@ Examples
 .. code-block:: python
 
     content = open("2AMD.cif", "r", encoding="utf-8").read()
-    prot = Protein.from_mmcif(content).centered().color("\#F9FAFB")
+    prot = Protein.from_mmcif(content).centered().rainbow_residues()
+
+Use ``.color("\#F9FAFB")`` for a uniform cartoon color.
 "#]
 pub struct PyProtein {
     pub inner: Protein,
@@ -521,6 +603,23 @@ Protein
 "#]
     pub fn centered(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
         slf.inner = slf.inner.clone().centered();
+        slf
+    }
+
+    #[doc = r#"
+Color the protein cartoon with ChimeraX-style rainbow coloring by residue.
+
+Each biopolymer chain is colored independently from blue at the first rendered
+residue to red at the last rendered residue, matching ChimeraX ``rainbow`` /
+``color sequential residues`` default behavior for cartoon ribbons.
+
+Returns
+-------
+Protein
+    The updated protein object.
+"#]
+    pub fn rainbow_residues(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
+        slf.inner = slf.inner.clone().rainbow_residues();
         slf
     }
 }

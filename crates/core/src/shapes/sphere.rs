@@ -260,6 +260,8 @@ impl Stylable for Sphere {
     }
 }
 
+crate::impl_stylable_methods!(Sphere, material);
+
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Debug)]
 pub struct SphereInstance {

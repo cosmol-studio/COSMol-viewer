@@ -12,7 +12,7 @@ use eframe::{
 use glam::{Quat, Vec3};
 
 use crate::Scene;
-use crate::scene::{Animation, Lighting, OutlineSettings};
+use crate::scene::{Animation, Lighting};
 use crate::shapes::Sphere;
 use crate::shapes::SphereInstance;
 use crate::shapes::Stick;
@@ -206,7 +206,6 @@ struct Shader {
     instance_groups: Option<InstanceGroups>,
     u_model: Mat4,
     u_normal_matrix: Mat3,
-    outline: OutlineSettings,
 }
 
 #[expect(unsafe_code)] // we need unsafe code to use glow
@@ -420,7 +419,6 @@ impl Shader {
                 instance_groups: None,
                 u_model: scene.model_matrix(),
                 u_normal_matrix: scene.normal_matrix(),
-                outline: scene.outline,
             };
 
             // =========================
@@ -797,8 +795,6 @@ impl Shader {
         }
 
         self.instance_groups = Some(scene.get_instances_grouped());
-        self.outline = scene.outline;
-        self.outline.width *= scene.scale;
 
         if let Some(lighting) = scene.camera_lights.as_ref() {
             self.camera_lighting = lighting.clone();
@@ -1058,98 +1054,118 @@ impl Shader {
                 );
             }
 
-            if self.outline.enabled && self.outline.width > 0.0 && (has_spheres || has_sticks) {
-                let sphere_count = self
-                    .instance_groups
-                    .as_ref()
-                    .map_or(0, |groups| groups.spheres.len());
-                let stick_count = self
-                    .instance_groups
-                    .as_ref()
-                    .map_or(0, |groups| groups.sticks.len());
-
+            if self
+                .instance_groups
+                .as_ref()
+                .is_some_and(|groups| !groups.outlines.is_empty())
+            {
                 gl.cull_face(glow::FRONT);
                 gl.depth_mask(false);
                 gl.depth_func(glow::LEQUAL);
                 gl.enable(glow::POLYGON_OFFSET_FILL);
                 gl.polygon_offset(1.0, 1.0);
 
-                if has_spheres {
-                    self.ensure_sphere_outline_pipeline(gl);
-                    let program = self.program_sphere_outline.unwrap();
+                let outline_groups = self
+                    .instance_groups
+                    .as_ref()
+                    .map(|groups| groups.outlines.clone())
+                    .unwrap_or_default();
 
-                    gl.use_program(Some(program));
-                    gl.uniform_matrix_4_f32_slice(
-                        gl.get_uniform_location(program, "u_model").as_ref(),
-                        false,
-                        (self.u_model).as_ref(),
-                    );
-                    gl.uniform_matrix_4_f32_slice(
-                        gl.get_uniform_location(program, "u_view").as_ref(),
-                        false,
-                        (u_view).as_ref(),
-                    );
-                    gl.uniform_matrix_4_f32_slice(
-                        gl.get_uniform_location(program, "u_projection").as_ref(),
-                        false,
-                        (u_projection).as_ref(),
-                    );
-                    gl.uniform_1_f32(
-                        gl.get_uniform_location(program, "u_outline_width").as_ref(),
-                        self.outline.width,
-                    );
-                    gl.uniform_3_f32_slice(
-                        gl.get_uniform_location(program, "u_outline_color").as_ref(),
-                        self.outline.color.as_ref(),
-                    );
+                for outline_group in outline_groups {
+                    let outline_width = outline_group.settings.width;
+                    if outline_width <= 0.0 {
+                        continue;
+                    }
 
-                    gl.bind_vertex_array(self.vao_sphere_outline);
-                    gl.draw_elements_instanced(
-                        glow::TRIANGLES,
-                        self.sphere_index_count as i32,
-                        glow::UNSIGNED_INT,
-                        0,
-                        sphere_count as i32,
-                    );
-                }
+                    if !outline_group.spheres.is_empty() {
+                        self.ensure_sphere_outline_pipeline(gl);
+                        let program = self.program_sphere_outline.unwrap();
 
-                if has_sticks {
-                    self.ensure_stick_outline_pipeline(gl);
-                    let program = self.program_stick_outline.unwrap();
+                        gl.use_program(Some(program));
+                        gl.uniform_matrix_4_f32_slice(
+                            gl.get_uniform_location(program, "u_model").as_ref(),
+                            false,
+                            (self.u_model).as_ref(),
+                        );
+                        gl.uniform_matrix_4_f32_slice(
+                            gl.get_uniform_location(program, "u_view").as_ref(),
+                            false,
+                            (u_view).as_ref(),
+                        );
+                        gl.uniform_matrix_4_f32_slice(
+                            gl.get_uniform_location(program, "u_projection").as_ref(),
+                            false,
+                            (u_projection).as_ref(),
+                        );
+                        gl.uniform_1_f32(
+                            gl.get_uniform_location(program, "u_outline_width").as_ref(),
+                            outline_width,
+                        );
+                        gl.uniform_3_f32_slice(
+                            gl.get_uniform_location(program, "u_outline_color").as_ref(),
+                            outline_group.settings.color.as_ref(),
+                        );
 
-                    gl.use_program(Some(program));
-                    gl.uniform_matrix_4_f32_slice(
-                        gl.get_uniform_location(program, "u_model").as_ref(),
-                        false,
-                        (self.u_model).as_ref(),
-                    );
-                    gl.uniform_matrix_4_f32_slice(
-                        gl.get_uniform_location(program, "u_view").as_ref(),
-                        false,
-                        (u_view).as_ref(),
-                    );
-                    gl.uniform_matrix_4_f32_slice(
-                        gl.get_uniform_location(program, "u_projection").as_ref(),
-                        false,
-                        (u_projection).as_ref(),
-                    );
-                    gl.uniform_1_f32(
-                        gl.get_uniform_location(program, "u_outline_width").as_ref(),
-                        self.outline.width,
-                    );
-                    gl.uniform_3_f32_slice(
-                        gl.get_uniform_location(program, "u_outline_color").as_ref(),
-                        self.outline.color.as_ref(),
-                    );
+                        gl.bind_vertex_array(self.vao_sphere_outline);
+                        gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.sphere_instance_buffer));
+                        gl.buffer_data_u8_slice(
+                            glow::ARRAY_BUFFER,
+                            bytemuck::cast_slice(&outline_group.spheres),
+                            glow::DYNAMIC_DRAW,
+                        );
+                        gl.draw_elements_instanced(
+                            glow::TRIANGLES,
+                            self.sphere_index_count as i32,
+                            glow::UNSIGNED_INT,
+                            0,
+                            outline_group.spheres.len() as i32,
+                        );
+                    }
 
-                    gl.bind_vertex_array(self.vao_stick_outline);
-                    gl.draw_elements_instanced(
-                        glow::TRIANGLES,
-                        self.stick_index_count as i32,
-                        glow::UNSIGNED_INT,
-                        0,
-                        stick_count as i32,
-                    );
+                    if !outline_group.sticks.is_empty() {
+                        self.ensure_stick_outline_pipeline(gl);
+                        let program = self.program_stick_outline.unwrap();
+
+                        gl.use_program(Some(program));
+                        gl.uniform_matrix_4_f32_slice(
+                            gl.get_uniform_location(program, "u_model").as_ref(),
+                            false,
+                            (self.u_model).as_ref(),
+                        );
+                        gl.uniform_matrix_4_f32_slice(
+                            gl.get_uniform_location(program, "u_view").as_ref(),
+                            false,
+                            (u_view).as_ref(),
+                        );
+                        gl.uniform_matrix_4_f32_slice(
+                            gl.get_uniform_location(program, "u_projection").as_ref(),
+                            false,
+                            (u_projection).as_ref(),
+                        );
+                        gl.uniform_1_f32(
+                            gl.get_uniform_location(program, "u_outline_width").as_ref(),
+                            outline_width,
+                        );
+                        gl.uniform_3_f32_slice(
+                            gl.get_uniform_location(program, "u_outline_color").as_ref(),
+                            outline_group.settings.color.as_ref(),
+                        );
+
+                        gl.bind_vertex_array(self.vao_stick_outline);
+                        gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.stick_instance_buffer));
+                        gl.buffer_data_u8_slice(
+                            glow::ARRAY_BUFFER,
+                            bytemuck::cast_slice(&outline_group.sticks),
+                            glow::DYNAMIC_DRAW,
+                        );
+                        gl.draw_elements_instanced(
+                            glow::TRIANGLES,
+                            self.stick_index_count as i32,
+                            glow::UNSIGNED_INT,
+                            0,
+                            outline_group.sticks.len() as i32,
+                        );
+                    }
                 }
 
                 gl.disable(glow::POLYGON_OFFSET_FILL);

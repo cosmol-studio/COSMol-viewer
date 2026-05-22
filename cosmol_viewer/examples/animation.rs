@@ -1,5 +1,4 @@
 use cosmol_viewer::shapes::Sphere;
-use cosmol_viewer::utils::Stylable;
 use cosmol_viewer::{Animation, Scene, Viewer};
 use std::f32::consts::PI;
 

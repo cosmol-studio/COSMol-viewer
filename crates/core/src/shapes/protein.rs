@@ -4,6 +4,7 @@ use crate::parser::mmcif::MmCif;
 use crate::parser::utils::{
     Residue, ResidueType, ResidueType::AminoAcid, RibbonResidueInfo, SecondaryStructure,
 };
+use crate::shapes::Stick;
 use crate::utils::{Material, MeshData, Stylable};
 use bytemuck::{Pod, Zeroable};
 use cosmolkit::{
@@ -21,6 +22,15 @@ pub struct Protein {
     pub center: Vec3,
 
     pub style: Material,
+    #[serde(default)]
+    pub color_mode: ProteinColorMode,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ProteinColorMode {
+    #[default]
+    Uniform,
+    RainbowResidues,
 }
 
 use thiserror::Error;
@@ -134,6 +144,7 @@ impl Protein {
                 roughness: 0.7,
                 ..Default::default()
             },
+            color_mode: ProteinColorMode::Uniform,
         })
     }
 
@@ -242,6 +253,7 @@ impl Protein {
                 roughness: 0.7,
                 ..Default::default()
             },
+            color_mode: ProteinColorMode::Uniform,
         })
     }
 }
@@ -270,6 +282,8 @@ impl Stylable for Protein {
         &mut self.style
     }
 }
+
+crate::impl_stylable_methods!(Protein, style);
 
 impl Protein {
     pub fn init_secondary_structure(&mut self) {
@@ -303,6 +317,12 @@ impl Protein {
         self
     }
 
+    pub fn rainbow_residues(mut self) -> Self {
+        self.color_mode = ProteinColorMode::RainbowResidues;
+        self.style.color = None;
+        self
+    }
+
     pub fn to_mesh(&self, scale: f32) -> MeshData {
         let mut final_mesh = MeshData::default();
 
@@ -333,17 +353,24 @@ impl Protein {
                     .iter()
                     .map(|(idx, _)| ribbon_info_all[*idx])
                     .collect();
-                mesh.append(&build_chimerax_ribbon_mesh(&residues, &ribbon_info));
+                let residue_colors = self.residue_colors(chain, &filtered);
+                mesh.append(&build_chimerax_ribbon_mesh(
+                    &residues,
+                    &ribbon_info,
+                    residue_colors.as_deref(),
+                ));
 
                 for vertex in &mut mesh.vertices {
                     *vertex *= scale;
                 }
 
-                let color = match self.style.color {
-                    Some(color) => Vec4::new(color[0], color[1], color[2], self.style.opacity),
-                    None => Vec4::new(1.0, 1.0, 1.0, self.style.opacity),
-                };
-                mesh.colors = Some(vec![color; mesh.vertices.len()]);
+                if mesh.colors.is_none() {
+                    let color = match self.style.color {
+                        Some(color) => Vec4::new(color[0], color[1], color[2], self.style.opacity),
+                        None => Vec4::new(1.0, 1.0, 1.0, self.style.opacity),
+                    };
+                    mesh.colors = Some(vec![color; mesh.vertices.len()]);
+                }
                 mesh.material_params = Some(vec![
                     [self.style.roughness, self.style.metallic,];
                     mesh.vertices.len()
@@ -359,9 +386,34 @@ impl Protein {
 
         final_mesh
     }
+
+    fn residue_colors(&self, _chain: &Chain, filtered: &[(usize, &Residue)]) -> Option<Vec<Vec4>> {
+        if self.style.color.is_some() || self.color_mode != ProteinColorMode::RainbowResidues {
+            return None;
+        }
+
+        // BEGIN CHIMERAX PYTHON BODY: src/bundles/std_commands/src/rainbow.py :: rainbow
+        // ChimeraX✔️✔️: rainbow delegates to color_sequential with level='residues'.
+        // END CHIMERAX PYTHON BODY: src/bundles/std_commands/src/rainbow.py :: rainbow
+        //
+        // BEGIN CHIMERAX PYTHON BODY: src/bundles/std_commands/src/color.py :: _set_sequential_residue
+        // ChimeraX✔️✔️: each chain is colored separately with the default rainbow colormap.
+        // ChimeraX✔️✔️: residues in a chain are sampled with numpy.linspace(0.0, 1.0, len(residues)).
+        // ChimeraX✔️✔️: the sampled rgba8 values become each residue's ribbon_color.
+        // END CHIMERAX PYTHON BODY: src/bundles/std_commands/src/color.py :: _set_sequential_residue
+        Some(chimerax_rainbow_residue_colors(
+            filtered.len(),
+            self.style.opacity,
+        ))
+    }
 }
 
 const CHIMERAX_RIBBON_DIVISIONS: usize = 20;
+const BACKBONE_GAP_CA_DISTANCE: f32 = 4.7;
+const BACKBONE_GAP_PEPTIDE_DISTANCE: f32 = 2.2;
+const BACKBONE_GAP_DASH_RADIUS: f32 = 0.06;
+const BACKBONE_GAP_DASH_LENGTH: f32 = 0.45;
+const BACKBONE_GAP_DASH_SPACING: f32 = 0.35;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RibbonClass {
@@ -383,7 +435,7 @@ enum RibbonRef {
     HelixArrow,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct RibbonRange {
     start: usize,
     end: usize,
@@ -446,11 +498,34 @@ impl ChimeraXSectionManager {
 fn build_chimerax_ribbon_mesh(
     residues: &[&Residue],
     ribbon_info: &[RibbonResidueInfo],
+    residue_colors: Option<&[Vec4]>,
 ) -> MeshData {
     if residues.len() < 2 {
         return MeshData::default();
     }
 
+    let mut mesh = MeshData::default();
+    for range in contiguous_backbone_ranges(residues) {
+        if range.end - range.start < 2 {
+            continue;
+        }
+
+        let segment_colors = residue_colors.map(|colors| &colors[range.start..range.end]);
+        mesh.append(&build_chimerax_ribbon_segment_mesh(
+            &residues[range.start..range.end],
+            &ribbon_info[range.start..range.end],
+            segment_colors,
+        ));
+    }
+    mesh.append(&build_backbone_gap_dashes(residues, residue_colors));
+    mesh
+}
+
+fn build_chimerax_ribbon_segment_mesh(
+    residues: &[&Residue],
+    ribbon_info: &[RibbonResidueInfo],
+    residue_colors: Option<&[Vec4]>,
+) -> MeshData {
     let mut centers: Vec<Vec3> = residues.iter().map(|residue| residue.ca).collect();
     let mut guides: Vec<Vec3> = residues
         .iter()
@@ -481,8 +556,145 @@ fn build_chimerax_ribbon_mesh(
         residues.len(),
         &xs_front,
         &xs_back,
+        residue_colors,
         &manager,
     )
+}
+
+fn contiguous_backbone_ranges(residues: &[&Residue]) -> Vec<RibbonRange> {
+    if residues.is_empty() {
+        return Vec::new();
+    }
+
+    let mut ranges = Vec::new();
+    let mut start = 0;
+    for i in 1..residues.len() {
+        if !residue_backbone_connected(residues[i - 1], residues[i]) {
+            ranges.push(RibbonRange { start, end: i });
+            start = i;
+        }
+    }
+    ranges.push(RibbonRange {
+        start,
+        end: residues.len(),
+    });
+    ranges
+}
+
+fn residue_backbone_connected(previous: &Residue, next: &Residue) -> bool {
+    if previous.ca.distance(next.ca) > BACKBONE_GAP_CA_DISTANCE {
+        return false;
+    }
+
+    let has_peptide_atoms = previous.c.length_squared() > 0.0 && next.n.length_squared() > 0.0;
+    if has_peptide_atoms && previous.c.distance(next.n) > BACKBONE_GAP_PEPTIDE_DISTANCE {
+        return false;
+    }
+
+    true
+}
+
+fn build_backbone_gap_dashes(residues: &[&Residue], residue_colors: Option<&[Vec4]>) -> MeshData {
+    let mut mesh = MeshData::default();
+    for i in 1..residues.len() {
+        if residue_backbone_connected(residues[i - 1], residues[i]) {
+            continue;
+        }
+
+        let color = residue_colors
+            .and_then(|colors| colors.get(i - 1).zip(colors.get(i)))
+            .map(|(previous, next)| (*previous + *next) * 0.5);
+        mesh.append(&dashed_backbone_gap_mesh(
+            residues[i - 1].ca,
+            residues[i].ca,
+            color,
+        ));
+    }
+    mesh
+}
+
+fn dashed_backbone_gap_mesh(start: Vec3, end: Vec3, color: Option<Vec4>) -> MeshData {
+    let delta = end - start;
+    let length = delta.length();
+    if length <= f32::EPSILON {
+        return MeshData::default();
+    }
+
+    let direction = delta / length;
+    let period = BACKBONE_GAP_DASH_LENGTH + BACKBONE_GAP_DASH_SPACING;
+    let mut offset = 0.0;
+    let mut mesh = MeshData::default();
+
+    while offset < length {
+        let dash_start = start + direction * offset;
+        let dash_end = start + direction * (offset + BACKBONE_GAP_DASH_LENGTH).min(length);
+        if dash_start.distance_squared(dash_end) > f32::EPSILON {
+            let mut dash = Stick::new(
+                dash_start.to_array(),
+                dash_end.to_array(),
+                BACKBONE_GAP_DASH_RADIUS,
+            )
+            .to_mesh(1.0);
+            if let Some(color) = color {
+                dash.colors = Some(vec![color; dash.vertices.len()]);
+            } else {
+                dash.colors = None;
+            }
+            dash.material_params = None;
+            mesh.append(&dash);
+        }
+        offset += period;
+    }
+
+    mesh
+}
+
+fn chimerax_rainbow_residue_colors(residue_count: usize, opacity: f32) -> Vec<Vec4> {
+    // BEGIN CHIMERAX PYTHON BODY: src/bundles/core/src/colors.py :: _builtin_colormaps
+    // ChimeraX✔️✔️: BuiltinColormaps["rainbow"] is blue, cyan, green, yellow, red.
+    // ChimeraX✔️✔️: Colormap(None, colors) assigns evenly spaced values from 0.0 to 1.0.
+    // END CHIMERAX PYTHON BODY: src/bundles/core/src/colors.py :: _builtin_colormaps
+    //
+    // BEGIN CHIMERAX PYTHON BODY: src/bundles/core/src/colors.py :: Colormap.interpolated_rgba8
+    // ChimeraX✔️✔️: interpolated_rgba linearly interpolates in RGB/RGBA space, then rgba8 scales by 255.
+    // END CHIMERAX PYTHON BODY: src/bundles/core/src/colors.py :: Colormap.interpolated_rgba8
+    const STOPS: [Vec3; 5] = [
+        Vec3::new(0.0, 0.0, 1.0),
+        Vec3::new(0.0, 1.0, 1.0),
+        Vec3::new(0.0, 1.0, 0.0),
+        Vec3::new(1.0, 1.0, 0.0),
+        Vec3::new(1.0, 0.0, 0.0),
+    ];
+
+    if residue_count == 0 {
+        return Vec::new();
+    }
+
+    (0..residue_count)
+        .map(|i| {
+            let value = if residue_count == 1 {
+                0.0
+            } else {
+                i as f32 / (residue_count - 1) as f32
+            };
+            let scaled = value * (STOPS.len() - 1) as f32;
+            let lower = scaled.floor() as usize;
+            let upper = lower.min(STOPS.len() - 1);
+            let next = (lower + 1).min(STOPS.len() - 1);
+            let t = scaled - lower as f32;
+            let color = STOPS[upper] * (1.0 - t) + STOPS[next] * t;
+            Vec4::new(
+                chimerax_rgba8_channel_to_float(color.x),
+                chimerax_rgba8_channel_to_float(color.y),
+                chimerax_rgba8_channel_to_float(color.z),
+                opacity,
+            )
+        })
+        .collect()
+}
+
+fn chimerax_rgba8_channel_to_float(channel: f32) -> f32 {
+    (channel.clamp(0.0, 1.0) * 255.0).trunc() / 255.0
 }
 
 fn ribbon_ranges(
@@ -1015,6 +1227,7 @@ fn ribbon_extrusions(
     num_res: usize,
     xs_front: &[RibbonXSection],
     xs_back: &[RibbonXSection],
+    residue_colors: Option<&[Vec4]>,
     manager: &ChimeraXSectionManager,
 ) -> MeshData {
     let mut mesh = MeshData::default();
@@ -1029,17 +1242,22 @@ fn ribbon_extrusions(
     for range in ranges {
         let mut capped = true;
         for i in range.start..range.end {
+            let residue_color = residue_colors.and_then(|colors| colors.get(i)).copied();
             let mid_cap = xs_front[i].kind != xs_back[i].kind;
             let s = i * nsp;
             let e = s + nlp + 1;
-            mesh.append(&xs_front[i].extrude(
+            let mut front_mesh = xs_front[i].extrude(
                 &coords[s..e],
                 &tangents[s..e],
                 &normals[s..e],
                 capped,
                 mid_cap,
                 manager,
-            ));
+            );
+            if let Some(color) = residue_color {
+                front_mesh.colors = Some(vec![color; front_mesh.vertices.len()]);
+            }
+            mesh.append(&front_mesh);
 
             let next_cap = if i + 1 == range.end {
                 true
@@ -1052,14 +1270,18 @@ fn ribbon_extrusions(
             } else {
                 s + nrp
             };
-            mesh.append(&xs_back[i].extrude(
+            let mut back_mesh = xs_back[i].extrude(
                 &coords[s..e],
                 &tangents[s..e],
                 &normals[s..e],
                 mid_cap,
                 next_cap,
                 manager,
-            ));
+            );
+            if let Some(color) = residue_color {
+                back_mesh.colors = Some(vec![color; back_mesh.vertices.len()]);
+            }
+            mesh.append(&back_mesh);
             capped = next_cap;
         }
     }
@@ -1401,6 +1623,54 @@ ATOM      4  O   ALA A   1      14.000  12.500  11.000  1.00 20.00           O
         assert_eq!(protein.chains.len(), 1);
         assert_eq!(protein.chains[0].id, "A");
         assert_eq!(protein.chains[0].residues.len(), 1);
+    }
+
+    #[test]
+    fn rainbow_residue_colors_match_chimerax_default_stops() {
+        let colors = chimerax_rainbow_residue_colors(5, 1.0);
+
+        assert_eq!(
+            colors,
+            vec![
+                Vec4::new(0.0, 0.0, 1.0, 1.0),
+                Vec4::new(0.0, 1.0, 1.0, 1.0),
+                Vec4::new(0.0, 1.0, 0.0, 1.0),
+                Vec4::new(1.0, 1.0, 0.0, 1.0),
+                Vec4::new(1.0, 0.0, 0.0, 1.0),
+            ]
+        );
+        assert_eq!(
+            chimerax_rainbow_residue_colors(1, 0.5),
+            vec![Vec4::new(0.0, 0.0, 1.0, 0.5)]
+        );
+    }
+
+    #[test]
+    fn obvious_backbone_gap_splits_ribbon_and_adds_dashes() {
+        let pdb = "\
+ATOM      1  N   ALA A   1      11.104  13.207   9.900  1.00 20.00           N  
+ATOM      2  CA  ALA A   1      12.210  13.912  10.555  1.00 20.00           C  
+ATOM      3  C   ALA A   1      13.470  13.079  10.413  1.00 20.00           C  
+ATOM      4  O   ALA A   1      14.000  12.500  11.000  1.00 20.00           O  
+ATOM      5  N   GLY A  10      31.104  13.207   9.900  1.00 20.00           N  
+ATOM      6  CA  GLY A  10      32.210  13.912  10.555  1.00 20.00           C  
+ATOM      7  C   GLY A  10      33.470  13.079  10.413  1.00 20.00           C  
+ATOM      8  O   GLY A  10      34.000  12.500  11.000  1.00 20.00           O  
+";
+        let protein = Protein::from_pdb(pdb).expect("PDB backbone should parse");
+        let residues: Vec<&Residue> = protein.chains[0].residues.iter().collect();
+
+        assert_eq!(
+            contiguous_backbone_ranges(&residues),
+            vec![
+                RibbonRange { start: 0, end: 1 },
+                RibbonRange { start: 1, end: 2 },
+            ]
+        );
+
+        let dashes = build_backbone_gap_dashes(&residues, None);
+        assert!(!dashes.vertices.is_empty());
+        assert!(dashes.colors.is_none());
     }
 
     #[test]
