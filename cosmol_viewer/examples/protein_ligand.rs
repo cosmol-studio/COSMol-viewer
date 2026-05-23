@@ -3,7 +3,7 @@ use cosmol_viewer::{Scene, Viewer, shapes::Molecule, shapes::Protein};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let prot = Protein::from_mmcif(include_str!("../examples/6fi1.cif"))?.rainbow_residues();
     let ligand = Molecule::from_sdf(include_str!("../examples/6fi1_ligand.sdf"))?
-        .set_outline(true, "#ffffff", 0.02);
+        .set_outline(true, "#EEEEEE", 0.02);
 
     let mut scene = Scene::new();
     scene.recenter(ligand.get_center());

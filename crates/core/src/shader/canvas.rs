@@ -177,9 +177,10 @@ impl<L: Logger> Canvas<L> {
     }
 }
 
-struct Shader {
+pub(super) struct Shader {
     program: Option<glow::Program>,
     program_bg: glow::Program,
+    vao_bg: glow::VertexArray,
     program_sphere: Option<glow::Program>,
     program_stick: Option<glow::Program>,
     program_sphere_outline: Option<glow::Program>,
@@ -194,7 +195,7 @@ struct Shader {
     indices: Vec<u32>,
     sphere_index_count: usize,
     stick_index_count: usize,
-    background_color: Vec3,
+    background_color: Vec4,
     vbo: glow::Buffer,
     ebo: glow::Buffer,
     sphere_vbo: glow::Buffer,
@@ -265,11 +266,11 @@ impl Shader {
         program
     }
 
-    fn new(gl: &glow::Context, scene: &Scene) -> Option<Self> {
+    pub(super) fn new(gl: &glow::Context, scene: &Scene) -> Option<Self> {
         use glow::HasContext as _;
 
         let shader_version = egui_glow::ShaderVersion::get(gl);
-        let background_color = scene.background_color;
+        let background_color = scene.background_color.extend(1.0);
         let default_color = Vec4::new(1.0, 1.0, 1.0, 1.0);
 
         unsafe {
@@ -286,7 +287,6 @@ impl Shader {
                 include_str!("./bg_fragment.glsl"),
             );
 
-            println!("shader_version = {:?}", shader_version);
             let program_bg = Self::compile_program(
                 gl,
                 shader_version,
@@ -294,6 +294,9 @@ impl Shader {
                 vertex_shader_bg,
                 fragment_shader_bg,
             );
+            let vao_bg = gl
+                .create_vertex_array()
+                .expect("Cannot create background vertex array");
 
             // =========================
             // 4.1 Generate sphere mesh template
@@ -393,6 +396,7 @@ impl Shader {
             let mut shader_instance = Self {
                 program: None,
                 program_bg,
+                vao_bg,
                 program_sphere: None,
                 program_stick: None,
                 program_sphere_outline: None,
@@ -764,7 +768,7 @@ impl Shader {
             return;
         };
 
-        self.background_color = scene.background_color;
+        self.background_color = scene.background_color.extend(1.0);
         self.vertex3d.clear();
         self.indices.clear();
 
@@ -801,7 +805,12 @@ impl Shader {
         }
     }
 
-    fn paint(&mut self, gl: &glow::Context, aspect_ratio: f32, camera_state: &CameraState) {
+    pub(super) fn paint(
+        &mut self,
+        gl: &glow::Context,
+        aspect_ratio: f32,
+        camera_state: &CameraState,
+    ) {
         let (u_view, u_projection, u_view_pos) = camera_state.matrices(aspect_ratio);
 
         use glow::HasContext as _;
@@ -839,12 +848,14 @@ impl Shader {
             // === 绘制背景 ===
             gl.disable(glow::DEPTH_TEST); // ✅ 背景不需要深度
             gl.use_program(Some(self.program_bg));
-            gl.uniform_3_f32_slice(
+            gl.bind_vertex_array(Some(self.vao_bg));
+            gl.uniform_4_f32_slice(
                 gl.get_uniform_location(self.program_bg, "background_color")
                     .as_ref(),
                 self.background_color.as_ref(),
             );
             gl.draw_arrays(glow::TRIANGLES, 0, 6);
+            gl.bind_vertex_array(None);
 
             // === 绘制场景 ===
             gl.enable(glow::DEPTH_TEST);
@@ -1174,6 +1185,10 @@ impl Shader {
             }
         }
     }
+
+    pub(super) fn set_background_color(&mut self, background_color: Vec4) {
+        self.background_color = background_color;
+    }
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
@@ -1191,6 +1206,26 @@ impl CameraState {
             distance,
             rotation: Quat::IDENTITY, // no rotation
             fov: 15.0,
+        }
+    }
+
+    pub fn from_orbit_angles(
+        azimuth: f32,
+        elevation: f32,
+        roll: f32,
+        distance: f32,
+        target: [f32; 3],
+        fov: f32,
+    ) -> Self {
+        let rotation = Quat::from_rotation_y(azimuth.to_radians())
+            * Quat::from_rotation_x(elevation.to_radians())
+            * Quat::from_rotation_z(roll.to_radians());
+
+        Self {
+            target: Vec3::from(target),
+            distance,
+            rotation: rotation.normalize(),
+            fov,
         }
     }
 
@@ -1236,6 +1271,14 @@ impl CameraState {
         self.rotation = (q_yaw * q_pitch) * self.rotation;
 
         self.rotation = self.rotation.normalize();
+    }
+
+    pub fn rotate_by_degrees(&mut self, azimuth_delta: f32, elevation_delta: f32, roll_delta: f32) {
+        let delta = Quat::from_rotation_y(azimuth_delta.to_radians())
+            * Quat::from_rotation_x(elevation_delta.to_radians())
+            * Quat::from_rotation_z(roll_delta.to_radians());
+
+        self.rotation = (delta * self.rotation).normalize();
     }
 }
 

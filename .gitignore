@@ -3,7 +3,7 @@
 .vscode
 .zed
 frames/
-cosmol_viewer/screenshot.png
+cosmol_viewer/*.png
 crates/python/cosmol_viewer.pyi
 crates/python/docs/_build
 ./docs/

@@ -4,7 +4,7 @@ use cosmol_viewer_core::BUILD_ID;
 use cosmol_viewer_core::scene::{Animation, Scene};
 
 use {
-    pyo3::{PyErr, PyResult, Python, ffi::c_str},
+    pyo3::{Py, PyAny, PyErr, PyResult, Python, ffi::c_str},
     serde::Serialize,
     serde::de::DeserializeOwned,
     std::ffi::CStr,

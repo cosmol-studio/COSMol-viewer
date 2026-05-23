@@ -9,6 +9,7 @@ cosmol_viewer_derive = { path = "../derive" }
 cosmol_viewer_core.workspace = true
 egui_extras.workspace = true
 serde_json.workspace = true
+serde.workspace = true
 base64.workspace = true
 eframe.workspace = true
 pyo3.workspace = true

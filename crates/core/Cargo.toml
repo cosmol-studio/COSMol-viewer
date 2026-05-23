@@ -32,6 +32,8 @@ resvg = "0.47.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 egui-winit.workspace = true
+glutin.workspace = true
+glutin-winit.workspace = true
 
 [features]
 default = []

@@ -20,5 +20,5 @@ Generated file:
 From repo root:
 
 ```bash
-conda run -n COS maturin develop --manifest-path crates/python/Cargo.toml
+maturin develop --manifest-path crates/python/Cargo.toml
 ```

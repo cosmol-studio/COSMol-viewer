@@ -552,6 +552,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "console"
+version = "0.16.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d64e8af5551369d19cf50138de61f1c42074ab970f74e99be916646777f8fc87"
+dependencies = [
+ "encode_unicode",
+ "libc",
+ "unicode-width",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "core-foundation"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -612,7 +624,7 @@ dependencies = [
 
 [[package]]
 name = "cosmol_viewer"
-version = "0.2.18"
+version = "0.2.19"
 dependencies = [
  "cosmol_viewer_core",
  "cosmolkit",
@@ -620,7 +632,7 @@ dependencies = [
 
 [[package]]
 name = "cosmol_viewer_core"
-version = "0.2.18"
+version = "0.2.19"
 dependencies = [
  "base64",
  "bytemuck",
@@ -630,7 +642,9 @@ dependencies = [
  "eframe",
  "egui-winit",
  "egui_extras",
- "glam 0.33.0",
+ "glam",
+ "glutin",
+ "glutin-winit",
  "image",
  "kiddo",
  "na_seq",
@@ -666,12 +680,13 @@ dependencies = [
  "pyo3",
  "pyo3-stub-gen",
  "pyo3-stub-gen-derive",
+ "serde",
  "serde_json",
 ]
 
 [[package]]
 name = "cosmol_viewer_wasm"
-version = "0.2.18"
+version = "0.2.19"
 dependencies = [
  "base64",
  "cosmol_viewer_core",
@@ -693,23 +708,25 @@ dependencies = [
 
 [[package]]
 name = "cosmolkit"
-version = "0.2.0-beta.2"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fa34e61f6bcc71b1cef2d4b178a748ea2a7134bb91b6cadade7165fef563815e"
+checksum = "6e3728a5343aadf01b46f9c641857e49033383832e117e6c21597f922aed9095"
 dependencies = [
  "cosmolkit-core",
 ]
 
 [[package]]
 name = "cosmolkit-core"
-version = "0.2.0-beta.2"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f7d9987ff67d9c92c1c31be569e5281a6b4352145142f0e5640e8090f1760233"
+checksum = "d31e39dae473290bd53830418f1d71c6639621d06a30e1f862423e0731d1303b"
 dependencies = [
  "cosmolkit-macros",
  "cosmolkit-ringdecomposer",
- "glam 0.32.1",
+ "glam",
+ "indicatif",
  "log",
+ "rayon",
  "resvg",
  "serde_json",
  "thiserror 2.0.18",
@@ -719,9 +736,9 @@ dependencies = [
 
 [[package]]
 name = "cosmolkit-macros"
-version = "0.2.0-beta.2"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "974b378c465c00892993b269ff586de4dc8e169a5ff8e95c3b5d0a78f9df9700"
+checksum = "8fe336cde4ce92b9ce623b1af51f41f7477099f1de5465dde17b05daf16b3538"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -730,9 +747,9 @@ dependencies = [
 
 [[package]]
 name = "cosmolkit-ringdecomposer"
-version = "0.2.0-beta.2"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "edd933a88437aef9f58a46166664e5e9bba42c8c79dd37a8c974c3b8a1b8247e"
+checksum = "1f6e37d6dd678bd82f309bb2f0ba20e7403bfd677d587b24b91806812002b53d"
 dependencies = [
  "thiserror 2.0.18",
 ]
@@ -1041,6 +1058,12 @@ name = "embedded-io"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "edd0f118536f44f5ccd48bcb8b111bdc3de888b58c74639dfb034a357d0f206d"
+
+[[package]]
+name = "encode_unicode"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "34aa73646ffb006b8f5147f3dc182bd4bcb190227ce861fc4a4844bf8e3cb2c0"
 
 [[package]]
 name = "enum-map"
@@ -1414,12 +1437,6 @@ dependencies = [
 
 [[package]]
 name = "glam"
-version = "0.32.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f70749695b063ecbf6b62949ccccde2e733ec3ecbbd71d467dca4e5c6c97cca0"
-
-[[package]]
-name = "glam"
 version = "0.33.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8fb167719045debebe9f532320accc7b5c993c5a3b813f5696a11d5ca7bdc57b"
@@ -1790,6 +1807,19 @@ dependencies = [
  "hashbrown 0.17.1",
  "serde",
  "serde_core",
+]
+
+[[package]]
+name = "indicatif"
+version = "0.18.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "25470f23803092da7d239834776d653104d551bc4d7eacaf31e6837854b8e9eb"
+dependencies = [
+ "console",
+ "portable-atomic",
+ "unicode-width",
+ "unit-prefix",
+ "web-time",
 ]
 
 [[package]]
@@ -4201,6 +4231,12 @@ dependencies = [
  "phf_codegen",
  "rand 0.8.6",
 ]
+
+[[package]]
+name = "unit-prefix"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "81e544489bf3d8ef66c953931f56617f423cd4b5494be343d9b9d3dda037b9a3"
 
 [[package]]
 name = "unty"

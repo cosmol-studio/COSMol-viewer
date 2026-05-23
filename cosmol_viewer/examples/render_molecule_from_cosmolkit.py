@@ -1,7 +1,7 @@
-import cosmolkit
+import cosmolkit as ck
 from cosmol_viewer import Molecule, Scene, Viewer
 
-cosmolkit_mol = cosmolkit.Molecule.from_smiles("COc1cc(C=Nn2c(SC)nnc2c3ccccc3)c(Br)cc1O")
+cosmolkit_mol = ck.Molecule.from_smiles("COc1cc(C=Nn2c(SC)nnc2c3ccccc3)c(Br)cc1O")
 mol = (
     Molecule.from_cosmolkit(cosmolkit_mol)
     .centered()
@@ -9,11 +9,15 @@ mol = (
 )
 
 scene = Scene()
-scene.set_scale(1.0)
+scene.set_scale(0.8)
 scene.add_shape_with_id("molecule", mol)
 
+scene.save_image("rendered_cosmolkit_molecule.png", width=1600, height=1000)
+
 viewer = Viewer.render(scene, width=800, height=500)
-viewer.save_image("screenshot.png")
 
 print("Press Any Key to exit...", end="", flush=True)
-_ = input()
+try:
+    _ = input()
+except EOFError:
+    pass

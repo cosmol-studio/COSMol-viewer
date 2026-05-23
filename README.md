@@ -31,7 +31,9 @@ All implementations share the same Rust rendering engine, ensuring consistent pe
 ## Quick concepts
 
 - **Scene**: container for shapes (molecules, proteins, spheres, etc.).
-- **Viewer.render(scene, ...)**: create a static viewer in a native window or notebook canvas. Good for static visualization.
+- **Viewer.render(scene, ...)**: create an interactive viewer in a native window or notebook canvas.
+- **scene.save_image(path, ...)** / **scene.to_png(...)** / **scene.display(...)**: render the scene directly to a static PNG at any requested resolution. This is independent of any viewer and does not use notebook JavaScript or browser canvas readback.
+- **scene.set_camera_view(...)** / **scene.rotate_camera(...)**: set the reproducible camera used by both static exports and newly created viewers.
 - **viewer.update(scene)**: push incremental changes after `Viewer.render()` (real-time / streaming use-cases).
 - **Animation**: An Animation object containing frames and settings.
 - **Animation(interval, loops, interpolate)**: stores precomputed frames and playback settings.
@@ -69,13 +71,24 @@ scene.set_scale(1.0)
 
 scene.add_shape_with_id("molecule", mol)
 
+scene.set_camera_view(azimuth=35, elevation=20, distance=32, fov=18)
+scene.save_image("rendered_scene.png", width=1600, height=1000)
 viewer = Viewer.render(scene, width=800, height=500)
-
-viewer.save_image("screenshot.png")  # Native desktop backend.
 
 print("Press Any Key to exit...", end='', flush=True)
 _ = input()  # Keep the viewer open until you decide to close
 ```
+
+In a notebook, use a static PNG display when you do not need interaction:
+
+```python
+scene.display(width=1200, height=800)
+scene.display(width=1200, height=800, background="transparent")
+```
+
+For static exports, omit `background` to use the scene background, pass a color
+such as `"#ffffff"` or `[255, 255, 255]`, or use `"transparent"` for a PNG with
+a transparent background.
 
 ### 2. Animation playback with `Viewer.play`
 

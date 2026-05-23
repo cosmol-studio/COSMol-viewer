@@ -177,6 +177,44 @@ impl Scene {
         self.background_color = Vec3::ZERO;
     }
 
+    pub fn set_camera_view(
+        &mut self,
+        azimuth: f32,
+        elevation: f32,
+        roll: f32,
+        distance: f32,
+        target: [f32; 3],
+        fov: f32,
+    ) {
+        self.camera_state = Some(CameraState::from_orbit_angles(
+            azimuth, elevation, roll, distance, target, fov,
+        ));
+    }
+
+    pub fn rotate_camera(&mut self, azimuth_delta: f32, elevation_delta: f32, roll_delta: f32) {
+        let mut camera_state = self.camera_state.unwrap_or_default();
+        camera_state.rotate_by_degrees(azimuth_delta, elevation_delta, roll_delta);
+        self.camera_state = Some(camera_state);
+    }
+
+    pub fn set_camera_distance(&mut self, distance: f32) {
+        let mut camera_state = self.camera_state.unwrap_or_default();
+        camera_state.distance = distance;
+        self.camera_state = Some(camera_state);
+    }
+
+    pub fn set_camera_target(&mut self, target: [f32; 3]) {
+        let mut camera_state = self.camera_state.unwrap_or_default();
+        camera_state.target = Vec3::from(target);
+        self.camera_state = Some(camera_state);
+    }
+
+    pub fn set_camera_fov(&mut self, fov: f32) {
+        let mut camera_state = self.camera_state.unwrap_or_default();
+        camera_state.fov = fov;
+        self.camera_state = Some(camera_state);
+    }
+
     pub fn prepare_for_wasm(&mut self) {
         for shape in self.named_shapes.values_mut() {
             if let Shape::Protein(protein) = shape {
