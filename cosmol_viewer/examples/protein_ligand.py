@@ -12,7 +12,6 @@ scene.add_shape_with_id("prot", prot)
 scene.add_shape_with_id("ligand", ligand)
 scene.set_background_color("#021529")
 
-scene.save_image("rendered_protein_ligand.png", width=1600, height=1000)
 viewer = Viewer.render(scene, width=800, height=500)
 
 print("Press Any Key to exit...", end="", flush=True)

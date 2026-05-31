@@ -1,14 +1,14 @@
-use std::{cell::RefCell, ffi::CString, num::NonZeroU32};
+use std::{ffi::CString, num::NonZeroU32, thread};
 
 use eframe::glow::{self, HasContext as _};
 use egui_winit::winit::{
     event_loop::EventLoop,
-    raw_window_handle::HasWindowHandle as _,
+    raw_window_handle::{HasWindowHandle as _, RawWindowHandle},
     window::{Window, WindowAttributes},
 };
 use glam::Vec4;
 use glutin::{
-    config::{ConfigTemplateBuilder, GlConfig},
+    config::{Config, ConfigTemplateBuilder, GlConfig},
     context::{ContextApi, ContextAttributesBuilder, GlProfile, Version},
     display::{GetGlDisplay as _, GlDisplay as _},
     prelude::*,
@@ -27,10 +27,6 @@ pub struct ImageRenderer;
 pub enum ImageBackground {
     Scene,
     Color([f32; 4]),
-}
-
-thread_local! {
-    static OFFSCREEN_GL: RefCell<Option<OffscreenGl>> = const { RefCell::new(None) };
 }
 
 struct OffscreenGl {
@@ -55,17 +51,16 @@ impl ImageRenderer {
         height: u32,
         background: ImageBackground,
     ) -> Result<ImageBuffer<Rgba<u8>, Vec<u8>>, String> {
-        OFFSCREEN_GL.with(|cell| {
-            let mut borrowed = cell.borrow_mut();
-            if borrowed.is_none() {
-                *borrowed = Some(OffscreenGl::new()?);
-            }
-
-            borrowed
-                .as_mut()
-                .expect("offscreen GL was just initialized")
-                .render(scene, width, height, background)
-        })
+        let scene = scene.clone();
+        thread::Builder::new()
+            .name("cosmol_viewer_offscreen_render".to_owned())
+            .spawn(move || {
+                let mut gl = OffscreenGl::new()?;
+                gl.render(&scene, width, height, background)
+            })
+            .map_err(|err| format!("failed to start offscreen render thread: {err}"))?
+            .join()
+            .map_err(|_| "offscreen render thread panicked".to_owned())?
     }
 
     pub fn save_png(
@@ -115,13 +110,19 @@ impl OffscreenGl {
         let width = NonZeroU32::new(1).expect("1 is non-zero");
         let height = NonZeroU32::new(1).expect("1 is non-zero");
 
-        let event_loop = EventLoop::new().map_err(|err| {
+        #[cfg(target_os = "linux")]
+        if linux_is_displayless() {
+            return Self::new_headless_egl(width, height);
+        }
+
+        Self::new_with_winit(width, height)
+    }
+
+    fn new_with_winit(width: NonZeroU32, height: NonZeroU32) -> Result<Self, String> {
+        let event_loop = offscreen_event_loop_builder().build().map_err(|err| {
             format!("{err}. Offscreen rendering could not create its GL bootstrap event loop.")
         })?;
-        let template = ConfigTemplateBuilder::new()
-            .with_depth_size(24)
-            .with_alpha_size(8)
-            .with_pbuffer_sizes(width, height);
+        let template = offscreen_config_template_builder(width, height);
 
         let (window, gl_config) = DisplayBuilder::new()
             .with_preference(ApiPreference::FallbackEgl)
@@ -133,11 +134,68 @@ impl OffscreenGl {
             })
             .map_err(|err| err.to_string())?;
 
-        let gl_display = gl_config.display();
         let raw_window_handle = window
             .as_ref()
             .and_then(|window| window.window_handle().ok())
             .map(|handle| handle.as_raw());
+
+        Self::new_from_config(width, height, gl_config, raw_window_handle, window)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn new_headless_egl(width: NonZeroU32, height: NonZeroU32) -> Result<Self, String> {
+        use glutin::{
+            api::egl::{device::Device, display::Display as EglDisplay},
+            display::Display,
+        };
+
+        let devices = Device::query_devices()
+            .map_err(|err| format!("{err}. Headless EGL device enumeration failed."))?;
+        let mut errors = Vec::new();
+
+        for device in devices {
+            let egl_display = match unsafe { EglDisplay::with_device(&device, None) } {
+                Ok(display) => display,
+                Err(err) => {
+                    errors.push(format!("{err}"));
+                    continue;
+                }
+            };
+            let gl_display = Display::Egl(egl_display);
+            let template = offscreen_config_template_builder(width, height).build();
+            let gl_config = match unsafe { gl_display.find_configs(template) } {
+                Ok(configs) => configs.max_by_key(|config| config.num_samples()),
+                Err(err) => {
+                    errors.push(format!("{err}"));
+                    continue;
+                }
+            };
+
+            if let Some(gl_config) = gl_config {
+                return Self::new_from_config(width, height, gl_config, None, None);
+            }
+
+            errors.push("no GL configs found for EGL device".to_owned());
+        }
+
+        Err(format!(
+            "Headless EGL could not create an offscreen display{}",
+            if errors.is_empty() {
+                ".".to_owned()
+            } else {
+                format!(": {}", errors.join("; "))
+            }
+        ))
+    }
+
+    fn new_from_config(
+        width: NonZeroU32,
+        height: NonZeroU32,
+        gl_config: Config,
+        raw_window_handle: Option<RawWindowHandle>,
+        window: Option<Window>,
+    ) -> Result<Self, String> {
+        let gl_display = gl_config.display();
 
         let context_attributes = ContextAttributesBuilder::new()
             .with_profile(GlProfile::Core)
@@ -354,6 +412,43 @@ fn offscreen_samples(gl: &glow::Context) -> i32 {
         let max_samples = gl.get_parameter_i32(glow::MAX_SAMPLES).max(1);
         requested.min(max_samples)
     }
+}
+
+fn offscreen_config_template_builder(
+    width: NonZeroU32,
+    height: NonZeroU32,
+) -> ConfigTemplateBuilder {
+    ConfigTemplateBuilder::new()
+        .with_depth_size(24)
+        .with_alpha_size(8)
+        .with_pbuffer_sizes(width, height)
+}
+
+fn offscreen_event_loop_builder() -> egui_winit::winit::event_loop::EventLoopBuilder<()> {
+    let mut builder = EventLoop::builder();
+    #[cfg(target_family = "windows")]
+    {
+        use egui_winit::winit::platform::windows::EventLoopBuilderExtWindows;
+        builder.with_any_thread(true);
+    }
+    #[cfg(feature = "wayland")]
+    {
+        use egui_winit::winit::platform::wayland::EventLoopBuilderExtWayland;
+        builder.with_any_thread(true);
+    }
+    #[cfg(feature = "x11")]
+    {
+        use egui_winit::winit::platform::x11::EventLoopBuilderExtX11;
+        builder.with_any_thread(true);
+    }
+    builder
+}
+
+#[cfg(target_os = "linux")]
+fn linux_is_displayless() -> bool {
+    std::env::var_os("WAYLAND_DISPLAY").is_none()
+        && std::env::var_os("WAYLAND_SOCKET").is_none()
+        && std::env::var_os("DISPLAY").is_none()
 }
 
 fn bootstrap_window_attributes() -> Option<WindowAttributes> {

@@ -4,6 +4,7 @@ use std::path::Path;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cosmolkit_mol =
         cosmolkit::Molecule::from_smiles("COc1cc(C=Nn2c(SC)nnc2c3ccccc3)c(Br)cc1O")?;
+    let cosmolkit_mol = cosmolkit_mol.with_hydrogens()?;
     let mol = Molecule::from_cosmolkit(&cosmolkit_mol)?
         .centered()
         .enable_outline(0.04);

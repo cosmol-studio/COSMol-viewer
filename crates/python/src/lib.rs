@@ -454,7 +454,26 @@ background : str or [int, int, int] or [int, int, int, int], optional
         background: Option<Bound<'_, PyAny>>,
     ) -> PyResult<()> {
         let background = py_to_image_background(background)?;
-        render_scene_in_child_process(&self.inner, path, width, height, background, false)
+        if render_images_in_child_process() {
+            return render_scene_in_child_process(
+                &self.inner,
+                path,
+                width,
+                height,
+                background,
+                false,
+            );
+        }
+
+        let output_path = absolutize_output_path(path)?;
+        ImageRenderer::save_png_with_background(
+            &self.inner,
+            &output_path,
+            width,
+            height,
+            background.into(),
+        )
+        .map_err(|err| PyRuntimeError::new_err(format!("Error saving image: {err}")))
     }
 
     #[doc = r#"
@@ -478,6 +497,17 @@ background : str or sequence, optional
         background: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Bound<'py, PyBytes>> {
         let background = py_to_image_background(background)?;
+        if !render_images_in_child_process() {
+            let bytes = ImageRenderer::render_png_bytes_with_background(
+                &self.inner,
+                width,
+                height,
+                background.into(),
+            )
+            .map_err(|err| PyRuntimeError::new_err(format!("Error rendering image: {err}")))?;
+            return Ok(PyBytes::new(py, &bytes));
+        }
+
         let output_path = unique_temp_path("cosmol_viewer_image", "png")?;
         render_scene_in_child_process(
             &self.inner,
@@ -605,6 +635,17 @@ fn render_scene_in_child_process(
         "Image renderer failed with status {}.\nstdout:\n{}\nstderr:\n{}",
         output.status, stdout, stderr
     )))
+}
+
+fn render_images_in_child_process() -> bool {
+    std::env::var("COSMOL_VIEWER_RENDER_ISOLATED")
+        .map(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]

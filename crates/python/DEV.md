@@ -20,5 +20,5 @@ Generated file:
 From repo root:
 
 ```bash
-maturin develop --manifest-path crates/python/Cargo.toml
+maturin develop --uv --manifest-path crates/python/Cargo.toml
 ```

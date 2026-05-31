@@ -9,7 +9,7 @@ use crate::utils::{Material, MeshData, Stylable};
 use bytemuck::{Pod, Zeroable};
 use cosmolkit::{
     BioStructure, ChainSourceIds, ResidueKind as CosmolkitResidueKind,
-    read_mmcif_atom_site_subset_from_str, read_pdb_coordinate_subset_from_str,
+    read_mmcif_atom_site_subset_from_str,
 };
 use glam::{Quat, Vec3, Vec4};
 use na_seq::AtomTypeInRes;
@@ -57,7 +57,7 @@ impl Protein {
     }
 
     pub fn from_pdb(pdb: &str) -> Result<Self, ParseMmCifError> {
-        let structure = read_pdb_coordinate_subset_from_str(pdb)
+        let structure = BioStructure::from_pdb_str(pdb)
             .map_err(|e| ParseMmCifError::ParsingError(e.to_string()))?;
         Self::from_biostructure(&structure)
     }

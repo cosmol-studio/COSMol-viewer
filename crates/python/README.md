@@ -32,7 +32,7 @@ All implementations share the same Rust rendering engine, ensuring consistent pe
 
 - **Scene**: container for shapes (molecules, proteins, spheres, etc.).
 - **Viewer.render(scene, ...)**: create an interactive viewer in a native window or notebook canvas.
-- **scene.save_image(path, ...)** / **scene.to_png(...)** / **scene.display(...)**: render the scene directly to a static PNG at any requested resolution. This is independent of any viewer and does not use notebook JavaScript or browser canvas readback.
+- **scene.save_image(path, ...)** / **scene.to_png(...)** / **scene.display(...)**: render the scene directly to a static PNG at any requested resolution. This is independent of notebook JavaScript or browser canvas readback.
 - **scene.set_camera_view(...)** / **scene.rotate_camera(...)**: set the reproducible camera used by both static exports and newly created viewers.
 - **viewer.update(scene)**: push incremental changes after `Viewer.render()` (real-time / streaming use-cases).
 - **Animation**: An Animation object containing frames and settings.
@@ -59,7 +59,7 @@ Install with `pip install cosmol-viewer`
 ### 1. Static molecular rendering
 
 ```python
-from cosmol_viewer import Molecule, Scene, Viewer
+from cosmol_viewer import Molecule, Scene
 
 mol_data = open("molecule.sdf", "r", encoding="utf-8").read()
 
@@ -73,10 +73,23 @@ scene.add_shape_with_id("molecule", mol)
 
 scene.set_camera_view(azimuth=35, elevation=20, distance=32, fov=18)
 scene.save_image("rendered_scene.png", width=1600, height=1000)
+```
+
+Static exports and native interactive viewers both bootstrap native GL on
+desktop. Until the offscreen backend is fully winit-free, use `save_image` /
+`to_png` / `display` as a static workflow, or use `Viewer.render` as an
+interactive workflow; do not call static export immediately before
+`Viewer.render` in the same native process.
+
+For an interactive native window:
+
+```python
+from cosmol_viewer import Viewer
+
 viewer = Viewer.render(scene, width=800, height=500)
 
 print("Press Any Key to exit...", end='', flush=True)
-_ = input()  # Keep the viewer open until you decide to close
+_ = input()
 ```
 
 In a notebook, use a static PNG display when you do not need interaction:

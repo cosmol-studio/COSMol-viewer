@@ -708,23 +708,24 @@ dependencies = [
 
 [[package]]
 name = "cosmolkit"
-version = "0.2.0"
+version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e3728a5343aadf01b46f9c641857e49033383832e117e6c21597f922aed9095"
+checksum = "c1b839f3f3d6208aae0b561565dfe4c8a8d374e1b76fd93d8e4c6ff3fa13af40"
 dependencies = [
  "cosmolkit-core",
 ]
 
 [[package]]
 name = "cosmolkit-core"
-version = "0.2.0"
+version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d31e39dae473290bd53830418f1d71c6639621d06a30e1f862423e0731d1303b"
+checksum = "5bccef63561ad716645c6c6ecba77d0f308f7a85ebcb84ef6aff1d784de6862f"
 dependencies = [
  "cosmolkit-macros",
  "cosmolkit-ringdecomposer",
  "glam",
  "indicatif",
+ "libc",
  "log",
  "rayon",
  "resvg",
@@ -736,9 +737,9 @@ dependencies = [
 
 [[package]]
 name = "cosmolkit-macros"
-version = "0.2.0"
+version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8fe336cde4ce92b9ce623b1af51f41f7477099f1de5465dde17b05daf16b3538"
+checksum = "b16c6e19f54f65b2342ea1ba364f2351f217c513485601467f591a659d7ddd13"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -747,9 +748,9 @@ dependencies = [
 
 [[package]]
 name = "cosmolkit-ringdecomposer"
-version = "0.2.0"
+version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1f6e37d6dd678bd82f309bb2f0ba20e7403bfd677d587b24b91806812002b53d"
+checksum = "027d3c9658306cdcf2d7d62e1a04c53ee74f2ab60d1251a114fcfe495735ace2"
 dependencies = [
  "thiserror 2.0.18",
 ]
@@ -1139,7 +1140,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2285,7 +2286,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3395,7 +3396,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4785,7 +4786,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
