@@ -1,5 +1,3 @@
-use crate::parser::sdf::Sdf;
-use crate::parser::utils::BondType as SdfBondType;
 pub use crate::utils::Logger;
 use crate::utils::{Color, InstanceGroups, OutlineInstanceGroup, OutlineSettings};
 use crate::{
@@ -8,36 +6,40 @@ use crate::{
     utils::{Interaction, Interpolatable, IntoInstanceGroups, Material, MeshData, Stylable},
 };
 use cosmolkit::{
-    BondOrder as CosmolkitBondOrder, Molecule as CosmolkitMolecule,
+    BondOrder as CosmolkitBondOrder, Element, Molecule as CosmolkitMolecule,
     io::sdf::{SdfCoordinateMode, SdfReadParams, read_sdf_from_str_with_params},
 };
 use glam::Vec3;
-use na_seq::Element;
 use serde::{Deserialize, Serialize};
 
 pub fn my_color(element: &Element) -> Vec3 {
-    // 优先使用自定义颜色
-    match element {
-        Element::Hydrogen => Vec3::new(1.0, 1.0, 1.0),
-        Element::Carbon => Vec3::new(0.3, 0.3, 0.3),
-        Element::Nitrogen => Vec3::new(0.2, 0.4, 1.0),
-        Element::Oxygen => Vec3::new(1.0, 0.0, 0.0),
-        Element::Fluorine => Vec3::new(0.0, 0.8, 0.0),
-        Element::Phosphorus => Vec3::new(1.0, 0.5, 0.0),
-        Element::Sulfur => Vec3::new(1.0, 1.0, 0.0),
-        Element::Chlorine => Vec3::new(0.0, 0.8, 0.0),
-        Element::Bromine => Vec3::new(0.6, 0.2, 0.2),
-        Element::Iodine => Vec3::new(0.4, 0.0, 0.8),
-        Element::Other => Vec3::new(0.8, 0.8, 0.8),
-        _ => element.color().into(), // 其他未定义的元素
+    match element.atomic_number() {
+        1 => Vec3::new(1.0, 1.0, 1.0),
+        6 => Vec3::new(0.3, 0.3, 0.3),
+        7 => Vec3::new(0.2, 0.4, 1.0),
+        8 => Vec3::new(1.0, 0.0, 0.0),
+        9 | 17 => Vec3::new(0.0, 0.8, 0.0),
+        15 => Vec3::new(1.0, 0.5, 0.0),
+        16 => Vec3::new(1.0, 1.0, 0.0),
+        35 => Vec3::new(0.6, 0.2, 0.2),
+        53 => Vec3::new(0.4, 0.0, 0.8),
+        _ => Vec3::new(0.8, 0.8, 0.8),
     }
 }
 
 pub fn my_radius(e: &Element) -> f32 {
-    match e {
-        Element::Hydrogen => 1.20,
-        Element::Other => 1.20,
-        _ => e.vdw_radius(),
+    match e.atomic_number() {
+        1 => 1.20,
+        6 => 1.70,
+        7 => 1.55,
+        8 => 1.52,
+        9 => 1.47,
+        15 => 1.80,
+        16 => 1.80,
+        17 => 1.75,
+        35 => 1.85,
+        53 => 1.98,
+        _ => 1.20,
     }
 }
 
@@ -91,7 +93,7 @@ mod element_serde {
             {
                 let mut elements = Vec::new();
                 while let Some(num) = seq.next_element::<u8>()? {
-                    let elem = Element::from_atomic_number(num).unwrap_or(Element::Other);
+                    let elem = Element::from_atomic_number(num).unwrap_or(Element::DUMMY);
                     elements.push(elem);
                 }
                 Ok(elements)
@@ -221,23 +223,6 @@ pub enum ParseSdfError {
 
 impl Molecule {
     pub fn from_sdf(sdf: &str) -> Result<Self, ParseSdfError> {
-        match Self::from_sdf_with_cosmolkit(sdf) {
-            Ok(molecule) => Ok(molecule),
-            Err(cosmolkit_error) => {
-                eprintln!(
-                    "[WARN] COSMolKit SDF parser failed; falling back to legacy SDF parser: {cosmolkit_error}"
-                );
-                let molecule_data = Sdf::new(sdf).map_err(|fallback_error| {
-                    ParseSdfError::ParsingError(format!(
-                        "COSMolKit parser failed: {cosmolkit_error}; fallback parser failed: {fallback_error}"
-                    ))
-                })?;
-                Self::new(molecule_data)
-            }
-        }
-    }
-
-    fn from_sdf_with_cosmolkit(sdf: &str) -> Result<Self, ParseSdfError> {
         let record = read_sdf_from_str_with_params(
             sdf,
             SdfReadParams {
@@ -324,7 +309,7 @@ impl Molecule {
         let atom_types = molecule
             .atoms()
             .iter()
-            .map(|atom| Element::from_atomic_number(atom.atomic_number()).unwrap_or(Element::Other))
+            .map(|atom| Element::from_atomic_number(atom.atomic_number()).unwrap_or(Element::DUMMY))
             .collect();
         let atom_colors = atom_colors_from_cosmolkit_weights(&molecule);
 
@@ -412,7 +397,7 @@ impl Molecule {
 
         let atom_types = atom_atomic_numbers
             .into_iter()
-            .map(|atomic_num| Element::from_atomic_number(atomic_num).unwrap_or(Element::Other))
+            .map(|atomic_num| Element::from_atomic_number(atomic_num).unwrap_or(Element::DUMMY))
             .collect();
         let atom_posits = atom_posits
             .into_iter()
@@ -428,66 +413,6 @@ impl Molecule {
                 _ => BondType::UNKNOWN,
             })
             .collect();
-
-        Ok(Self {
-            style: MoleculeStyle::BallAndStick,
-            atom_types,
-            atom_posits,
-            atom_colors,
-            bond_types,
-            bond_indices,
-            quality: 6,
-            visual_style: Material {
-                opacity: 1.0,
-                visible: true,
-                ..Default::default()
-            },
-            interaction: Default::default(),
-            outline: OutlineSettings::default(),
-        })
-    }
-
-    fn new(sdf: Sdf) -> Result<Self, ParseSdfError> {
-        // Split atoms into positions + types in one pass
-        let (atom_posits, atom_types): (Vec<Vec3>, Vec<Element>) = sdf
-            .atoms
-            .into_iter()
-            .map(|atom| (atom.posit, atom.element))
-            .unzip();
-
-        let atom_colors = match sdf.atoms_weight {
-            Some(weights) => {
-                let mut atom_colors = Vec::new();
-                for weight_opt in weights {
-                    if let Some(weight) = weight_opt {
-                        atom_colors.push(Some(Vec3::new(weight, 1.0 - weight, 0.0)));
-                    } else {
-                        atom_colors.push(None);
-                    }
-                }
-                Some(atom_colors)
-            }
-            None => None,
-        };
-
-        // Split bonds into indices + types in one pass
-        let (bond_indices, bond_types): (Vec<[usize; 2]>, Vec<BondType>) = sdf
-            .bonds
-            .into_iter()
-            .map(|bond| {
-                let indices = [bond.atom_0_sn as usize - 1, bond.atom_1_sn as usize - 1];
-
-                let bond_type = match bond.bond_type {
-                    SdfBondType::Single => BondType::SINGLE,
-                    SdfBondType::Double => BondType::DOUBLE,
-                    SdfBondType::Triple => BondType::TRIPLE,
-                    SdfBondType::Aromatic => BondType::AROMATIC,
-                    _ => BondType::UNKNOWN,
-                };
-
-                (indices, bond_type)
-            })
-            .unzip();
 
         Ok(Self {
             style: MoleculeStyle::BallAndStick,
@@ -606,7 +531,7 @@ impl Molecule {
             self.atom_types
                 .get(index)
                 .map(|x| match x {
-                    Element::Carbon => Vec3::new(0.75, 0.75, 0.75),
+                    element if *element == Element::C => Vec3::new(0.75, 0.75, 0.75),
                     _ => my_color(x),
                 })
                 .unwrap()
@@ -1005,7 +930,7 @@ $$$$
             molecule
                 .atom_types
                 .iter()
-                .filter(|element| **element == Element::Hydrogen)
+                .filter(|element| **element == Element::H)
                 .count(),
             4
         );
@@ -1075,7 +1000,7 @@ $$$$
 
         let molecule = Molecule::from_sdf(sdf).expect("dummy point SDF should convert");
 
-        assert_eq!(molecule.atom_types, vec![Element::Other, Element::Other]);
+        assert_eq!(molecule.atom_types, vec![Element::DUMMY, Element::DUMMY]);
         assert_eq!(molecule.bond_types.len(), 0);
         assert_eq!(
             molecule.atom_colors,
@@ -1132,12 +1057,7 @@ $$$$
 
         assert_eq!(
             molecule.atom_types,
-            vec![
-                Element::Carbon,
-                Element::Oxygen,
-                Element::Other,
-                Element::Other
-            ]
+            vec![Element::C, Element::O, Element::DUMMY, Element::DUMMY]
         );
         assert_eq!(
             molecule.bond_types,

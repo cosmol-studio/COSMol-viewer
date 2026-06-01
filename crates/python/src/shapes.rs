@@ -192,7 +192,7 @@ impl_stylable_pymethods!(PyStick, Stick);
 #[doc = r#"
 A molecular shape object.
 
-This class is typically created by parsing an SDF-format string.
+This class is typically created from an SDF-format string parsed by COSMolKit.
 
 Examples
 --------
@@ -215,6 +215,9 @@ impl PyMolecule {
     #[staticmethod]
     #[doc = r#"
 Create a molecule from an SDF-format string.
+
+SDF parsing is delegated to COSMolKit; the viewer receives atoms, bonds, and
+coordinates from the parsed molecule.
 
 Parameters
 ----------
@@ -254,18 +257,9 @@ Molecule
     The converted viewer molecule object.
 "#]
     pub fn from_cosmolkit(molecule: &Bound<'_, PyAny>) -> PyResult<Self> {
-        match cosmolkit_molecule_to_viewer_molecule(molecule) {
-            Ok(inner) => Ok(Self { inner }),
-            Err(direct_error) => {
-                let sdf = cosmolkit_molecule_to_sdf(molecule).map_err(|sdf_error| {
-                    PyErr::new::<pyo3::exceptions::PyTypeError, _>(format!(
-                        "Failed to convert cosmolkit molecule directly: {direct_error}; \
-                         SDF fallback also failed: {sdf_error}"
-                    ))
-                })?;
-                Self::from_sdf(&sdf)
-            }
-        }
+        Ok(Self {
+            inner: cosmolkit_molecule_to_viewer_molecule(molecule)?,
+        })
     }
 
     #[doc = r#"
@@ -383,7 +377,7 @@ fn cosmolkit_molecule_to_viewer_molecule(molecule: &Bound<'_, PyAny>) -> PyResul
         return Ok(molecule);
     }
 
-    let molecule = molecule.call_method0("with_2d_coords")?;
+    let molecule = molecule.call_method0("with_2d_coordinates")?;
     try_cosmolkit_molecule_to_viewer_molecule(&molecule)
 }
 
@@ -474,32 +468,6 @@ fn cosmolkit_bonds(molecule: &Bound<'_, PyAny>) -> PyResult<(Vec<i64>, Vec<[usiz
     Ok((bond_order_codes, bond_indices))
 }
 
-fn cosmolkit_molecule_to_sdf(molecule: &Bound<'_, PyAny>) -> PyResult<String> {
-    let molecule = molecule
-        .call_method1("with_kekulized_bonds", (true,))
-        .unwrap_or_else(|_| molecule.clone());
-
-    match molecule.call_method1("to_sdf_string", ("v3000",)) {
-        Ok(sdf) => sdf.extract(),
-        Err(first_error) => {
-            if let Ok(with_coords) = molecule.call_method0("with_2d_coords") {
-                if let Ok(sdf) = with_coords.call_method1("to_sdf_string", ("v3000",)) {
-                    return sdf.extract();
-                }
-            }
-
-            if let Ok(sdf) = molecule.call_method1("to_sdf_string", ("v2000",)) {
-                return sdf.extract();
-            }
-
-            Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(format!(
-                "Expected a cosmolkit.Molecule-like object with to_sdf_string(format). \
-                 Direct export failed: {first_error}"
-            )))
-        }
-    }
-}
-
 impl_stylable_pymethods!(PyMolecule, Molecule);
 
 #[cfg_attr(feature = "stubgen", gen_stub_pyclass)]
@@ -508,10 +476,9 @@ impl_stylable_pymethods!(PyMolecule, Molecule);
 #[doc = r#"
 A protein shape object.
 
-This class is typically created by parsing an mmCIF- or PDB-format string.
-Protein rendering uses the Rust core cartoon pipeline: secondary structure is
-assigned from backbone geometry, and the displayed ribbon mesh is generated with
-the ChimeraX-style spline, cross-section, and cap/extrusion path.
+This class is typically created from an mmCIF- or PDB-format string parsed by
+COSMolKit's protein reader. The viewer core assigns secondary structure from
+backbone geometry and generates the displayed ChimeraX-style cartoon ribbon.
 
 Examples
 --------
@@ -537,8 +504,8 @@ impl PyProtein {
     #[doc = r#"
 Create a protein from an mmCIF-format string.
 
-The parser reads backbone atoms needed for cartoon rendering. Secondary
-structure is assigned by the Rust core before mesh generation.
+Parsing is delegated to COSMolKit's protein reader. The viewer core assigns
+secondary structure from the resulting backbone geometry before mesh generation.
 
 Parameters
 ----------
@@ -561,8 +528,8 @@ Protein
     #[doc = r#"
 Create a protein from a PDB-format string.
 
-The parser reads backbone atoms needed for cartoon rendering. Secondary
-structure is assigned by the Rust core before mesh generation.
+Parsing is delegated to COSMolKit's protein reader. The viewer core assigns
+secondary structure from the resulting backbone geometry before mesh generation.
 
 Parameters
 ----------

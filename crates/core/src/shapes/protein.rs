@@ -1,20 +1,16 @@
 use crate::Shape;
-use crate::parser::mmcif::Chain;
-use crate::parser::mmcif::MmCif;
-use crate::parser::utils::{
-    Residue, ResidueType, ResidueType::AminoAcid, RibbonResidueInfo, SecondaryStructure,
-};
+use crate::parser::dssp::SecondaryStructureCalculator;
+use crate::parser::utils::{Residue, RibbonResidueInfo, SecondaryStructure};
 use crate::shapes::Stick;
 use crate::utils::{Material, MeshData, Stylable};
 use bytemuck::{Pod, Zeroable};
-use cosmolkit::{
-    BioStructure, ChainSourceIds, ResidueKind as CosmolkitResidueKind,
-    read_mmcif_atom_site_subset_from_str,
-};
+use cosmolkit::{ChainSourceIds, Protein as CosmolkitProtein};
 use glam::{Quat, Vec3, Vec4};
-use na_seq::AtomTypeInRes;
+use na_seq::AminoAcid;
+use once_cell::sync::OnceCell;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Protein {
@@ -33,69 +29,102 @@ pub enum ProteinColorMode {
     RainbowResidues,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Chain {
+    pub id: String,
+    pub residues: Vec<Residue>,
+
+    ss_cache: Option<Vec<SecondaryStructure>>,
+    #[serde(skip)]
+    ss: OnceCell<Vec<SecondaryStructure>>,
+    ribbon_cache: Option<Vec<RibbonResidueInfo>>,
+    #[serde(skip)]
+    ribbon: OnceCell<Vec<RibbonResidueInfo>>,
+}
+
+impl Chain {
+    pub fn init_ss(&mut self) {
+        let calculator = SecondaryStructureCalculator::new();
+        let ribbon = calculator.compute_ribbon_info(&self.residues);
+        self.ss_cache = Some(ribbon.iter().map(|info| info.ss).collect());
+        self.ribbon_cache = Some(ribbon);
+    }
+
+    pub fn get_ss(&self) -> &Vec<SecondaryStructure> {
+        if let Some(cache) = self.ss_cache.as_ref() {
+            return &cache;
+        }
+        self.ss
+            .get_or_init(|| self.get_ribbon_info().iter().map(|info| info.ss).collect())
+    }
+
+    pub fn get_ribbon_info(&self) -> &Vec<RibbonResidueInfo> {
+        if let Some(cache) = self.ribbon_cache.as_ref() {
+            return cache;
+        }
+        self.ribbon.get_or_init(|| {
+            let calculator = SecondaryStructureCalculator::new();
+            calculator.compute_ribbon_info(&self.residues)
+        })
+    }
+
+    pub fn new(id: String, residues: Vec<Residue>) -> Self {
+        Self {
+            id,
+            residues,
+            ss_cache: None,
+            ribbon_cache: None,
+            ribbon: OnceCell::new(),
+            ss: OnceCell::new(),
+        }
+    }
+}
+
 use thiserror::Error;
 
 #[derive(Error, Debug)]
-pub enum ParseMmCifError {
-    #[error("Failed to parse MmCif data: '{0}'")]
+pub enum ParseProteinError {
+    #[error("Failed to parse protein structure data: '{0}'")]
     ParsingError(String),
 }
 
 impl Protein {
-    pub fn from_mmcif(mmcif: &str) -> Result<Self, ParseMmCifError> {
-        match read_mmcif_atom_site_subset_from_str(mmcif) {
-            Ok(structure) => Self::from_biostructure(&structure),
-            Err(cosmolkit_error) => {
-                let protein_data = MmCif::new(mmcif).map_err(|fallback_error| {
-                    ParseMmCifError::ParsingError(format!(
-                        "COSMolKit mmCIF parser failed: {cosmolkit_error}; fallback parser failed: {fallback_error}"
-                    ))
-                })?;
-                Self::new(protein_data)
-            }
-        }
+    pub fn from_mmcif(mmcif: &str) -> Result<Self, ParseProteinError> {
+        let protein = CosmolkitProtein::from_mmcif_str(mmcif, "inline.cif")
+            .map_err(|e| ParseProteinError::ParsingError(e.to_string()))?;
+        Self::from_cosmolkit_protein(&protein)
     }
 
-    pub fn from_pdb(pdb: &str) -> Result<Self, ParseMmCifError> {
-        let structure = BioStructure::from_pdb_str(pdb)
-            .map_err(|e| ParseMmCifError::ParsingError(e.to_string()))?;
-        Self::from_biostructure(&structure)
+    pub fn from_pdb(pdb: &str) -> Result<Self, ParseProteinError> {
+        let protein = CosmolkitProtein::from_pdb_str(pdb)
+            .map_err(|e| ParseProteinError::ParsingError(e.to_string()))?;
+        Self::from_cosmolkit_protein(&protein)
     }
 
-    fn from_biostructure(structure: &BioStructure) -> Result<Self, ParseMmCifError> {
+    fn from_cosmolkit_protein(protein: &CosmolkitProtein) -> Result<Self, ParseProteinError> {
         let mut chains = Vec::new();
         let mut centers = Vec::new();
-        let positions = structure.coordinates().positions();
 
-        for (chain_index, chain_row) in structure.chains().iter().enumerate() {
+        for (chain_index, chain_ref) in protein.chains().enumerate() {
             let mut residues = Vec::new();
-            let residue_start = chain_row.residue_span.start as usize;
-            let residue_end = chain_row.residue_span.end() as usize;
 
-            for residue_index in residue_start..residue_end {
-                let residue_row = &structure.residues()[residue_index];
-                if residue_row.kind != CosmolkitResidueKind::AminoAcid {
+            for residue_ref in chain_ref.residues() {
+                let Ok(amino_acid) = AminoAcid::from_str(residue_ref.name()) else {
                     continue;
-                }
-
-                let amino_acid = match ResidueType::from_str(residue_row.name.as_str()) {
-                    ResidueType::AminoAcid(aa) => aa,
-                    _ => continue,
                 };
 
-                let atom_start = residue_row.atom_span.start as usize;
-                let atom_end = residue_row.atom_span.end() as usize;
                 let mut ca_opt = None;
                 let mut c_opt = None;
                 let mut n_opt = None;
                 let mut o_opt = None;
-                for atom_index in atom_start..atom_end {
-                    let atom = &structure.atoms()[atom_index];
-                    let Some(position) = positions.get(atom_index) else {
+
+                for atom_ref in residue_ref.atoms() {
+                    let atom = atom_ref.row();
+                    let Some(position) = atom_ref.position() else {
                         continue;
                     };
                     let position = Vec3::new(position[0], position[1], position[2]);
-                    match biostructure_atom_name(&atom.name) {
+                    match cosmolkit_atom_name(&atom.name) {
                         "C" => c_opt = Some(position),
                         "N" => n_opt = Some(position),
                         "CA" => ca_opt = Some(position),
@@ -116,18 +145,19 @@ impl Protein {
                     n,
                     o,
                     h: None,
-                    sns: residue_row
+                    sns: residue_ref
+                        .row()
                         .source
                         .seq_id
                         .map(|seq_id| seq_id.seq_num.max(0) as usize)
-                        .unwrap_or(residue_index + 1),
+                        .unwrap_or_else(|| residue_ref.id().index() as usize + 1),
                     ss: None,
                 });
             }
 
             if !residues.is_empty() {
                 chains.push(Chain::new(
-                    biostructure_chain_id(chain_index, &chain_row.source),
+                    cosmolkit_chain_id(chain_index, &chain_ref.row().source),
                     residues,
                 ));
             }
@@ -147,115 +177,6 @@ impl Protein {
             color_mode: ProteinColorMode::Uniform,
         })
     }
-
-    pub fn new(mmcif: MmCif) -> Result<Self, ParseMmCifError> {
-        let mut chains = Vec::new();
-        let mut centers = Vec::new();
-        let mut residue_index = 0;
-
-        for chain in mmcif.chains {
-            let mut residues = Vec::new();
-
-            for residue_sns in chain.residue_sns {
-                let residue = &mmcif.residues[residue_index];
-                residue_index += 1;
-                let amino_acid = match residue.res_type.clone() {
-                    AminoAcid(aa) => aa,
-                    _ => continue,
-                };
-                let mut ca_opt = None;
-                let mut c_opt = None;
-                let mut n_opt = None;
-                let mut o_opt = None;
-                for atom_sn in &residue.atom_sns {
-                    let atom = &mmcif.atoms[*atom_sn as usize - 1];
-                    if let Some(atom_type_in_res) = &atom.type_in_res {
-                        if *atom_type_in_res == AtomTypeInRes::C {
-                            c_opt = Some(atom.posit);
-                        }
-                        if *atom_type_in_res == AtomTypeInRes::N {
-                            n_opt = Some(atom.posit);
-                        }
-                        if *atom_type_in_res == AtomTypeInRes::CA {
-                            ca_opt = Some(atom.posit);
-                        }
-                        if *atom_type_in_res == AtomTypeInRes::O {
-                            o_opt = Some(atom.posit);
-                        }
-                    }
-                }
-
-                if ca_opt.is_none() {
-                    println!(
-                        "No CA atom found for chain {} residue {}",
-                        chain.id, residue_sns
-                    );
-                    continue;
-                }
-                if c_opt.is_none() {
-                    println!(
-                        "No C atom found for chain {} residue {}",
-                        chain.id, residue_sns
-                    );
-                    continue;
-                }
-                if n_opt.is_none() {
-                    println!(
-                        "No N atom found for chain {} residue {}",
-                        chain.id, residue_sns
-                    );
-                    continue;
-                }
-                if o_opt.is_none() {
-                    println!(
-                        "No O atom found for chain {} residue {}",
-                        chain.id, residue_sns
-                    );
-                    continue;
-                }
-
-                let (ca, c, n, o) = (
-                    ca_opt.unwrap(),
-                    c_opt.unwrap(),
-                    n_opt.unwrap(),
-                    o_opt.unwrap(),
-                );
-
-                centers.push(Vec3::new(ca.x as f32, ca.y as f32, ca.z as f32));
-
-                residues.push(Residue {
-                    residue_type: amino_acid,
-                    ca: ca,
-                    c: c,
-                    n: n,
-                    o: o,
-                    h: None,
-                    sns: residue_sns as usize,
-                    ss: None,
-                });
-            }
-
-            chains.push(Chain::new(chain.id.clone(), residues));
-        }
-
-        let mut center = Vec3::ZERO;
-        for c in &centers {
-            center += c;
-        }
-        center = average_center(&centers);
-
-        Ok(Protein {
-            chains: chains,
-            center: center,
-            style: Material {
-                opacity: 1.0,
-                visible: true,
-                roughness: 0.7,
-                ..Default::default()
-            },
-            color_mode: ProteinColorMode::Uniform,
-        })
-    }
 }
 
 fn average_center(centers: &[Vec3]) -> Vec3 {
@@ -265,11 +186,11 @@ fn average_center(centers: &[Vec3]) -> Vec3 {
     centers.iter().copied().sum::<Vec3>() / centers.len() as f32
 }
 
-fn biostructure_atom_name(name: &cosmolkit::AtomName) -> &str {
+fn cosmolkit_atom_name(name: &cosmolkit::AtomName) -> &str {
     std::str::from_utf8(&name.0).unwrap_or("").trim()
 }
 
-fn biostructure_chain_id(chain_index: usize, source: &ChainSourceIds) -> String {
+fn cosmolkit_chain_id(chain_index: usize, source: &ChainSourceIds) -> String {
     source
         .auth_chain_id
         .or(source.label_asym_id)
@@ -1610,7 +1531,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn from_pdb_reads_backbone_with_cosmolkit() {
+    fn from_pdb_reads_backbone() {
         let pdb = "\
 ATOM      1  N   ALA A   1      11.104  13.207   9.900  1.00 20.00           N  
 ATOM      2  CA  ALA A   1      12.210  13.912  10.555  1.00 20.00           C  
@@ -1674,7 +1595,7 @@ ATOM      8  O   GLY A  10      34.000  12.500  11.000  1.00 20.00           O
     }
 
     #[test]
-    fn from_mmcif_reads_atom_site_backbone_with_cosmolkit() {
+    fn from_mmcif_reads_atom_site_backbone() {
         let cif = r#"
 data_demo
 loop_
@@ -1702,9 +1623,7 @@ ATOM 3 C C . ALA A 1 13.470 13.079 10.413 1.00 20.00 1 ALA A C 1
 ATOM 4 O O . ALA A 1 14.000 12.500 11.000 1.00 20.00 1 ALA A O 1
 "#;
 
-        let structure =
-            read_mmcif_atom_site_subset_from_str(cif).expect("COSMolKit mmCIF should parse");
-        let protein = Protein::from_biostructure(&structure).expect("BioStructure should convert");
+        let protein = Protein::from_mmcif(cif).expect("mmCIF protein should convert");
 
         assert_eq!(protein.chains.len(), 1);
         assert_eq!(protein.chains[0].id, "A");

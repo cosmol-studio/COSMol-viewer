@@ -134,8 +134,9 @@ scene.add_shape_with_id("protein", protein)
 viewer = Viewer.render(scene, width=800, height=500)
 ```
 
-`Protein.from_mmcif()` and `Protein.from_pdb()` parse backbone atoms and use the Rust core to assign
-secondary structure before rendering a ChimeraX-style cartoon ribbon mesh. Use
+`Protein.from_mmcif()` and `Protein.from_pdb()` use COSMolKit's protein
+reader, then the viewer core assigns secondary structure before rendering a
+ChimeraX-style cartoon ribbon mesh. Use
 `.rainbow_residues()` for ChimeraX-style residue rainbow coloring, or `.color("#10ACBF")`
 for a uniform cartoon color.
 
