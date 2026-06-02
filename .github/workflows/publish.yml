@@ -76,7 +76,7 @@ jobs:
           name: pyi
           path: ./crates/python/
       - name: Build wheels
-        uses: PyO3/maturin-action@v1.49.4
+        uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
           args: --release --out dist --find-interpreter --features x11,wayland
@@ -116,7 +116,7 @@ jobs:
           name: pyi
           path: ./crates/python/
       - name: Build wheels
-        uses: PyO3/maturin-action@v1.49.4
+        uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
           args: --release --out dist --find-interpreter
@@ -143,7 +143,7 @@ jobs:
   #         name: wasm-pkg
   #         path: crates/wasm/pkg
   #     - name: Build wheels
-  #       uses: PyO3/maturin-action@v1.49.4
+  #       uses: PyO3/maturin-action@v1
   #       with:
   #         target: aarch64
   #         args: --release --out dist --find-interpreter
@@ -181,7 +181,7 @@ jobs:
           name: pyi
           path: ./crates/python/
       - name: Build wheels
-        uses: PyO3/maturin-action@v1.49.4
+        uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
           args: --release --out dist --find-interpreter

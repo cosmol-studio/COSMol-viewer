@@ -144,38 +144,53 @@ impl OffscreenGl {
 
     #[cfg(target_os = "linux")]
     fn new_headless_egl(width: NonZeroU32, height: NonZeroU32) -> Result<Self, String> {
+        use egui_winit::winit::raw_window_handle::{RawDisplayHandle, XlibDisplayHandle};
         use glutin::{
             api::egl::{device::Device, display::Display as EglDisplay},
-            display::Display,
+            display::{Display, DisplayApiPreference},
         };
 
-        let devices = Device::query_devices()
-            .map_err(|err| format!("{err}. Headless EGL device enumeration failed."))?;
         let mut errors = Vec::new();
 
-        for device in devices {
-            let egl_display = match unsafe { EglDisplay::with_device(&device, None) } {
-                Ok(display) => display,
-                Err(err) => {
-                    errors.push(format!("{err}"));
-                    continue;
+        match Device::query_devices() {
+            Ok(devices) => {
+                for device in devices {
+                    let egl_display = match unsafe { EglDisplay::with_device(&device, None) } {
+                        Ok(display) => display,
+                        Err(err) => {
+                            errors.push(format!("EGL device display: {err}"));
+                            continue;
+                        }
+                    };
+                    let gl_display = Display::Egl(egl_display);
+                    match Self::new_from_headless_display(
+                        width,
+                        height,
+                        gl_display,
+                        "EGL device display",
+                    ) {
+                        Ok(gl) => return Ok(gl),
+                        Err(err) => errors.push(err),
+                    }
                 }
-            };
-            let gl_display = Display::Egl(egl_display);
-            let template = offscreen_config_template_builder(width, height).build();
-            let gl_config = match unsafe { gl_display.find_configs(template) } {
-                Ok(configs) => configs.max_by_key(|config| config.num_samples()),
-                Err(err) => {
-                    errors.push(format!("{err}"));
-                    continue;
-                }
-            };
-
-            if let Some(gl_config) = gl_config {
-                return Self::new_from_config(width, height, gl_config, None, None);
             }
+            Err(err) => errors.push(format!("{err}. Headless EGL device enumeration failed.")),
+        }
 
-            errors.push("no GL configs found for EGL device".to_owned());
+        let raw_display = RawDisplayHandle::Xlib(XlibDisplayHandle::new(None, 0));
+        match unsafe { Display::new(raw_display, DisplayApiPreference::Egl) } {
+            Ok(gl_display) => {
+                match Self::new_from_headless_display(
+                    width,
+                    height,
+                    gl_display,
+                    "EGL default display",
+                ) {
+                    Ok(gl) => return Ok(gl),
+                    Err(err) => errors.push(err),
+                }
+            }
+            Err(err) => errors.push(format!("EGL default display: {err}")),
         }
 
         Err(format!(
@@ -186,6 +201,26 @@ impl OffscreenGl {
                 format!(": {}", errors.join("; "))
             }
         ))
+    }
+
+    #[cfg(target_os = "linux")]
+    fn new_from_headless_display(
+        width: NonZeroU32,
+        height: NonZeroU32,
+        gl_display: glutin::display::Display,
+        label: &str,
+    ) -> Result<Self, String> {
+        let template = offscreen_config_template_builder(width, height).build();
+        let gl_config = match unsafe { gl_display.find_configs(template) } {
+            Ok(configs) => configs.max_by_key(|config| config.num_samples()),
+            Err(err) => return Err(format!("{label}: {err}")),
+        };
+
+        match gl_config {
+            Some(gl_config) => Self::new_from_config(width, height, gl_config, None, None)
+                .map_err(|err| format!("{label}: {err}")),
+            None => Err(format!("{label}: no GL configs found")),
+        }
     }
 
     fn new_from_config(
