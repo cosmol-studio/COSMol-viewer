@@ -9,6 +9,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut scene = Scene::new();
 
     scene.add_shape_with_id("mol", mol);
+    scene.set_auto_rotate(true, 20.0);
 
     let viewer = Viewer::render(&scene, 800.0, 500.0)?;
 

@@ -104,6 +104,8 @@ rendering:
 
 ```python
 scene.set_transparent_background()
+scene.set_zoom_disabled()
+scene.set_auto_rotate()
 viewer = Viewer.render(scene, width=800, height=500)
 ```
 

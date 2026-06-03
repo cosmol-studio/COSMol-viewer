@@ -12,7 +12,7 @@ use eframe::{
 use glam::{Quat, Vec3};
 
 use crate::Scene;
-use crate::scene::{Animation, Lighting};
+use crate::scene::{Animation, AutoRotate, Lighting};
 use crate::shapes::Sphere;
 use crate::shapes::SphereInstance;
 use crate::shapes::Stick;
@@ -24,8 +24,10 @@ pub struct Canvas<L: Logger> {
     shader: Arc<Mutex<Shader>>,
     camera_state: CameraState,
     animation: Option<Animation>,
+    auto_rotate: AutoRotate,
     interpolate_enabled: bool,
     animation_start_time: Option<f64>,
+    auto_rotate_last_time: Option<f64>,
     last_frame_id: Option<usize>,
     logger: L,
 }
@@ -37,8 +39,10 @@ impl<L: Logger> Canvas<L> {
             shader: Arc::new(Mutex::new(Shader::new(&gl, scene)?)),
             camera_state: camera_state.unwrap_or(CameraState::default()),
             animation: None,
+            auto_rotate: scene.auto_rotate,
             interpolate_enabled: false,
             animation_start_time: None,
+            auto_rotate_last_time: None,
             last_frame_id: None,
             logger,
         })
@@ -58,8 +62,10 @@ impl<L: Logger> Canvas<L> {
             shader: Arc::new(Mutex::new(Shader::new(&gl, init_frame)?)),
             camera_state: camera_state.unwrap_or(CameraState::default()),
             interpolate_enabled: animation.interpolate,
+            auto_rotate: init_frame.auto_rotate,
             animation: Some(animation),
             animation_start_time: None,
+            auto_rotate_last_time: None,
             last_frame_id: None,
             logger,
         })
@@ -136,12 +142,14 @@ impl<L: Logger> Canvas<L> {
                 }
             };
             if let Some(frame) = frame_to_render {
+                self.auto_rotate = frame.auto_rotate;
                 self.shader.lock().update_scene(Some(&frame), static_scene);
             }
         }
+        let zoom_disabled = self.shader.lock().zoom_disabled();
         let scroll_delta = ui.input(|i| i.smooth_scroll_delta.y);
 
-        if scroll_delta != 0.0 {
+        if !zoom_disabled && scroll_delta != 0.0 {
             let zoom_factor = 1.0 + scroll_delta * 0.001;
 
             self.camera_state.distance *= zoom_factor;
@@ -151,6 +159,25 @@ impl<L: Logger> Canvas<L> {
 
         if response.dragged() {
             self.camera_state.rotate(response.drag_motion());
+        }
+
+        if self.auto_rotate.enabled {
+            ui.ctx().request_repaint();
+            let now = ui.input(|i| i.time);
+            if response.dragged() {
+                self.auto_rotate_last_time = Some(now);
+            } else if let Some(last_time) = self.auto_rotate_last_time {
+                let dt = (now - last_time) as f32;
+                if dt > 0.0 {
+                    self.camera_state
+                        .rotate_horizontally_by_degrees(self.auto_rotate.speed * dt);
+                }
+                self.auto_rotate_last_time = Some(now);
+            } else {
+                self.auto_rotate_last_time = Some(now);
+            }
+        } else {
+            self.auto_rotate_last_time = None;
         }
 
         // Clone locals so we can move them into the paint callback:
@@ -173,6 +200,7 @@ impl<L: Logger> Canvas<L> {
     }
 
     pub fn update_scene(&mut self, scene: &Scene) {
+        self.auto_rotate = scene.auto_rotate;
         self.shader.lock().update_scene(Some(scene), None);
     }
 
@@ -200,6 +228,7 @@ pub(super) struct Shader {
     sphere_index_count: usize,
     stick_index_count: usize,
     background_color: Vec4,
+    zoom_disabled: bool,
     vbo: glow::Buffer,
     ebo: glow::Buffer,
     sphere_vbo: glow::Buffer,
@@ -418,6 +447,7 @@ impl Shader {
                 sphere_index_count: indices_sphere.len(),
                 stick_index_count: indices_stick.len(),
                 background_color,
+                zoom_disabled: scene.zoom_disabled,
                 vbo,
                 ebo,
                 sphere_vbo,
@@ -773,6 +803,7 @@ impl Shader {
         };
 
         self.background_color = scene_background_color(scene);
+        self.zoom_disabled = scene.zoom_disabled;
         self.vertex3d.clear();
         self.indices.clear();
 
@@ -847,6 +878,9 @@ impl Shader {
             #[cfg(not(target_arch = "wasm32"))]
             gl.enable(glow::MULTISAMPLE); // 开启多重采样
 
+            if self.transparent_background() {
+                gl.clear_color(0.0, 0.0, 0.0, 0.0);
+            }
             gl.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
 
             // === 绘制背景 ===
@@ -1197,16 +1231,18 @@ impl Shader {
     pub(super) fn transparent_background(&self) -> bool {
         self.background_color.w <= 0.0
     }
+
+    pub(super) fn zoom_disabled(&self) -> bool {
+        self.zoom_disabled
+    }
 }
 
 fn scene_background_color(scene: &Scene) -> Vec4 {
-    scene
-        .background_color
-        .extend(if scene.transparent_background {
-            0.0
-        } else {
-            1.0
-        })
+    if scene.transparent_background {
+        Vec4::ZERO
+    } else {
+        scene.background_color.extend(1.0)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
@@ -1296,6 +1332,12 @@ impl CameraState {
             * Quat::from_rotation_x(elevation_delta.to_radians())
             * Quat::from_rotation_z(roll_delta.to_radians());
 
+        self.rotation = (delta * self.rotation).normalize();
+    }
+
+    pub fn rotate_horizontally_by_degrees(&mut self, degrees: f32) {
+        let camera_up = self.rotation * Vec3::Y;
+        let delta = Quat::from_axis_angle(camera_up, degrees.to_radians());
         self.rotation = (delta * self.rotation).normalize();
     }
 }

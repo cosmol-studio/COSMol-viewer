@@ -363,6 +363,36 @@ enabled : bool, optional
     }
 
     #[doc = r#"
+Enable or disable interactive zooming for the scene.
+
+Parameters
+----------
+disabled : bool, optional
+    If ``True``, mouse wheel and trackpad scroll zooming are ignored while
+    drag rotation remains enabled. Defaults to ``True``.
+"#]
+    #[pyo3(signature = (disabled=true))]
+    pub fn set_zoom_disabled(&mut self, disabled: bool) {
+        self.inner.set_zoom_disabled(disabled);
+    }
+
+    #[doc = r#"
+Enable or disable automatic camera rotation for the scene.
+
+Parameters
+----------
+enabled : bool, optional
+    If ``True``, the camera keeps orbiting around the current target while
+    normal drag rotation remains enabled. Defaults to ``True``.
+speed : float, optional
+    Horizontal orbit speed in degrees per second. Defaults to ``20.0``.
+"#]
+    #[pyo3(signature = (enabled=true, speed=20.0))]
+    pub fn set_auto_rotate(&mut self, enabled: bool, speed: f32) {
+        self.inner.set_auto_rotate(enabled, speed);
+    }
+
+    #[doc = r#"
 Set the background color of the scene to black.
 "#]
     pub fn use_black_background(&mut self) {

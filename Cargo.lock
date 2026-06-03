@@ -709,8 +709,6 @@ dependencies = [
 [[package]]
 name = "cosmolkit"
 version = "0.2.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b77f15d11144ae9d24d32983fcbc4f14ed1c3aa708316591b0cad60f4b1a18c0"
 dependencies = [
  "cosmolkit-core",
 ]
@@ -718,8 +716,6 @@ dependencies = [
 [[package]]
 name = "cosmolkit-core"
 version = "0.2.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5bccef63561ad716645c6c6ecba77d0f308f7a85ebcb84ef6aff1d784de6862f"
 dependencies = [
  "cosmolkit-macros",
  "cosmolkit-ringdecomposer",
@@ -738,8 +734,6 @@ dependencies = [
 [[package]]
 name = "cosmolkit-macros"
 version = "0.2.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b16c6e19f54f65b2342ea1ba364f2351f217c513485601467f591a659d7ddd13"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -749,8 +743,6 @@ dependencies = [
 [[package]]
 name = "cosmolkit-ringdecomposer"
 version = "0.2.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "027d3c9658306cdcf2d7d62e1a04c53ee74f2ab60d1251a114fcfe495735ace2"
 dependencies = [
  "thiserror 2.0.18",
 ]

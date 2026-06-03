@@ -26,6 +26,10 @@ pub struct Scene {
     pub background_color: Vec3,
     #[serde(default)]
     pub transparent_background: bool,
+    #[serde(default)]
+    pub zoom_disabled: bool,
+    #[serde(default)]
+    pub auto_rotate: AutoRotate,
     pub camera_state: Option<CameraState>,
     pub named_shapes: HashMap<String, Shape>,
     pub unnamed_shapes: Vec<Shape>,
@@ -49,6 +53,8 @@ impl Default for Scene {
         Self {
             background_color: Vec3::ONE,
             transparent_background: false,
+            zoom_disabled: false,
+            auto_rotate: AutoRotate::default(),
             camera_state: None,
             named_shapes: HashMap::new(),
             unnamed_shapes: Vec::new(),
@@ -180,6 +186,14 @@ impl Scene {
         self.transparent_background = enabled;
     }
 
+    pub fn set_zoom_disabled(&mut self, disabled: bool) {
+        self.zoom_disabled = disabled;
+    }
+
+    pub fn set_auto_rotate(&mut self, enabled: bool, speed: f32) {
+        self.auto_rotate = AutoRotate { enabled, speed };
+    }
+
     pub fn use_black_background(&mut self) {
         self.background_color = Vec3::ZERO;
     }
@@ -288,6 +302,8 @@ impl Interpolatable for Scene {
         Self {
             background_color: self.background_color,
             transparent_background: self.transparent_background,
+            zoom_disabled: self.zoom_disabled,
+            auto_rotate: self.auto_rotate,
             camera_state: self.camera_state,
             named_shapes,
             unnamed_shapes,
@@ -295,6 +311,21 @@ impl Interpolatable for Scene {
             viewport: self.viewport,
             scene_center: [scene_center.x, scene_center.y, scene_center.z],
             camera_lights: None,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+pub struct AutoRotate {
+    pub enabled: bool,
+    pub speed: f32,
+}
+
+impl Default for AutoRotate {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            speed: 20.0,
         }
     }
 }

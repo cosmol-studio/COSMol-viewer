@@ -251,7 +251,8 @@ impl Molecule {
             }
         };
 
-        let molecule = if molecule.conformers_3d().is_empty() && molecule.coords_2d().is_none() {
+        let molecule = if molecule.conformers_3d().is_empty() && molecule.coordinates_2d().is_none()
+        {
             molecule
                 .with_2d_coordinates()
                 .map_err(|e| ParseSdfError::ParsingError(e.to_string()))?
@@ -260,7 +261,7 @@ impl Molecule {
         };
 
         let atom_posits = if let Some(conformer) = molecule.conformers_3d().first() {
-            let coords = conformer.coords();
+            let coords = conformer.coordinates();
             let atom_count = molecule.atoms().len();
             if coords.len() < atom_count {
                 return Err(ParseSdfError::ParsingError(format!(
@@ -280,7 +281,7 @@ impl Molecule {
                 .take(atom_count)
                 .map(|coord| Vec3::new(coord[0] as f32, coord[1] as f32, coord[2] as f32))
                 .collect()
-        } else if let Some(coords) = molecule.coords_2d() {
+        } else if let Some(coords) = molecule.coordinates_2d() {
             let atom_count = molecule.atoms().len();
             if coords.len() < atom_count {
                 return Err(ParseSdfError::ParsingError(format!(
@@ -513,19 +514,6 @@ impl Molecule {
         }
     }
 
-    fn first_atom_neighbors(&self) -> Vec<[usize; 2]> {
-        let mut neighbors = vec![[usize::MAX; 2]; self.atom_posits.len()];
-
-        for [a, b] in &self.bond_indices {
-            if *a < neighbors.len() && *b < neighbors.len() {
-                add_first_neighbor(&mut neighbors[*a], *b);
-                add_first_neighbor(&mut neighbors[*b], *a);
-            }
-        }
-
-        neighbors
-    }
-
     fn get_bond_atom_color(&self, index: usize) -> Vec3 {
         self.visual_style.color.unwrap_or_else(|| {
             self.atom_types
@@ -539,26 +527,41 @@ impl Molecule {
     }
 }
 
-fn add_first_neighbor(neighbors: &mut [usize; 2], atom: usize) {
-    if neighbors.contains(&atom) {
-        return;
-    }
-
-    if neighbors[0] == usize::MAX {
-        neighbors[0] = atom;
-    } else if neighbors[1] == usize::MAX {
-        neighbors[1] = atom;
-    }
-}
-
-fn first_neighbor_except(neighbors: [usize; 2], excluded: usize) -> Option<usize> {
-    neighbors
-        .into_iter()
-        .find(|neighbor| *neighbor != usize::MAX && *neighbor != excluded)
-}
-
 fn scaled_point(point: [f32; 3], scale: f32) -> [f32; 3] {
     [point[0] * scale, point[1] * scale, point[2] * scale]
+}
+
+const BOND_EPSILON: f32 = 1.0e-6;
+
+fn perpendicular_unit_vector(dir: Vec3) -> Vec3 {
+    let up = if dir.x.abs() < 0.9 { Vec3::X } else { Vec3::Y };
+    dir.cross(up).normalize()
+}
+
+fn bond_offset_direction(
+    atom_index: usize,
+    excluded_atom: usize,
+    atom_posits: &[Vec3],
+    bond_indices: &[[usize; 2]],
+    bond_dir: Vec3,
+) -> Option<Vec3> {
+    bond_indices
+        .iter()
+        .filter_map(|[a, b]| {
+            let neighbor = if *a == atom_index && *b != excluded_atom {
+                Some(*b)
+            } else if *b == atom_index && *a != excluded_atom {
+                Some(*a)
+            } else {
+                None
+            }?;
+
+            let neighbor_dir = atom_posits[neighbor] - atom_posits[atom_index];
+            let neighbor_dir = neighbor_dir.try_normalize()?;
+            let projected = neighbor_dir - neighbor_dir.dot(bond_dir) * bond_dir;
+            projected.try_normalize()
+        })
+        .next()
 }
 
 impl IntoInstanceGroups for Molecule {
@@ -569,7 +572,6 @@ impl IntoInstanceGroups for Molecule {
             outlines: Vec::new(),
         };
 
-        let first_neighbors = self.first_atom_neighbors();
         let alpha = self.visual_style.opacity.clamp(0.0, 1.0);
         let material = [Material::default().roughness, Material::default().metallic];
 
@@ -590,74 +592,13 @@ impl IntoInstanceGroups for Molecule {
 
             let bond_type = self.bond_types.get(i).unwrap_or(&BondType::SINGLE);
 
-            // 方向向量
-            let dir = [
-                pos_b[0] - pos_a[0],
-                pos_b[1] - pos_a[1],
-                pos_b[2] - pos_a[2],
-            ];
-
-            // 归一化方向
-            let norm = (dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]).sqrt();
-            let dir_n = [dir[0] / norm, dir[1] / norm, dir[2] / norm];
-
-            // === Step 1: 先找 A 的邻居方向（排除 B）===
-            let mut neighbor_dir_opt =
-                first_neighbor_except(first_neighbors[*a], *b).map(|neighbor| {
-                    let pos_n = self.atom_posits[neighbor];
-                    [
-                        pos_n[0] - pos_a[0],
-                        pos_n[1] - pos_a[1],
-                        pos_n[2] - pos_a[2],
-                    ]
-                });
-
-            // ✅ 若 A 没有邻居，则去找 B 的邻居
-            if neighbor_dir_opt.is_none() {
-                neighbor_dir_opt = first_neighbor_except(first_neighbors[*b], *a).map(|neighbor| {
-                    let pos_n = self.atom_posits[neighbor];
-                    [
-                        pos_n[0] - pos_b[0],
-                        pos_n[1] - pos_b[1],
-                        pos_n[2] - pos_b[2],
-                    ]
-                });
+            let bond_dir = pos_b - pos_a;
+            if bond_dir.length_squared() <= BOND_EPSILON * BOND_EPSILON {
+                continue;
             }
-
-            // === Step 2: 计算 offset 方向 ===
-            let offset = if let Some(nd) = neighbor_dir_opt {
-                // 用邻居方向构造共面偏移
-                let nd_norm = (nd[0] * nd[0] + nd[1] * nd[1] + nd[2] * nd[2]).sqrt();
-                let nd_n = [nd[0] / nd_norm, nd[1] / nd_norm, nd[2] / nd_norm];
-
-                // 计算 nd_n 在 dir_n 方向的投影分量
-                let dot = nd_n[0] * dir_n[0] + nd_n[1] * dir_n[1] + nd_n[2] * dir_n[2];
-                let proj = [dot * dir_n[0], dot * dir_n[1], dot * dir_n[2]];
-
-                // 去掉投影分量，得到“共面但不沿键方向”的偏移矢量
-                [nd_n[0] - proj[0], nd_n[1] - proj[1], nd_n[2] - proj[2]]
-            } else {
-                // ✅ A 和 B 都没有邻居 → 回到默认垂直方向
-                let up = if dir_n[0].abs() < 0.9 {
-                    [1.0, 0.0, 0.0]
-                } else {
-                    [0.0, 1.0, 0.0]
-                };
-                [
-                    dir_n[1] * up[2] - dir_n[2] * up[1],
-                    dir_n[2] * up[0] - dir_n[0] * up[2],
-                    dir_n[0] * up[1] - dir_n[1] * up[0],
-                ]
+            let Some(dir_n) = bond_dir.try_normalize() else {
+                continue;
             };
-
-            // 归一化 offset
-            let off_norm =
-                (offset[0] * offset[0] + offset[1] * offset[1] + offset[2] * offset[2]).sqrt();
-            let off_n = [
-                offset[0] / off_norm,
-                offset[1] / off_norm,
-                offset[2] / off_norm,
-            ];
 
             // 颜色和半径与原来一致
             let color_a = self.get_bond_atom_color(*a);
@@ -677,38 +618,34 @@ impl IntoInstanceGroups for Molecule {
                 BondType::TRIPLE => 0.14,
                 _ => 0.22,
             };
+            let off_n = if num_sticks > 1 {
+                bond_offset_direction(*a, *b, &self.atom_posits, &self.bond_indices, dir_n)
+                    .or_else(|| {
+                        bond_offset_direction(*b, *a, &self.atom_posits, &self.bond_indices, dir_n)
+                    })
+                    .unwrap_or_else(|| perpendicular_unit_vector(dir_n))
+            } else {
+                Vec3::ZERO
+            };
 
             for k in 0..num_sticks {
                 let offset_mul = (k as f32 - (num_sticks - 1) as f32 * 0.5) * offset_step;
 
-                let pos_a_k = [
-                    pos_a[0] + off_n[0] * offset_mul,
-                    pos_a[1] + off_n[1] * offset_mul,
-                    pos_a[2] + off_n[2] * offset_mul,
-                ];
-                let pos_b_k = [
-                    pos_b[0] + off_n[0] * offset_mul,
-                    pos_b[1] + off_n[1] * offset_mul,
-                    pos_b[2] + off_n[2] * offset_mul,
-                ];
-
-                let midpoint = [
-                    0.5 * (pos_a_k[0] + pos_b_k[0]),
-                    0.5 * (pos_a_k[1] + pos_b_k[1]),
-                    0.5 * (pos_a_k[2] + pos_b_k[2]),
-                ];
+                let pos_a_k = pos_a + off_n * offset_mul;
+                let pos_b_k = pos_b + off_n * offset_mul;
+                let midpoint = 0.5 * (pos_a_k + pos_b_k);
 
                 groups.sticks.push(StickInstance::new(
-                    scaled_point(pos_a_k, scale),
-                    scaled_point(midpoint, scale),
+                    scaled_point(pos_a_k.to_array(), scale),
+                    scaled_point(midpoint.to_array(), scale),
                     radius * scale,
                     color_a,
                     material,
                 ));
 
                 groups.sticks.push(StickInstance::new(
-                    scaled_point(pos_b_k, scale),
-                    scaled_point(midpoint, scale),
+                    scaled_point(pos_b_k.to_array(), scale),
+                    scaled_point(midpoint.to_array(), scale),
                     radius * scale,
                     color_b,
                     material,
@@ -967,6 +904,42 @@ $$$$
 
         assert_eq!(single_count, 3);
         assert_eq!(double_count, 3);
+    }
+
+    #[test]
+    fn zero_length_neighbor_bond_does_not_hide_valid_single_bond() {
+        let molecule = Molecule {
+            style: MoleculeStyle::BallAndStick,
+            atom_types: vec![Element::O, Element::C, Element::H],
+            atom_colors: None,
+            atom_posits: vec![
+                Vec3::new(0.0, 0.0, 0.0),
+                Vec3::new(1.0, 0.0, 0.0),
+                Vec3::new(0.0, 0.0, 0.0),
+            ],
+            bond_types: vec![BondType::SINGLE, BondType::SINGLE],
+            bond_indices: vec![[0, 1], [0, 2]],
+            quality: 6,
+            visual_style: Material {
+                opacity: 1.0,
+                visible: true,
+                ..Default::default()
+            },
+            interaction: Default::default(),
+            outline: OutlineSettings::default(),
+        };
+
+        let groups = molecule.to_instance_group(1.0);
+
+        assert_eq!(groups.sticks.len(), 2);
+        assert!(groups.sticks.iter().all(|stick| {
+            stick
+                .start
+                .iter()
+                .chain(stick.end.iter())
+                .all(|value| value.is_finite())
+                && stick.radius.is_finite()
+        }));
     }
 
     #[test]
