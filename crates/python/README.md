@@ -99,6 +99,14 @@ scene.display(width=1200, height=800)
 scene.display(width=1200, height=800, background="transparent")
 ```
 
+For an interactive notebook canvas, enable a transparent scene background before
+rendering:
+
+```python
+scene.set_transparent_background()
+viewer = Viewer.render(scene, width=800, height=500)
+```
+
 For static exports, omit `background` to use the scene background, pass a color
 such as `"#ffffff"` or `[255, 255, 255]`, or use `"transparent"` for a PNG with
 a transparent background.

@@ -38,6 +38,15 @@ impl<L: Logger> eframe::App for AppWrapper<L> {
             app.ui(ui, frame);
         }
     }
+
+    fn clear_color(&self, visuals: &egui::Visuals) -> [f32; 4] {
+        self.0
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|app| app.clear_color(visuals))
+            .unwrap_or([0.0, 0.0, 0.0, 0.0])
+    }
 }
 
 pub struct App<L: Logger> {
@@ -111,10 +120,15 @@ impl<L: Logger> eframe::App for App<L> {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         #[cfg(not(target_arch = "wasm32"))]
         egui_extras::install_image_loaders(ui);
+        let panel_fill = if self.canvas.transparent_background() {
+            Color32::TRANSPARENT
+        } else {
+            Color32::from_rgb(48, 48, 48)
+        };
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::default()
-                    .fill(Color32::from_rgb(48, 48, 48))
+                    .fill(panel_fill)
                     .inner_margin(0.0)
                     .outer_margin(0.0)
                     .stroke(Stroke::new(0.0, Color32::from_rgb(30, 200, 30))),
@@ -151,6 +165,14 @@ impl<L: Logger> eframe::App for App<L> {
                     ));
                 }
             });
+    }
+
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        if self.canvas.transparent_background() {
+            [0.0, 0.0, 0.0, 0.0]
+        } else {
+            egui::Color32::from_rgba_unmultiplied(12, 12, 12, 180).to_normalized_gamma_f32()
+        }
     }
 }
 

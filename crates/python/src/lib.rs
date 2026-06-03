@@ -349,6 +349,20 @@ background_color : tuple[int, int, int] or str
     }
 
     #[doc = r#"
+Enable or disable transparent scene background rendering.
+
+Parameters
+----------
+enabled : bool, optional
+    If ``True``, render the scene background with alpha 0 so browser canvas
+    content behind the viewer can show through. Defaults to ``True``.
+"#]
+    #[pyo3(signature = (enabled=true))]
+    pub fn set_transparent_background(&mut self, enabled: bool) {
+        self.inner.set_transparent_background(enabled);
+    }
+
+    #[doc = r#"
 Set the background color of the scene to black.
 "#]
     pub fn use_black_background(&mut self) {

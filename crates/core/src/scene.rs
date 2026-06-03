@@ -24,6 +24,8 @@ use crate::{
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Scene {
     pub background_color: Vec3,
+    #[serde(default)]
+    pub transparent_background: bool,
     pub camera_state: Option<CameraState>,
     pub named_shapes: HashMap<String, Shape>,
     pub unnamed_shapes: Vec<Shape>,
@@ -46,6 +48,7 @@ impl Default for Scene {
     fn default() -> Self {
         Self {
             background_color: Vec3::ONE,
+            transparent_background: false,
             camera_state: None,
             named_shapes: HashMap::new(),
             unnamed_shapes: Vec::new(),
@@ -173,6 +176,10 @@ impl Scene {
         self.background_color = background_color.into().into()
     }
 
+    pub fn set_transparent_background(&mut self, enabled: bool) {
+        self.transparent_background = enabled;
+    }
+
     pub fn use_black_background(&mut self) {
         self.background_color = Vec3::ZERO;
     }
@@ -280,6 +287,7 @@ impl Interpolatable for Scene {
 
         Self {
             background_color: self.background_color,
+            transparent_background: self.transparent_background,
             camera_state: self.camera_state,
             named_shapes,
             unnamed_shapes,

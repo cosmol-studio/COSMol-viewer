@@ -175,6 +175,10 @@ impl<L: Logger> Canvas<L> {
     pub fn update_scene(&mut self, scene: &Scene) {
         self.shader.lock().update_scene(Some(scene), None);
     }
+
+    pub fn transparent_background(&self) -> bool {
+        self.shader.lock().transparent_background()
+    }
 }
 
 pub(super) struct Shader {
@@ -270,7 +274,7 @@ impl Shader {
         use glow::HasContext as _;
 
         let shader_version = egui_glow::ShaderVersion::get(gl);
-        let background_color = scene.background_color.extend(1.0);
+        let background_color = scene_background_color(scene);
         let default_color = Vec4::new(1.0, 1.0, 1.0, 1.0);
 
         unsafe {
@@ -768,7 +772,7 @@ impl Shader {
             return;
         };
 
-        self.background_color = scene.background_color.extend(1.0);
+        self.background_color = scene_background_color(scene);
         self.vertex3d.clear();
         self.indices.clear();
 
@@ -1189,6 +1193,20 @@ impl Shader {
     pub(super) fn set_background_color(&mut self, background_color: Vec4) {
         self.background_color = background_color;
     }
+
+    pub(super) fn transparent_background(&self) -> bool {
+        self.background_color.w <= 0.0
+    }
+}
+
+fn scene_background_color(scene: &Scene) -> Vec4 {
+    scene
+        .background_color
+        .extend(if scene.transparent_background {
+            0.0
+        } else {
+            1.0
+        })
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]

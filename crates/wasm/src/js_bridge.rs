@@ -49,7 +49,7 @@ impl NotebookViewer {
         await mod.default(window[ns + "_wasm_bytes"]);
 
         const canvas = document.getElementById('{id}');
-        const gl = canvas.getContext('webgl2', {{ antialias: true }});
+        const gl = canvas.getContext('webgl2', {{ alpha: true, antialias: true }});
         if (!gl) {{
             console.error("WebGL2 not supported or failed to initialize");
             return;
@@ -125,7 +125,7 @@ impl NotebookViewer {
         await mod.default(window[ns + "_wasm_bytes"]);
 
         const canvas = document.getElementById('{id}');
-        const gl = canvas.getContext('webgl2', {{ antialias: true }});
+        const gl = canvas.getContext('webgl2', {{ alpha: true, antialias: true }});
         if (!gl) {{
             console.error("WebGL2 not supported or failed to initialize");
             return;
