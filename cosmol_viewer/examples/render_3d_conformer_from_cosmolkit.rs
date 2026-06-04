@@ -2,7 +2,7 @@ use cosmol_viewer::{Scene, Viewer, cosmolkit, shapes::Molecule};
 use std::path::Path;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let base = cosmolkit::Molecule::from_smiles("Oc1ccccc1-c2ccccc2O")?.sanitize()?;
+    let base = cosmolkit::Molecule::from_smiles("CC(=O)Nc1ccc(O)cc1")?.sanitize()?;
 
     let mut params = cosmolkit::EmbedParameters::etkdg_v3();
     params.random_seed = 0xF00D;

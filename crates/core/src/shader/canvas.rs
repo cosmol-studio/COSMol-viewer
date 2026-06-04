@@ -235,6 +235,8 @@ pub(super) struct Shader {
     sphere_ebo: glow::Buffer,
     stick_vbo: glow::Buffer,
     stick_ebo: glow::Buffer,
+    outline_quad_vbo: glow::Buffer,
+    stick_outline_quad_vbo: glow::Buffer,
     sphere_instance_buffer: glow::Buffer,
     stick_instance_buffer: glow::Buffer,
     instance_groups: Option<InstanceGroups>,
@@ -423,6 +425,41 @@ impl Shader {
                 .create_buffer()
                 .expect("Cannot create sphere instance buffer");
 
+            let outline_quad_vertices: [[f32; 2]; 6] = [
+                [-1.0, -1.0],
+                [1.0, -1.0],
+                [-1.0, 1.0],
+                [-1.0, 1.0],
+                [1.0, -1.0],
+                [1.0, 1.0],
+            ];
+            let stick_outline_quad_vertices: [[f32; 2]; 6] = [
+                [-1.0, -1.0],
+                [1.0, -1.0],
+                [-1.0, 1.0],
+                [-1.0, 1.0],
+                [1.0, 1.0],
+                [-1.0, -1.0],
+            ];
+            let outline_quad_vbo = gl
+                .create_buffer()
+                .expect("Cannot create outline quad vertex buffer");
+            gl.bind_buffer(glow::ARRAY_BUFFER, Some(outline_quad_vbo));
+            gl.buffer_data_u8_slice(
+                glow::ARRAY_BUFFER,
+                bytemuck::cast_slice(&outline_quad_vertices),
+                glow::STATIC_DRAW,
+            );
+            let stick_outline_quad_vbo = gl
+                .create_buffer()
+                .expect("Cannot create stick outline quad vertex buffer");
+            gl.bind_buffer(glow::ARRAY_BUFFER, Some(stick_outline_quad_vbo));
+            gl.buffer_data_u8_slice(
+                glow::ARRAY_BUFFER,
+                bytemuck::cast_slice(&stick_outline_quad_vertices),
+                glow::STATIC_DRAW,
+            );
+
             // =========================
             // 8. Create shader instance struct
             // =========================
@@ -454,6 +491,8 @@ impl Shader {
                 sphere_ebo,
                 stick_vbo,
                 stick_ebo,
+                outline_quad_vbo,
+                stick_outline_quad_vbo,
                 instance_groups: None,
                 u_model: scene.model_matrix(),
                 u_normal_matrix: scene.normal_matrix(),
@@ -696,7 +735,7 @@ impl Shader {
             shader_version,
             "custom_3d_glow_sphere_outline",
             include_str!("./vertex_sphere_outline.glsl"),
-            include_str!("./fragment_outline.glsl"),
+            include_str!("./fragment_sphere_outline.glsl"),
         );
 
         let vao = gl
@@ -704,14 +743,14 @@ impl Shader {
             .expect("Cannot create sphere outline vertex array");
         gl.bind_vertex_array(Some(vao));
 
-        let pos_loc = gl.get_attrib_location(program, "a_position").unwrap();
+        let corner_loc = gl.get_attrib_location(program, "a_corner").unwrap();
         let i_pos_loc = gl.get_attrib_location(program, "i_position").unwrap();
         let i_radius_loc = gl.get_attrib_location(program, "i_radius").unwrap();
-        let stride_vertex_3d = std::mem::size_of::<Vertex3d>() as i32;
 
-        gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.sphere_vbo));
-        gl.enable_vertex_attrib_array(pos_loc);
-        gl.vertex_attrib_pointer_f32(pos_loc, 3, glow::FLOAT, false, stride_vertex_3d, 0);
+        gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.outline_quad_vbo));
+        gl.enable_vertex_attrib_array(corner_loc);
+        gl.vertex_attrib_pointer_f32(corner_loc, 2, glow::FLOAT, false, 2 * 4, 0);
+        gl.vertex_attrib_divisor(corner_loc, 0);
 
         gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.sphere_instance_buffer));
         let stride_instance = std::mem::size_of::<SphereInstance>() as i32;
@@ -722,7 +761,6 @@ impl Shader {
         gl.vertex_attrib_pointer_f32(i_radius_loc, 1, glow::FLOAT, false, stride_instance, 3 * 4);
         gl.vertex_attrib_divisor(i_radius_loc, 1);
 
-        gl.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, Some(self.sphere_ebo));
         gl.bind_vertex_array(None);
 
         self.program_sphere_outline = Some(program);
@@ -743,7 +781,7 @@ impl Shader {
             shader_version,
             "custom_3d_glow_stick_outline",
             include_str!("./vertex_stick_outline.glsl"),
-            include_str!("./fragment_outline.glsl"),
+            include_str!("./fragment_stick_outline.glsl"),
         );
 
         let vao = gl
@@ -751,16 +789,15 @@ impl Shader {
             .expect("Cannot create stick outline vertex array");
         gl.bind_vertex_array(Some(vao));
 
-        let pos_a_position = gl.get_attrib_location(program, "a_position").unwrap();
+        let corner_loc = gl.get_attrib_location(program, "a_corner").unwrap();
         let instance_i_start = gl.get_attrib_location(program, "i_start").unwrap();
         let instance_i_end = gl.get_attrib_location(program, "i_end").unwrap();
         let instance_i_radius = gl.get_attrib_location(program, "i_radius").unwrap();
-        let stride_vertex_3d = std::mem::size_of::<Vertex3d>() as i32;
 
-        gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.stick_vbo));
-        gl.enable_vertex_attrib_array(pos_a_position);
-        gl.vertex_attrib_pointer_f32(pos_a_position, 3, glow::FLOAT, false, stride_vertex_3d, 0);
-        gl.vertex_attrib_divisor(pos_a_position, 0);
+        gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.stick_outline_quad_vbo));
+        gl.enable_vertex_attrib_array(corner_loc);
+        gl.vertex_attrib_pointer_f32(corner_loc, 2, glow::FLOAT, false, 2 * 4, 0);
+        gl.vertex_attrib_divisor(corner_loc, 0);
 
         gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.stick_instance_buffer));
         let stride_instance = std::mem::size_of::<StickInstance>() as i32;
@@ -788,7 +825,6 @@ impl Shader {
         );
         gl.vertex_attrib_divisor(instance_i_radius, 1);
 
-        gl.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, Some(self.stick_ebo));
         gl.bind_vertex_array(None);
 
         self.program_stick_outline = Some(program);
@@ -1108,11 +1144,9 @@ impl Shader {
                 .as_ref()
                 .is_some_and(|groups| !groups.outlines.is_empty())
             {
-                gl.cull_face(glow::FRONT);
+                gl.disable(glow::CULL_FACE);
                 gl.depth_mask(false);
                 gl.depth_func(glow::LEQUAL);
-                gl.enable(glow::POLYGON_OFFSET_FILL);
-                gl.polygon_offset(1.0, 1.0);
 
                 let outline_groups = self
                     .instance_groups
@@ -1162,11 +1196,10 @@ impl Shader {
                             bytemuck::cast_slice(&outline_group.spheres),
                             glow::DYNAMIC_DRAW,
                         );
-                        gl.draw_elements_instanced(
+                        gl.draw_arrays_instanced(
                             glow::TRIANGLES,
-                            self.sphere_index_count as i32,
-                            glow::UNSIGNED_INT,
                             0,
+                            6,
                             outline_group.spheres.len() as i32,
                         );
                     }
@@ -1207,18 +1240,17 @@ impl Shader {
                             bytemuck::cast_slice(&outline_group.sticks),
                             glow::DYNAMIC_DRAW,
                         );
-                        gl.draw_elements_instanced(
+                        gl.draw_arrays_instanced(
                             glow::TRIANGLES,
-                            self.stick_index_count as i32,
-                            glow::UNSIGNED_INT,
                             0,
+                            6,
                             outline_group.sticks.len() as i32,
                         );
                     }
                 }
 
-                gl.disable(glow::POLYGON_OFFSET_FILL);
                 gl.depth_mask(true);
+                gl.enable(glow::CULL_FACE);
                 gl.cull_face(glow::BACK);
             }
         }
