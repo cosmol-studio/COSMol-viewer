@@ -12,13 +12,160 @@ use eframe::{
 use glam::{Quat, Vec3};
 
 use crate::Scene;
-use crate::scene::{Animation, AutoRotate, Lighting};
+use crate::scene::{Animation, AutoRotate, DepthCue, Lighting};
 use crate::shapes::Sphere;
 use crate::shapes::SphereInstance;
 use crate::shapes::Stick;
 use crate::shapes::StickInstance;
 use crate::utils::InstanceGroups;
 use crate::utils::{Interpolatable, Logger};
+
+const OPAQUE_ALPHA_THRESHOLD: f32 = 0.99;
+
+#[derive(Clone, Copy)]
+enum SceneRenderPass {
+    Opaque = 0,
+    TransparentDepth = 1,
+    TransparentColor = 2,
+}
+
+impl SceneRenderPass {
+    fn draws_transparent(self) -> bool {
+        !matches!(self, Self::Opaque)
+    }
+}
+
+#[derive(Clone, Copy, Default)]
+struct AlphaCoverage {
+    opaque: bool,
+    transparent: bool,
+}
+
+impl AlphaCoverage {
+    fn include(&mut self, alpha: f32) {
+        if alpha < OPAQUE_ALPHA_THRESHOLD {
+            self.transparent = true;
+        } else {
+            self.opaque = true;
+        }
+    }
+
+    fn is_drawn_in(self, pass: SceneRenderPass) -> bool {
+        if pass.draws_transparent() {
+            self.transparent
+        } else {
+            self.opaque
+        }
+    }
+}
+
+#[derive(Clone, Copy, Default)]
+struct SceneAlphaCoverage {
+    meshes: AlphaCoverage,
+    spheres: AlphaCoverage,
+    sticks: AlphaCoverage,
+}
+
+impl SceneAlphaCoverage {
+    fn has_transparent(self) -> bool {
+        self.meshes.transparent || self.spheres.transparent || self.sticks.transparent
+    }
+}
+
+struct SceneUniforms {
+    model: Option<glow::UniformLocation>,
+    view: Option<glow::UniformLocation>,
+    projection: Option<glow::UniformLocation>,
+    normal_matrix: Option<glow::UniformLocation>,
+    light_pos: Option<glow::UniformLocation>,
+    view_pos: Option<glow::UniformLocation>,
+    light_color: Option<glow::UniformLocation>,
+    light_intensity: Option<glow::UniformLocation>,
+    render_pass: Option<glow::UniformLocation>,
+    depth_cue_enabled: Option<glow::UniformLocation>,
+    depth_cue_color: Option<glow::UniformLocation>,
+    depth_cue_range: Option<glow::UniformLocation>,
+}
+
+impl SceneUniforms {
+    #[allow(unsafe_op_in_unsafe_fn)]
+    unsafe fn new(gl: &glow::Context, program: glow::Program) -> Self {
+        use glow::HasContext as _;
+
+        Self {
+            model: gl.get_uniform_location(program, "u_model"),
+            view: gl.get_uniform_location(program, "u_view"),
+            projection: gl.get_uniform_location(program, "u_projection"),
+            normal_matrix: gl.get_uniform_location(program, "u_normal_matrix"),
+            light_pos: gl.get_uniform_location(program, "u_light_pos"),
+            view_pos: gl.get_uniform_location(program, "u_view_pos"),
+            light_color: gl.get_uniform_location(program, "u_light_color"),
+            light_intensity: gl.get_uniform_location(program, "u_light_intensity"),
+            render_pass: gl.get_uniform_location(program, "u_render_pass"),
+            depth_cue_enabled: gl.get_uniform_location(program, "u_depth_cue_enabled"),
+            depth_cue_color: gl.get_uniform_location(program, "u_depth_cue_color"),
+            depth_cue_range: gl.get_uniform_location(program, "u_depth_cue_range"),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct SceneBounds {
+    min: Vec3,
+    max: Vec3,
+}
+
+impl SceneBounds {
+    fn empty() -> Self {
+        Self {
+            min: Vec3::splat(f32::INFINITY),
+            max: Vec3::splat(f32::NEG_INFINITY),
+        }
+    }
+
+    fn include_point(&mut self, point: Vec3) {
+        self.min = self.min.min(point);
+        self.max = self.max.max(point);
+    }
+
+    fn include_sphere(&mut self, center: Vec3, radius: f32) {
+        let radius = Vec3::splat(radius.max(0.0));
+        self.include_point(center - radius);
+        self.include_point(center + radius);
+    }
+
+    fn is_empty(self) -> bool {
+        !self.min.is_finite() || !self.max.is_finite()
+    }
+
+    fn depth_range(self, model: Mat4, view: Mat4, depth_cue: DepthCue) -> [f32; 2] {
+        if self.is_empty() {
+            return [0.0, 1.0];
+        }
+
+        let mut near_depth = f32::INFINITY;
+        let mut far_depth = f32::NEG_INFINITY;
+        for x in [self.min.x, self.max.x] {
+            for y in [self.min.y, self.max.y] {
+                for z in [self.min.z, self.max.z] {
+                    let eye = view * model * Vec3::new(x, y, z).extend(1.0);
+                    let depth = -eye.z;
+                    near_depth = near_depth.min(depth);
+                    far_depth = far_depth.max(depth);
+                }
+            }
+        }
+
+        if !near_depth.is_finite() || !far_depth.is_finite() || far_depth <= near_depth {
+            return [0.0, 1.0];
+        }
+
+        [
+            near_depth + (far_depth - near_depth) * depth_cue.start,
+            near_depth + (far_depth - near_depth) * depth_cue.end,
+        ]
+    }
+}
 
 pub struct Canvas<L: Logger> {
     shader: Arc<Mutex<Shader>>,
@@ -215,6 +362,9 @@ pub(super) struct Shader {
     vao_bg: glow::VertexArray,
     program_sphere: Option<glow::Program>,
     program_stick: Option<glow::Program>,
+    mesh_uniforms: Option<SceneUniforms>,
+    sphere_uniforms: Option<SceneUniforms>,
+    stick_uniforms: Option<SceneUniforms>,
     program_sphere_outline: Option<glow::Program>,
     program_stick_outline: Option<glow::Program>,
     vao_mesh: Option<glow::VertexArray>,
@@ -229,6 +379,9 @@ pub(super) struct Shader {
     stick_index_count: usize,
     background_color: Vec4,
     zoom_disabled: bool,
+    depth_cue: DepthCue,
+    depth_cue_color: Vec3,
+    scene_bounds: SceneBounds,
     vbo: glow::Buffer,
     ebo: glow::Buffer,
     sphere_vbo: glow::Buffer,
@@ -240,6 +393,7 @@ pub(super) struct Shader {
     sphere_instance_buffer: glow::Buffer,
     stick_instance_buffer: glow::Buffer,
     instance_groups: Option<InstanceGroups>,
+    alpha_coverage: SceneAlphaCoverage,
     u_model: Mat4,
     u_normal_matrix: Mat3,
 }
@@ -469,6 +623,9 @@ impl Shader {
                 vao_bg,
                 program_sphere: None,
                 program_stick: None,
+                mesh_uniforms: None,
+                sphere_uniforms: None,
+                stick_uniforms: None,
                 program_sphere_outline: None,
                 program_stick_outline: None,
                 vertex3d: vec![],
@@ -485,6 +642,9 @@ impl Shader {
                 stick_index_count: indices_stick.len(),
                 background_color,
                 zoom_disabled: scene.zoom_disabled,
+                depth_cue: scene.depth_cue,
+                depth_cue_color: scene.depth_cue.color.unwrap_or(scene.background_color),
+                scene_bounds: SceneBounds::empty(),
                 vbo,
                 ebo,
                 sphere_vbo,
@@ -494,6 +654,7 @@ impl Shader {
                 outline_quad_vbo,
                 stick_outline_quad_vbo,
                 instance_groups: None,
+                alpha_coverage: SceneAlphaCoverage::default(),
                 u_model: scene.model_matrix(),
                 u_normal_matrix: scene.normal_matrix(),
             };
@@ -553,6 +714,7 @@ impl Shader {
         );
         gl.bind_vertex_array(None);
 
+        self.mesh_uniforms = Some(SceneUniforms::new(gl, program));
         self.program = Some(program);
         self.vao_mesh = Some(vao);
     }
@@ -618,6 +780,7 @@ impl Shader {
         gl.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, Some(self.sphere_ebo));
         gl.bind_vertex_array(None);
 
+        self.sphere_uniforms = Some(SceneUniforms::new(gl, program));
         self.program_sphere = Some(program);
         self.vao_sphere = Some(vao);
     }
@@ -717,6 +880,7 @@ impl Shader {
         gl.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, Some(self.stick_ebo));
         gl.bind_vertex_array(None);
 
+        self.stick_uniforms = Some(SceneUniforms::new(gl, program));
         self.program_stick = Some(program);
         self.vao_stick = Some(vao);
     }
@@ -840,8 +1004,12 @@ impl Shader {
 
         self.background_color = scene_background_color(scene);
         self.zoom_disabled = scene.zoom_disabled;
+        self.depth_cue = scene.depth_cue;
+        self.depth_cue_color = scene.depth_cue.color.unwrap_or(scene.background_color);
         self.vertex3d.clear();
         self.indices.clear();
+        self.alpha_coverage = SceneAlphaCoverage::default();
+        self.scene_bounds = SceneBounds::empty();
 
         let mut vertex_offset = 0u32;
 
@@ -855,7 +1023,7 @@ impl Shader {
                             .colors
                             .as_ref()
                             .map(|x| x[i].into())
-                            .unwrap_or_default(),
+                            .unwrap_or([1.0; 4]),
                         material: mesh
                             .material_params
                             .as_ref()
@@ -869,10 +1037,220 @@ impl Shader {
             vertex_offset += mesh.vertices.len() as u32;
         }
 
-        self.instance_groups = Some(scene.get_instances_grouped());
+        for vertex in &self.vertex3d {
+            self.alpha_coverage.meshes.include(vertex.color[3]);
+            self.scene_bounds.include_point(vertex.position);
+        }
+
+        let instance_groups = scene.get_instances_grouped();
+        for sphere in &instance_groups.spheres {
+            self.alpha_coverage.spheres.include(sphere.color[3]);
+            self.scene_bounds
+                .include_sphere(Vec3::from(sphere.position), sphere.radius);
+        }
+        for stick in &instance_groups.sticks {
+            self.alpha_coverage.sticks.include(stick.color[3]);
+            let radius = Vec3::splat(stick.radius.max(0.0));
+            let start = Vec3::from(stick.start);
+            let end = Vec3::from(stick.end);
+            self.scene_bounds.include_point(start - radius);
+            self.scene_bounds.include_point(start + radius);
+            self.scene_bounds.include_point(end - radius);
+            self.scene_bounds.include_point(end + radius);
+        }
+        self.instance_groups = Some(instance_groups);
 
         if let Some(lighting) = scene.camera_lights.as_ref() {
             self.camera_lighting = lighting.clone();
+        }
+    }
+
+    #[allow(unsafe_op_in_unsafe_fn)]
+    unsafe fn prepare_scene_geometry(&mut self, gl: &glow::Context) {
+        use glow::HasContext as _;
+
+        if !self.indices.is_empty() {
+            self.ensure_mesh_pipeline(gl);
+            gl.bind_vertex_array(self.vao_mesh);
+            gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.vbo));
+            gl.buffer_data_u8_slice(
+                glow::ARRAY_BUFFER,
+                bytemuck::cast_slice(&self.vertex3d),
+                glow::DYNAMIC_DRAW,
+            );
+            gl.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, Some(self.ebo));
+            gl.buffer_data_u8_slice(
+                glow::ELEMENT_ARRAY_BUFFER,
+                bytemuck::cast_slice(&self.indices),
+                glow::DYNAMIC_DRAW,
+            );
+        }
+
+        let has_spheres = self
+            .instance_groups
+            .as_ref()
+            .is_some_and(|groups| !groups.spheres.is_empty());
+        if has_spheres {
+            self.ensure_sphere_pipeline(gl);
+            let spheres = &self.instance_groups.as_ref().unwrap().spheres;
+            gl.bind_vertex_array(self.vao_sphere);
+            gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.sphere_instance_buffer));
+            gl.buffer_data_u8_slice(
+                glow::ARRAY_BUFFER,
+                bytemuck::cast_slice(spheres),
+                glow::DYNAMIC_DRAW,
+            );
+        }
+
+        let has_sticks = self
+            .instance_groups
+            .as_ref()
+            .is_some_and(|groups| !groups.sticks.is_empty());
+        if has_sticks {
+            self.ensure_stick_pipeline(gl);
+            let sticks = &self.instance_groups.as_ref().unwrap().sticks;
+            gl.bind_vertex_array(self.vao_stick);
+            gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.stick_instance_buffer));
+            gl.buffer_data_u8_slice(
+                glow::ARRAY_BUFFER,
+                bytemuck::cast_slice(sticks),
+                glow::DYNAMIC_DRAW,
+            );
+        }
+
+        gl.bind_vertex_array(None);
+    }
+
+    #[allow(unsafe_op_in_unsafe_fn)]
+    unsafe fn set_scene_uniforms(
+        &self,
+        gl: &glow::Context,
+        program: glow::Program,
+        uniforms: &SceneUniforms,
+        u_view: Mat4,
+        u_projection: Mat4,
+        u_view_pos: Vec3,
+        light_dir_world: Vec3,
+        light_color: Vec3,
+        depth_cue_range: [f32; 2],
+        pass: SceneRenderPass,
+    ) {
+        use glow::HasContext as _;
+
+        gl.use_program(Some(program));
+        gl.uniform_matrix_4_f32_slice(uniforms.model.as_ref(), false, self.u_model.as_ref());
+        gl.uniform_matrix_4_f32_slice(uniforms.view.as_ref(), false, u_view.as_ref());
+        gl.uniform_matrix_4_f32_slice(uniforms.projection.as_ref(), false, u_projection.as_ref());
+        gl.uniform_matrix_3_f32_slice(
+            uniforms.normal_matrix.as_ref(),
+            false,
+            self.u_normal_matrix.as_ref(),
+        );
+        gl.uniform_3_f32_slice(uniforms.light_pos.as_ref(), light_dir_world.as_ref());
+        gl.uniform_3_f32_slice(uniforms.view_pos.as_ref(), u_view_pos.as_ref());
+        gl.uniform_3_f32_slice(uniforms.light_color.as_ref(), light_color.as_ref());
+        gl.uniform_1_f32(uniforms.light_intensity.as_ref(), 1.0);
+        gl.uniform_1_i32(uniforms.render_pass.as_ref(), pass as i32);
+        gl.uniform_1_i32(
+            uniforms.depth_cue_enabled.as_ref(),
+            i32::from(self.depth_cue.enabled),
+        );
+        gl.uniform_3_f32_slice(
+            uniforms.depth_cue_color.as_ref(),
+            self.depth_cue_color.as_ref(),
+        );
+        gl.uniform_2_f32_slice(uniforms.depth_cue_range.as_ref(), &depth_cue_range);
+    }
+
+    #[allow(unsafe_op_in_unsafe_fn)]
+    unsafe fn draw_scene_pass(
+        &self,
+        gl: &glow::Context,
+        u_view: Mat4,
+        u_projection: Mat4,
+        u_view_pos: Vec3,
+        light_dir_world: Vec3,
+        light_color: Vec3,
+        depth_cue_range: [f32; 2],
+        pass: SceneRenderPass,
+    ) {
+        use glow::HasContext as _;
+
+        if !self.indices.is_empty() && self.alpha_coverage.meshes.is_drawn_in(pass) {
+            let program = self.program.unwrap();
+            let uniforms = self.mesh_uniforms.as_ref().unwrap();
+            self.set_scene_uniforms(
+                gl,
+                program,
+                uniforms,
+                u_view,
+                u_projection,
+                u_view_pos,
+                light_dir_world,
+                light_color,
+                depth_cue_range,
+                pass,
+            );
+            gl.bind_vertex_array(self.vao_mesh);
+            gl.draw_elements(
+                glow::TRIANGLES,
+                self.indices.len() as i32,
+                glow::UNSIGNED_INT,
+                0,
+            );
+        }
+
+        if let Some(instance_groups) = self.instance_groups.as_ref() {
+            if !instance_groups.spheres.is_empty() && self.alpha_coverage.spheres.is_drawn_in(pass)
+            {
+                let program = self.program_sphere.unwrap();
+                let uniforms = self.sphere_uniforms.as_ref().unwrap();
+                self.set_scene_uniforms(
+                    gl,
+                    program,
+                    uniforms,
+                    u_view,
+                    u_projection,
+                    u_view_pos,
+                    light_dir_world,
+                    light_color,
+                    depth_cue_range,
+                    pass,
+                );
+                gl.bind_vertex_array(self.vao_sphere);
+                gl.draw_elements_instanced(
+                    glow::TRIANGLES,
+                    self.sphere_index_count as i32,
+                    glow::UNSIGNED_INT,
+                    0,
+                    instance_groups.spheres.len() as i32,
+                );
+            }
+
+            if !instance_groups.sticks.is_empty() && self.alpha_coverage.sticks.is_drawn_in(pass) {
+                let program = self.program_stick.unwrap();
+                let uniforms = self.stick_uniforms.as_ref().unwrap();
+                self.set_scene_uniforms(
+                    gl,
+                    program,
+                    uniforms,
+                    u_view,
+                    u_projection,
+                    u_view_pos,
+                    light_dir_world,
+                    light_color,
+                    depth_cue_range,
+                    pass,
+                );
+                gl.bind_vertex_array(self.vao_stick);
+                gl.draw_elements_instanced(
+                    glow::TRIANGLES,
+                    self.stick_index_count as i32,
+                    glow::UNSIGNED_INT,
+                    0,
+                    instance_groups.sticks.len() as i32,
+                );
+            }
         }
     }
 
@@ -903,14 +1281,20 @@ impl Shader {
             };
         let rot = Mat3::from_mat4(u_view);
         let light_dir_world = rot.transpose() * light_dir_cam_space;
+        let depth_cue_range = self
+            .scene_bounds
+            .depth_range(self.u_model, u_view, self.depth_cue);
 
         unsafe {
+            gl.color_mask(true, true, true, true);
+            gl.depth_mask(true);
+            gl.depth_func(glow::LESS);
+            gl.disable(glow::BLEND);
             gl.enable(glow::CULL_FACE);
             gl.cull_face(glow::BACK);
             gl.front_face(glow::CCW);
 
             gl.enable(glow::DEPTH_TEST);
-            gl.depth_func(glow::LEQUAL);
             #[cfg(not(target_arch = "wasm32"))]
             gl.enable(glow::MULTISAMPLE); // 开启多重采样
 
@@ -933,210 +1317,60 @@ impl Shader {
 
             // === 绘制场景 ===
             gl.enable(glow::DEPTH_TEST);
-            gl.depth_mask(true); // ✅ 关键：恢复写入深度缓冲区
+            gl.depth_mask(true);
+            gl.depth_func(glow::LESS);
+            self.prepare_scene_geometry(gl);
 
-            // gl.enable(glow::BLEND);
-            // gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
+            self.draw_scene_pass(
+                gl,
+                u_view,
+                u_projection,
+                u_view_pos,
+                light_dir_world,
+                light_color_cam_space,
+                depth_cue_range,
+                SceneRenderPass::Opaque,
+            );
 
-            if !self.indices.is_empty() {
-                self.ensure_mesh_pipeline(gl);
-                let program = self.program.unwrap();
-
-                gl.use_program(Some(program));
-                gl.uniform_matrix_4_f32_slice(
-                    gl.get_uniform_location(program, "u_model").as_ref(),
-                    false,
-                    (self.u_model).as_ref(),
-                );
-                gl.uniform_matrix_4_f32_slice(
-                    gl.get_uniform_location(program, "u_view").as_ref(),
-                    false,
-                    (u_view).as_ref(),
-                );
-                gl.uniform_matrix_4_f32_slice(
-                    gl.get_uniform_location(program, "u_projection").as_ref(),
-                    false,
-                    (u_projection).as_ref(),
-                );
-                gl.uniform_matrix_3_f32_slice(
-                    gl.get_uniform_location(program, "u_normal_matrix").as_ref(),
-                    false,
-                    (self.u_normal_matrix).as_ref(),
-                );
-                gl.uniform_3_f32_slice(
-                    gl.get_uniform_location(program, "u_light_pos").as_ref(),
-                    (light_dir_world).as_ref(),
-                );
-                gl.uniform_3_f32_slice(
-                    gl.get_uniform_location(program, "u_view_pos").as_ref(),
-                    (u_view_pos).as_ref(),
-                );
-                gl.uniform_3_f32_slice(
-                    gl.get_uniform_location(program, "u_light_color").as_ref(),
-                    light_color_cam_space.as_ref(),
-                );
-                gl.uniform_1_f32(
-                    gl.get_uniform_location(program, "u_light_intensity")
-                        .as_ref(),
-                    1.0,
+            if self.alpha_coverage.has_transparent() {
+                // ChimeraX-style single-layer transparency: first record only
+                // the nearest transparent depth, then shade that exact layer.
+                gl.color_mask(false, false, false, false);
+                gl.disable(glow::BLEND);
+                gl.depth_func(glow::LESS);
+                self.draw_scene_pass(
+                    gl,
+                    u_view,
+                    u_projection,
+                    u_view_pos,
+                    light_dir_world,
+                    light_color_cam_space,
+                    depth_cue_range,
+                    SceneRenderPass::TransparentDepth,
                 );
 
-                // 绑定并上传缓冲
-                gl.bind_vertex_array(self.vao_mesh);
-                gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.vbo));
-                gl.buffer_data_u8_slice(
-                    glow::ARRAY_BUFFER,
-                    bytemuck::cast_slice(&self.vertex3d),
-                    glow::DYNAMIC_DRAW,
+                gl.color_mask(true, true, true, true);
+                gl.depth_func(glow::LEQUAL);
+                gl.enable(glow::BLEND);
+                gl.blend_func_separate(
+                    glow::SRC_ALPHA,
+                    glow::ONE_MINUS_SRC_ALPHA,
+                    glow::ONE,
+                    glow::ONE_MINUS_SRC_ALPHA,
+                );
+                self.draw_scene_pass(
+                    gl,
+                    u_view,
+                    u_projection,
+                    u_view_pos,
+                    light_dir_world,
+                    light_color_cam_space,
+                    depth_cue_range,
+                    SceneRenderPass::TransparentColor,
                 );
 
-                gl.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, Some(self.ebo));
-                gl.buffer_data_u8_slice(
-                    glow::ELEMENT_ARRAY_BUFFER,
-                    bytemuck::cast_slice(&self.indices),
-                    glow::DYNAMIC_DRAW,
-                );
-
-                gl.draw_elements(
-                    glow::TRIANGLES,
-                    self.indices.len() as i32,
-                    glow::UNSIGNED_INT,
-                    0,
-                );
-            }
-
-            let has_spheres = self
-                .instance_groups
-                .as_ref()
-                .is_some_and(|groups| !groups.spheres.is_empty());
-            let has_sticks = self
-                .instance_groups
-                .as_ref()
-                .is_some_and(|groups| !groups.sticks.is_empty());
-
-            if has_spheres {
-                self.ensure_sphere_pipeline(gl);
-                let program = self.program_sphere.unwrap();
-                let instance_groups = self.instance_groups.as_ref().unwrap();
-
-                gl.use_program(Some(program));
-                gl.uniform_matrix_4_f32_slice(
-                    gl.get_uniform_location(program, "u_model").as_ref(),
-                    false,
-                    (self.u_model).as_ref(),
-                );
-                gl.uniform_matrix_4_f32_slice(
-                    gl.get_uniform_location(program, "u_view").as_ref(),
-                    false,
-                    (u_view).as_ref(),
-                );
-                gl.uniform_matrix_4_f32_slice(
-                    gl.get_uniform_location(program, "u_projection").as_ref(),
-                    false,
-                    (u_projection).as_ref(),
-                );
-                gl.uniform_matrix_3_f32_slice(
-                    gl.get_uniform_location(program, "u_normal_matrix").as_ref(),
-                    false,
-                    (self.u_normal_matrix).as_ref(),
-                );
-
-                gl.uniform_3_f32_slice(
-                    gl.get_uniform_location(program, "u_light_pos").as_ref(),
-                    (light_dir_world).as_ref(),
-                );
-
-                gl.uniform_3_f32_slice(
-                    gl.get_uniform_location(program, "u_view_pos").as_ref(),
-                    (u_view_pos).as_ref(),
-                );
-
-                gl.uniform_3_f32_slice(
-                    gl.get_uniform_location(program, "u_light_color").as_ref(),
-                    light_color_cam_space.as_ref(),
-                );
-
-                gl.uniform_1_f32(
-                    gl.get_uniform_location(program, "u_light_intensity")
-                        .as_ref(),
-                    1.0,
-                );
-
-                gl.bind_vertex_array(self.vao_sphere);
-                gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.sphere_instance_buffer));
-                gl.buffer_data_u8_slice(
-                    glow::ARRAY_BUFFER,
-                    bytemuck::cast_slice(&instance_groups.spheres),
-                    glow::DYNAMIC_DRAW,
-                );
-
-                gl.draw_elements_instanced(
-                    glow::TRIANGLES,
-                    self.sphere_index_count as i32,
-                    glow::UNSIGNED_INT,
-                    0,
-                    instance_groups.spheres.len() as i32,
-                );
-            }
-
-            if has_sticks {
-                self.ensure_stick_pipeline(gl);
-                let program = self.program_stick.unwrap();
-                let instance_groups = self.instance_groups.as_ref().unwrap();
-
-                gl.use_program(Some(program));
-                gl.uniform_matrix_4_f32_slice(
-                    gl.get_uniform_location(program, "u_model").as_ref(),
-                    false,
-                    (self.u_model).as_ref(),
-                );
-                gl.uniform_matrix_4_f32_slice(
-                    gl.get_uniform_location(program, "u_view").as_ref(),
-                    false,
-                    (u_view).as_ref(),
-                );
-                gl.uniform_matrix_4_f32_slice(
-                    gl.get_uniform_location(program, "u_projection").as_ref(),
-                    false,
-                    (u_projection).as_ref(),
-                );
-                gl.uniform_matrix_3_f32_slice(
-                    gl.get_uniform_location(program, "u_normal_matrix").as_ref(),
-                    false,
-                    (self.u_normal_matrix).as_ref(),
-                );
-                gl.uniform_3_f32_slice(
-                    gl.get_uniform_location(program, "u_light_pos").as_ref(),
-                    (light_dir_world).as_ref(),
-                );
-                gl.uniform_3_f32_slice(
-                    gl.get_uniform_location(program, "u_view_pos").as_ref(),
-                    (u_view_pos).as_ref(),
-                );
-                gl.uniform_3_f32_slice(
-                    gl.get_uniform_location(program, "u_light_color").as_ref(),
-                    light_color_cam_space.as_ref(),
-                );
-                gl.uniform_1_f32(
-                    gl.get_uniform_location(program, "u_light_intensity")
-                        .as_ref(),
-                    1.0,
-                );
-                gl.bind_vertex_array(self.vao_stick);
-                gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.stick_instance_buffer));
-                gl.buffer_data_u8_slice(
-                    glow::ARRAY_BUFFER,
-                    bytemuck::cast_slice(&instance_groups.sticks),
-                    glow::DYNAMIC_DRAW,
-                );
-
-                gl.draw_elements_instanced(
-                    glow::TRIANGLES,
-                    self.stick_index_count as i32,
-                    glow::UNSIGNED_INT,
-                    0,
-                    instance_groups.sticks.len() as i32,
-                );
+                gl.disable(glow::BLEND);
+                gl.depth_func(glow::LESS);
             }
 
             if self
@@ -1147,6 +1381,13 @@ impl Shader {
                 gl.disable(glow::CULL_FACE);
                 gl.depth_mask(false);
                 gl.depth_func(glow::LEQUAL);
+                gl.enable(glow::BLEND);
+                gl.blend_func_separate(
+                    glow::SRC_ALPHA,
+                    glow::ONE_MINUS_SRC_ALPHA,
+                    glow::ONE,
+                    glow::ONE_MINUS_SRC_ALPHA,
+                );
 
                 let outline_groups = self
                     .instance_groups
@@ -1250,9 +1491,17 @@ impl Shader {
                 }
 
                 gl.depth_mask(true);
+                gl.disable(glow::BLEND);
                 gl.enable(glow::CULL_FACE);
                 gl.cull_face(glow::BACK);
             }
+
+            gl.color_mask(true, true, true, true);
+            gl.depth_mask(true);
+            gl.depth_func(glow::LESS);
+            gl.disable(glow::BLEND);
+            gl.bind_vertex_array(None);
+            gl.use_program(None);
         }
     }
 
@@ -1393,4 +1642,48 @@ pub struct Light {
     pub direction: Vec3,
     pub color: Vec3,
     pub intensity: f32,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AlphaCoverage, SceneBounds, SceneRenderPass};
+    use crate::scene::DepthCue;
+    use glam::{Mat4, Vec3};
+
+    #[test]
+    fn alpha_coverage_uses_chimerax_threshold() {
+        let mut coverage = AlphaCoverage::default();
+        coverage.include(0.5);
+        coverage.include(0.989);
+
+        assert!(!coverage.is_drawn_in(SceneRenderPass::Opaque));
+        assert!(coverage.is_drawn_in(SceneRenderPass::TransparentDepth));
+        assert!(coverage.is_drawn_in(SceneRenderPass::TransparentColor));
+
+        coverage.include(0.99);
+        coverage.include(1.0);
+
+        assert!(coverage.is_drawn_in(SceneRenderPass::Opaque));
+        assert!(coverage.is_drawn_in(SceneRenderPass::TransparentDepth));
+    }
+
+    #[test]
+    fn scene_bounds_depth_range_uses_chimerax_fraction_model() {
+        let mut bounds = SceneBounds::empty();
+        bounds.include_point(Vec3::new(-1.0, -1.0, -10.0));
+        bounds.include_point(Vec3::new(1.0, 1.0, -2.0));
+
+        let range = bounds.depth_range(
+            Mat4::IDENTITY,
+            Mat4::IDENTITY,
+            DepthCue {
+                enabled: true,
+                start: 0.5,
+                end: 1.0,
+                color: None,
+            },
+        );
+
+        assert_eq!(range, [6.0, 10.0]);
+    }
 }

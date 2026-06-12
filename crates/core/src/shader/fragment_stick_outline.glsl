@@ -10,6 +10,11 @@ in float v_radius;
 
 out vec4 FragColor;
 
+float coverage_from_implicit(float value) {
+    float width = max(fwidth(value), 1.0e-6);
+    return smoothstep(-width, width, value);
+}
+
 void main() {
     vec3 axis = v_end_view - v_start_view;
     float axis_len = length(axis);
@@ -35,11 +40,12 @@ void main() {
     float b = 2.0 * dot(ray_perp, delta_perp);
     float c = dot(delta_perp, delta_perp) - v_radius * v_radius;
     float det = b * b - 4.0 * a * c;
-    if (det < 0.0) {
+    float alpha = coverage_from_implicit(det);
+    if (alpha <= 0.0) {
         discard;
     }
 
-    float sqrt_det = sqrt(det);
+    float sqrt_det = sqrt(max(det, 0.0));
     float t0 = (-b - sqrt_det) / (2.0 * a);
     float t1 = (-b + sqrt_det) / (2.0 * a);
     float t = min(t0, t1);
@@ -53,11 +59,12 @@ void main() {
         float cap_b = 2.0 * dot(cap_delta, ray_dir);
         float cap_c = dot(cap_delta, cap_delta) - v_radius * v_radius;
         float cap_det = cap_b * cap_b - 4.0 * cap_a * cap_c;
-        if (cap_det < 0.0) {
+        alpha = coverage_from_implicit(cap_det);
+        if (alpha <= 0.0) {
             discard;
         }
 
-        float cap_sqrt_det = sqrt(cap_det);
+        float cap_sqrt_det = sqrt(max(cap_det, 0.0));
         float cap_t0 = (-cap_b - cap_sqrt_det) / (2.0 * cap_a);
         float cap_t1 = (-cap_b + cap_sqrt_det) / (2.0 * cap_a);
         t = min(cap_t0, cap_t1);
@@ -68,5 +75,5 @@ void main() {
     float ndc_depth = clip_pos.z / clip_pos.w;
     gl_FragDepth = ndc_depth * 0.5 + 0.5;
 
-    FragColor = vec4(u_outline_color, 1.0);
+    FragColor = vec4(u_outline_color, alpha);
 }

@@ -10,11 +10,19 @@ in float v_outline_radius;
 
 out vec4 FragColor;
 
+float coverage_from_edge(float signed_distance) {
+    float width = max(fwidth(signed_distance), 1.0e-6);
+    return 1.0 - smoothstep(-width, width, signed_distance);
+}
+
 void main() {
     float dist_sq = dot(v_mapping, v_mapping);
     float outline_radius_sq = v_outline_radius * v_outline_radius;
+    float dist = sqrt(dist_sq);
+    float edge_distance = dist - v_outline_radius;
+    float alpha = coverage_from_edge(edge_distance);
 
-    if (dist_sq > outline_radius_sq) {
+    if (alpha <= 0.0) {
         discard;
     }
 
@@ -25,5 +33,5 @@ void main() {
     float ndc_depth = clip_pos.z / clip_pos.w;
     gl_FragDepth = ndc_depth * 0.5 + 0.5;
 
-    FragColor = vec4(u_outline_color, 1.0);
+    FragColor = vec4(u_outline_color, alpha);
 }

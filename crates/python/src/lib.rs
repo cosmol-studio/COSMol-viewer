@@ -393,6 +393,51 @@ speed : float, optional
     }
 
     #[doc = r#"
+Enable or disable depth cueing for the scene.
+
+Depth cueing uses the ChimeraX model: fragments are linearly mixed toward
+the depth cue color according to camera-space depth. Depth cueing is disabled
+by default. When enabled, the default cue color follows the scene background
+color, so distant fragments fade out. It applies to molecules, ribbons, and
+protein surfaces.
+"#]
+    #[pyo3(signature = (enabled=true))]
+    pub fn set_depth_cue(&mut self, enabled: bool) {
+        self.inner.set_depth_cue(enabled);
+    }
+
+    #[doc = r#"
+Set the fractional depth cue range.
+
+Parameters
+----------
+start : float
+    Fraction of the current scene depth range where dimming starts. Defaults
+    to ``0.5``.
+end : float
+    Fraction of the current scene depth range where dimming reaches the
+    depth cue color. Defaults to ``1.0``.
+"#]
+    pub fn set_depth_cue_range(&mut self, start: f32, end: f32) {
+        self.inner.set_depth_cue_range(start, end);
+    }
+
+    #[doc = r##"
+Set the depth cue color.
+
+Parameters
+----------
+color : tuple[int, int, int] or str
+    RGB color tuple or hex string such as ``"#FFFFFF"``. If unset, the scene
+    background color is used.
+"##]
+    pub fn set_depth_cue_color(&mut self, color: Bound<'_, PyAny>) -> PyResult<()> {
+        let color = py_to_color(color)?;
+        self.inner.set_depth_cue_color(color);
+        Ok(())
+    }
+
+    #[doc = r#"
 Set the background color of the scene to black.
 "#]
     pub fn use_black_background(&mut self) {

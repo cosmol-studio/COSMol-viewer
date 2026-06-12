@@ -12,6 +12,7 @@ in vec2 a_material;
 
 out vec3 v_normal;
 out vec3 v_frag_pos;
+out vec3 v_eye_pos;
 out vec4 v_color;
 out vec2 v_material;
 
@@ -24,7 +25,9 @@ void main() {
     v_normal = normalize(u_normal_matrix * a_normal);
 
     // 3. 把顶点变换到最终裁剪空间用于光栅化
-    gl_Position = u_projection * u_view * world_pos;
+    vec4 eye_pos = u_view * world_pos;
+    v_eye_pos = eye_pos.xyz;
+    gl_Position = u_projection * eye_pos;
 
     // 4. 传颜色
     v_color = a_color;

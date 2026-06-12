@@ -1,4 +1,5 @@
 mod shader;
+pub mod surface;
 use crate::egui::IconData;
 use std::sync::{Arc, Mutex};
 use thiserror::Error;

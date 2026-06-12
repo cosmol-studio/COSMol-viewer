@@ -4,15 +4,36 @@ uniform vec3 u_light_pos;
 uniform vec3 u_light_color;
 uniform vec3 u_view_pos;
 uniform float u_light_intensity;
+uniform int u_render_pass;
+uniform int u_depth_cue_enabled;
+uniform vec3 u_depth_cue_color;
+uniform vec2 u_depth_cue_range;
 
 in vec3 v_normal;
 in vec3 v_frag_pos;
+in vec3 v_eye_pos;
 in vec4 v_color;
 in vec2 v_material;
 
 out vec4 FragColor;
 
 void main() {
+    const float opaque_alpha_threshold = 0.99;
+    bool transparent = v_color.a < opaque_alpha_threshold;
+
+    if (u_render_pass == 0 && transparent) {
+        discard;
+    }
+    if (u_render_pass != 0 && !transparent) {
+        discard;
+    }
+
+    // The transparent depth pass only records the nearest transparent layer.
+    if (u_render_pass == 1) {
+        FragColor = vec4(0.0);
+        return;
+    }
+
     // Normalize once
     vec3 N = normalize(v_normal);
     vec3 L = normalize(u_light_pos - v_frag_pos);
@@ -39,6 +60,13 @@ void main() {
 
     // === Final Color ===
     vec3 lighting = ambient + diffuse + specular;
+    vec3 final_color = lighting * u_light_intensity;
 
-    FragColor = vec4(lighting * u_light_intensity, v_color.a);
+    if (u_depth_cue_enabled != 0) {
+        float d = -v_eye_pos.z;
+        float dim = (u_depth_cue_range.y - d) / (u_depth_cue_range.y - u_depth_cue_range.x);
+        final_color = mix(u_depth_cue_color, final_color, clamp(dim, 0.0, 1.0));
+    }
+
+    FragColor = vec4(final_color, v_color.a);
 }

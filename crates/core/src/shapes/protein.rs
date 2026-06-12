@@ -2,24 +2,72 @@ use crate::Shape;
 use crate::parser::dssp::SecondaryStructureCalculator;
 use crate::parser::utils::{Residue, RibbonResidueInfo, SecondaryStructure};
 use crate::shapes::Stick;
+use crate::surface::protein_templates::{self, ResiduePosition};
+use crate::surface::radii::default_radius;
+use crate::surface::{SurfaceError, SurfaceGeometry, ses_surface_geometry, sharp_edge_patches};
 use crate::utils::{Material, MeshData, Stylable};
 use bytemuck::{Pod, Zeroable};
-use cosmolkit::{ChainSourceIds, Protein as CosmolkitProtein};
+use cosmolkit::{BioCoorFormat, ChainSourceIds, Protein as CosmolkitProtein};
 use glam::{Quat, Vec3, Vec4};
 use na_seq::AminoAcid;
 use once_cell::sync::OnceCell;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::str::FromStr;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Protein {
     pub chains: Vec<Chain>,
+    #[serde(default)]
+    atoms: Vec<ProteinAtom>,
     pub center: Vec3,
 
     pub style: Material,
     #[serde(default)]
     pub color_mode: ProteinColorMode,
+    #[serde(default)]
+    representation: ProteinRepresentation,
+    #[serde(skip)]
+    surface_cache: OnceCell<SurfaceGeometry>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct ProteinAtom {
+    pub position: Vec3,
+    pub radius: f32,
+    pub atomic_number: u8,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub enum ProteinRepresentation {
+    #[default]
+    Ribbon,
+    Surface(ProteinSurfaceOptions),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ProteinSurfaceOptions {
+    pub probe_radius: f32,
+    pub grid_spacing: f32,
+    pub solvent_accessible: bool,
+    #[serde(default = "default_sharp_boundaries")]
+    pub sharp_boundaries: bool,
+}
+
+const fn default_sharp_boundaries() -> bool {
+    true
+}
+
+impl Default for ProteinSurfaceOptions {
+    fn default() -> Self {
+        Self {
+            probe_radius: 1.4,
+            grid_spacing: 0.5,
+            solvent_accessible: false,
+            sharp_boundaries: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -104,19 +152,13 @@ impl Protein {
     fn from_cosmolkit_protein(protein: &CosmolkitProtein) -> Result<Self, ParseProteinError> {
         let mut chains = Vec::new();
         let mut centers = Vec::new();
+        let mut raw_chains = Vec::new();
 
         for (chain_index, chain_ref) in protein.chains().enumerate() {
-            let mut residues = Vec::new();
+            let mut raw_residues = Vec::new();
 
             for residue_ref in chain_ref.residues() {
-                let Ok(amino_acid) = AminoAcid::from_str(residue_ref.name()) else {
-                    continue;
-                };
-
-                let mut ca_opt = None;
-                let mut c_opt = None;
-                let mut n_opt = None;
-                let mut o_opt = None;
+                let mut raw_atoms = Vec::new();
 
                 for atom_ref in residue_ref.atoms() {
                     let atom = atom_ref.row();
@@ -124,16 +166,47 @@ impl Protein {
                         continue;
                     };
                     let position = Vec3::new(position[0], position[1], position[2]);
-                    match cosmolkit_atom_name(&atom.name) {
-                        "C" => c_opt = Some(position),
-                        "N" => n_opt = Some(position),
-                        "CA" => ca_opt = Some(position),
-                        "O" => o_opt = Some(position),
-                        _ => {}
-                    }
+                    let name = cosmolkit_atom_name(&atom.name);
+                    raw_atoms.push(RawProteinAtom {
+                        name: name.to_string(),
+                        position,
+                        atomic_number: atom.element.atomic_number(),
+                        alt_loc: atom.altloc.map(|alt_loc| alt_loc.0),
+                        occupancy: atom.occupancy.unwrap_or(1.0),
+                        b_factor: atom.b_iso.unwrap_or(0.0),
+                    });
                 }
+                raw_residues.push(RawProteinResidue {
+                    name: residue_ref.name().to_string(),
+                    atoms: raw_atoms,
+                    seq_id: residue_ref
+                        .row()
+                        .source
+                        .seq_id
+                        .map(|seq_id| (seq_id.seq_num, seq_id.ins_code)),
+                    label_seq_id: residue_ref.row().source.label_seq_id,
+                });
+            }
 
-                let (Some(ca), Some(c), Some(n), Some(o)) = (ca_opt, c_opt, n_opt, o_opt) else {
+            select_best_alt_locs(&mut raw_residues);
+            let mut residues = Vec::new();
+            for (residue_index, raw_residue) in raw_residues.iter().enumerate() {
+                let Ok(amino_acid) = AminoAcid::from_str(&raw_residue.name) else {
+                    continue;
+                };
+                let atom_position = |name: &str| {
+                    raw_residue
+                        .atoms
+                        .iter()
+                        .find(|atom| atom.name == name)
+                        .map(|atom| atom.position)
+                };
+                let (Some(ca), Some(c), Some(n), Some(o)) = (
+                    atom_position("CA"),
+                    atom_position("C"),
+                    atom_position("N"),
+                    atom_position("O"),
+                ) else {
                     continue;
                 };
 
@@ -145,12 +218,10 @@ impl Protein {
                     n,
                     o,
                     h: None,
-                    sns: residue_ref
-                        .row()
-                        .source
+                    sns: raw_residue
                         .seq_id
-                        .map(|seq_id| seq_id.seq_num.max(0) as usize)
-                        .unwrap_or_else(|| residue_ref.id().index() as usize + 1),
+                        .map(|(seq_num, _)| seq_num.max(0) as usize)
+                        .unwrap_or(residue_index + 1),
                     ss: None,
                 });
             }
@@ -161,12 +232,24 @@ impl Protein {
                     residues,
                 ));
             }
+            raw_chains.push(raw_residues);
         }
 
         let center = average_center(&centers);
+        let structure_has_hydrogens = raw_chains
+            .iter()
+            .flatten()
+            .flat_map(|residue| &residue.atoms)
+            .any(|atom| atom.atomic_number == 1);
+        let input_format = protein.as_bio_structure().input_format();
+        let atoms = raw_chains
+            .iter()
+            .flat_map(|residues| surface_atoms(residues, structure_has_hydrogens, input_format))
+            .collect();
 
         Ok(Protein {
             chains,
+            atoms,
             center,
             style: Material {
                 opacity: 1.0,
@@ -175,8 +258,244 @@ impl Protein {
                 ..Default::default()
             },
             color_mode: ProteinColorMode::Uniform,
+            representation: ProteinRepresentation::Ribbon,
+            surface_cache: OnceCell::new(),
         })
     }
+}
+
+struct RawProteinAtom {
+    name: String,
+    position: Vec3,
+    atomic_number: u8,
+    alt_loc: Option<u8>,
+    occupancy: f32,
+    b_factor: f32,
+}
+
+struct RawProteinResidue {
+    name: String,
+    atoms: Vec<RawProteinAtom>,
+    seq_id: Option<(i32, Option<u8>)>,
+    label_seq_id: Option<i32>,
+}
+
+fn select_best_alt_locs(residues: &mut [RawProteinResidue]) {
+    for residue in residues {
+        let mut atom_groups: Vec<Vec<RawProteinAtom>> = Vec::new();
+        for atom in residue.atoms.drain(..) {
+            if let Some(group) = atom_groups
+                .iter_mut()
+                .find(|group| group[0].name == atom.name)
+            {
+                group.push(atom);
+            } else {
+                atom_groups.push(vec![atom]);
+            }
+        }
+
+        let alt_locs = atom_groups.iter().find_map(|group| {
+            let labels: BTreeSet<u8> = group.iter().filter_map(|atom| atom.alt_loc).collect();
+            (!labels.is_empty()).then_some(labels)
+        });
+        let best_alt_loc = alt_locs
+            .as_ref()
+            .and_then(|labels| best_alt_loc(&atom_groups, labels));
+
+        residue.atoms = atom_groups
+            .into_iter()
+            .map(|group| {
+                let index = best_alt_loc
+                    .and_then(|label| group.iter().position(|atom| atom.alt_loc == Some(label)))
+                    .or_else(|| group.iter().rposition(|atom| atom.alt_loc.is_some()))
+                    .unwrap_or(0);
+                group.into_iter().nth(index).expect("atom index is valid")
+            })
+            .collect();
+    }
+}
+
+fn best_alt_loc(atom_groups: &[Vec<RawProteinAtom>], labels: &BTreeSet<u8>) -> Option<u8> {
+    let mut best = None;
+    let mut best_occupancy = 0.0f32;
+    let mut best_b_factor = 0.0f32;
+
+    for &label in labels {
+        let mut occurrences = 0usize;
+        let mut occupancy = 0.0f32;
+        let mut b_factor = 0.0f32;
+        for group in atom_groups {
+            if !labels
+                .iter()
+                .all(|candidate| group.iter().any(|atom| atom.alt_loc == Some(*candidate)))
+            {
+                continue;
+            }
+            let atom = group
+                .iter()
+                .find(|atom| atom.alt_loc == Some(label))
+                .expect("complete alternate-location group");
+            occurrences += 1;
+            occupancy += atom.occupancy;
+            b_factor += atom.b_factor;
+        }
+        if occurrences == 0 {
+            continue;
+        }
+        occupancy /= occurrences as f32;
+        b_factor /= occurrences as f32;
+        if best.is_none()
+            || occupancy > best_occupancy
+            || (occupancy == best_occupancy && b_factor < best_b_factor)
+        {
+            best = Some(label);
+            best_occupancy = occupancy;
+            best_b_factor = b_factor;
+        }
+    }
+
+    best
+}
+
+fn surface_atoms(
+    residues: &[RawProteinResidue],
+    structure_has_hydrogens: bool,
+    input_format: BioCoorFormat,
+) -> Vec<ProteinAtom> {
+    let mut result = Vec::new();
+    for (residue_index, residue) in residues.iter().enumerate() {
+        let chain_start = residue_index == 0;
+        let chain_end = residue_index + 1 == residues.len();
+        let position = if chain_start {
+            ResiduePosition::Start
+        } else if chain_end {
+            ResiduePosition::End
+        } else {
+            ResiduePosition::Middle
+        };
+        let topology_name = if residue.name == "HIS" {
+            "HIP"
+        } else {
+            residue.name.as_str()
+        };
+        let present = |name: &str| residue.atoms.iter().any(|atom| atom.name == name);
+        let bonds = protein_templates::bonds(position, topology_name);
+
+        for atom in &residue.atoms {
+            let mut bond_count = 0;
+            let mut has_hydrogen_neighbor = false;
+            for &(first, second) in bonds {
+                let neighbor = if first == atom.name && present(second) {
+                    Some(second)
+                } else if second == atom.name && present(first) {
+                    Some(first)
+                } else {
+                    None
+                };
+                if let Some(neighbor) = neighbor {
+                    bond_count += 1;
+                    has_hydrogen_neighbor |= residue
+                        .atoms
+                        .iter()
+                        .find(|candidate| candidate.name == neighbor)
+                        .is_some_and(|candidate| candidate.atomic_number == 1);
+                }
+            }
+
+            if atom.name == "N"
+                && !chain_start
+                && residues_are_polymer_bonded(&residues[residue_index - 1], residue, input_format)
+                && residues[residue_index - 1]
+                    .atoms
+                    .iter()
+                    .any(|candidate| candidate.name == "C")
+            {
+                bond_count += 1;
+            }
+            if atom.name == "C"
+                && !chain_end
+                && residues_are_polymer_bonded(residue, &residues[residue_index + 1], input_format)
+                && residues[residue_index + 1]
+                    .atoms
+                    .iter()
+                    .any(|candidate| candidate.name == "N")
+            {
+                bond_count += 1;
+            }
+            if atom.name == "C"
+                && present("OXT")
+                && !bonds
+                    .iter()
+                    .any(|&(first, second)| first == "C" && second == "OXT")
+            {
+                bond_count += 1;
+            }
+            if atom.name == "OXT"
+                && present("C")
+                && !bonds
+                    .iter()
+                    .any(|&(first, second)| first == "C" && second == "OXT")
+            {
+                bond_count += 1;
+            }
+
+            let idatm_type =
+                protein_templates::idatm_type(&residue.name, &atom.name, chain_start, present);
+            result.push(ProteinAtom {
+                position: atom.position,
+                radius: default_radius(
+                    atom.atomic_number,
+                    idatm_type,
+                    bond_count,
+                    has_hydrogen_neighbor,
+                    structure_has_hydrogens,
+                ),
+                atomic_number: atom.atomic_number,
+            });
+        }
+    }
+    result
+}
+
+fn residues_are_polymer_bonded(
+    previous: &RawProteinResidue,
+    next: &RawProteinResidue,
+    input_format: BioCoorFormat,
+) -> bool {
+    if input_format == BioCoorFormat::Mmcif {
+        return matches!(
+            (previous.label_seq_id, next.label_seq_id),
+            (Some(previous_id), Some(next_id)) if next_id == previous_id + 1
+        );
+    }
+
+    if matches!(
+        (previous.seq_id, next.seq_id),
+        (Some((previous_number, _)), Some((next_number, _)))
+            if (next_number - previous_number).abs() < 2
+    ) {
+        return true;
+    }
+
+    let Some(carbon) = previous
+        .atoms
+        .iter()
+        .find(|atom| atom.name == "C")
+        .map(|atom| atom.position)
+    else {
+        return false;
+    };
+    let Some(nitrogen) = next
+        .atoms
+        .iter()
+        .find(|atom| atom.name == "N")
+        .map(|atom| atom.position)
+    else {
+        return false;
+    };
+
+    // ChimeraX Element::bond_length(C, N) is 0.68 + 0.68 Angstrom.
+    carbon.distance_squared(nitrogen) < 3.0625 * 1.36 * 1.36
 }
 
 fn average_center(centers: &[Vec3]) -> Vec3 {
@@ -217,6 +536,14 @@ impl Protein {
         [self.center.x, self.center.y, self.center.z]
     }
 
+    pub fn atoms(&self) -> &[ProteinAtom] {
+        &self.atoms
+    }
+
+    pub fn representation(&self) -> ProteinRepresentation {
+        self.representation
+    }
+
     pub fn centered(mut self) -> Self {
         let center = Vec3 {
             x: self.center.x,
@@ -234,7 +561,11 @@ impl Protein {
                 }
             }
         }
+        for atom in &mut self.atoms {
+            atom.position -= center;
+        }
         self.center = Vec3::ZERO;
+        self.surface_cache = OnceCell::new();
         self
     }
 
@@ -244,7 +575,134 @@ impl Protein {
         self
     }
 
+    pub fn ribbon(mut self) -> Self {
+        self.representation = ProteinRepresentation::Ribbon;
+        self
+    }
+
+    /// Display the protein as a ChimeraX-compatible solvent-excluded surface.
+    ///
+    /// The default surface uses a 1.4 angstrom solvent probe radius and 0.5
+    /// angstrom grid spacing. The resulting surface is emitted as normal mesh
+    /// geometry, so scene-level effects such as opacity and depth cueing apply
+    /// to it in the same way they apply to other shapes.
+    pub fn surface(mut self) -> Self {
+        self.representation = ProteinRepresentation::Surface(ProteinSurfaceOptions::default());
+        self.surface_cache = OnceCell::new();
+        self
+    }
+
+    /// Display the protein as a solvent-accessible surface.
+    ///
+    /// Like [`surface`](Self::surface), the generated surface is normal mesh
+    /// geometry and participates in scene-level opacity and depth cueing.
+    pub fn solvent_accessible_surface(mut self) -> Self {
+        self.representation = ProteinRepresentation::Surface(ProteinSurfaceOptions {
+            solvent_accessible: true,
+            ..ProteinSurfaceOptions::default()
+        });
+        self.surface_cache = OnceCell::new();
+        self
+    }
+
+    pub fn surface_with_options(
+        mut self,
+        probe_radius: f32,
+        grid_spacing: f32,
+        solvent_accessible: bool,
+    ) -> Self {
+        self.representation = ProteinRepresentation::Surface(ProteinSurfaceOptions {
+            probe_radius,
+            grid_spacing,
+            solvent_accessible,
+            sharp_boundaries: true,
+        });
+        self.surface_cache = OnceCell::new();
+        self
+    }
+
+    pub fn surface_with_settings(mut self, options: ProteinSurfaceOptions) -> Self {
+        self.representation = ProteinRepresentation::Surface(options);
+        self.surface_cache = OnceCell::new();
+        self
+    }
+
     pub fn to_mesh(&self, scale: f32) -> MeshData {
+        if let ProteinRepresentation::Surface(options) = self.representation {
+            return self
+                .surface_mesh(scale, options)
+                .unwrap_or_else(|_| MeshData::default());
+        }
+        self.ribbon_mesh(scale)
+    }
+
+    pub fn try_surface_mesh(&self, scale: f32) -> Result<MeshData, SurfaceError> {
+        let options = match self.representation {
+            ProteinRepresentation::Surface(options) => options,
+            ProteinRepresentation::Ribbon => ProteinSurfaceOptions::default(),
+        };
+        self.surface_mesh(scale, options)
+    }
+
+    fn surface_mesh(
+        &self,
+        scale: f32,
+        options: ProteinSurfaceOptions,
+    ) -> Result<MeshData, SurfaceError> {
+        let geometry = if let Some(geometry) = self.surface_cache.get() {
+            geometry
+        } else {
+            let positions: Vec<Vec3> = self.atoms.iter().map(|atom| atom.position).collect();
+            let radii: Vec<f32> = self.atoms.iter().map(|atom| atom.radius).collect();
+            let mut geometry = ses_surface_geometry(
+                &positions,
+                &radii,
+                options.probe_radius,
+                options.grid_spacing,
+                options.solvent_accessible,
+            )?;
+            if options.sharp_boundaries {
+                geometry = sharp_edge_patches(
+                    geometry,
+                    &positions,
+                    &radii,
+                    options.probe_radius,
+                    options.grid_spacing,
+                    1,
+                );
+            }
+            let _ = self.surface_cache.set(geometry);
+            self.surface_cache
+                .get()
+                .expect("surface cache was initialized")
+        };
+        let color = match self.style.color {
+            Some(color) => Vec4::new(color[0], color[1], color[2], self.style.opacity),
+            None => Vec4::new(1.0, 1.0, 1.0, self.style.opacity),
+        };
+        Ok(MeshData {
+            vertices: geometry
+                .vertices
+                .iter()
+                .map(|vertex| *vertex * scale)
+                .collect(),
+            normals: geometry.normals.clone(),
+            indices: geometry
+                .triangles
+                .iter()
+                .flat_map(|triangle| triangle.iter().copied())
+                .collect(),
+            colors: Some(vec![color; geometry.vertices.len()]),
+            material_params: Some(vec![
+                [self.style.roughness, self.style.metallic];
+                geometry.vertices.len()
+            ]),
+            is_wireframe: self.style.wireframe,
+            ..Default::default()
+        })
+    }
+
+    fn ribbon_mesh(&self, scale: f32) -> MeshData {
         let mut final_mesh = MeshData::default();
 
         self.chains.par_iter().for_each(|chain| {
@@ -1544,6 +2002,54 @@ ATOM      4  O   ALA A   1      14.000  12.500  11.000  1.00 20.00           O
         assert_eq!(protein.chains.len(), 1);
         assert_eq!(protein.chains[0].id, "A");
         assert_eq!(protein.chains[0].residues.len(), 1);
+        assert_eq!(protein.atoms.len(), 4);
+        assert_eq!(
+            protein
+                .atoms
+                .iter()
+                .map(|atom| atom.radius)
+                .collect::<Vec<_>>(),
+            vec![1.64, 1.88, 1.76, 1.42]
+        );
+    }
+
+    #[test]
+    fn protein_surface_mesh_is_non_empty() {
+        let pdb = "\
+ATOM      1  N   ALA A   1      11.104  13.207   9.900  1.00 20.00           N
+ATOM      2  CA  ALA A   1      12.210  13.912  10.555  1.00 20.00           C
+ATOM      3  C   ALA A   1      13.470  13.079  10.413  1.00 20.00           C
+ATOM      4  O   ALA A   1      14.000  12.500  11.000  1.00 20.00           O
+";
+        let protein = Protein::from_pdb(pdb).expect("PDB should parse").surface();
+        let mesh = protein.try_surface_mesh(1.0).expect("surface should build");
+
+        assert!(!mesh.vertices.is_empty());
+        assert!(!mesh.indices.is_empty());
+        assert_eq!(mesh.vertices.len(), mesh.normals.len());
+        assert_eq!(mesh.vertices.len(), mesh.colors.unwrap().len());
+    }
+
+    #[test]
+    #[ignore = "full protein surface regression"]
+    fn six_fi1_surface_builds() {
+        let protein =
+            Protein::from_mmcif(include_str!("../../../../cosmol_viewer/examples/6fi1.cif"))
+                .expect("6fi1 should parse")
+                .surface();
+        let mesh = protein
+            .try_surface_mesh(1.0)
+            .expect("6fi1 surface should build");
+
+        println!(
+            "6fi1 atoms={}, vertices={}, triangles={}",
+            protein.atoms.len(),
+            mesh.vertices.len(),
+            mesh.indices.len() / 3
+        );
+        assert_eq!(protein.atoms.len(), 856);
+        assert_eq!(mesh.vertices.len(), 84_457);
+        assert_eq!(mesh.indices.len() / 3, 119_810);
     }
 
     #[test]
@@ -1592,6 +2098,7 @@ ATOM      8  O   GLY A  10      34.000  12.500  11.000  1.00 20.00           O
         let dashes = build_backbone_gap_dashes(&residues, None);
         assert!(!dashes.vertices.is_empty());
         assert!(dashes.colors.is_none());
+        assert_eq!(protein.atoms[2].radius, 1.76);
     }
 
     #[test]
@@ -1628,6 +2135,46 @@ ATOM 4 O O . ALA A 1 14.000 12.500 11.000 1.00 20.00 1 ALA A O 1
         assert_eq!(protein.chains.len(), 1);
         assert_eq!(protein.chains[0].id, "A");
         assert_eq!(protein.chains[0].residues.len(), 1);
+    }
+
+    #[test]
+    fn mmcif_alt_loc_uses_occupancy_then_b_factor() {
+        let cif = r#"
+data_demo
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_alt_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.label_seq_id
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+_atom_site.occupancy
+_atom_site.B_iso_or_equiv
+_atom_site.auth_seq_id
+_atom_site.auth_comp_id
+_atom_site.auth_asym_id
+_atom_site.auth_atom_id
+_atom_site.pdbx_PDB_model_num
+ATOM 1 N N . TYR A 1 0.0 0.0 0.0 1.00 20.00 1 TYR A N 1
+ATOM 2 C CA A TYR A 1 10.0 0.0 0.0 0.50 10.00 1 TYR A CA 1
+ATOM 3 C CA B TYR A 1 10.5 0.0 0.0 0.50 5.00 1 TYR A CA 1
+ATOM 4 C C . TYR A 1 1.0 0.0 0.0 1.00 20.00 1 TYR A C 1
+ATOM 5 O O . TYR A 1 2.0 0.0 0.0 1.00 20.00 1 TYR A O 1
+ATOM 6 C CB A TYR A 1 20.0 0.0 0.0 0.50 10.00 1 TYR A CB 1
+ATOM 7 C CB B TYR A 1 21.0 0.0 0.0 0.50 5.00 1 TYR A CB 1
+"#;
+
+        let protein = Protein::from_mmcif(cif).expect("mmCIF altlocs should parse");
+
+        assert_eq!(protein.atoms.len(), 5);
+        assert_eq!(protein.atoms[1].position.x, 10.5);
+        assert_eq!(protein.atoms[4].position.x, 21.0);
+        assert_eq!(protein.chains[0].residues[0].ca.x, 10.5);
     }
 }
 

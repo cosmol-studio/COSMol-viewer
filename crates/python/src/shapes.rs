@@ -589,6 +589,86 @@ Protein
         slf.inner = slf.inner.clone().rainbow_residues();
         slf
     }
+
+    #[doc = r#"
+Display the protein as a ChimeraX-compatible solvent-excluded surface.
+
+The default probe radius is 1.4 angstrom and the grid spacing is 0.5 angstrom.
+The generated surface participates in scene opacity and depth cueing.
+
+Returns
+-------
+Protein
+    The updated protein object.
+"#]
+    pub fn surface(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
+        slf.inner = slf.inner.clone().surface();
+        slf
+    }
+
+    #[doc = r#"
+Display the protein as a solvent-accessible surface.
+
+Returns
+-------
+Protein
+    The updated protein object.
+"#]
+    pub fn solvent_accessible_surface(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
+        slf.inner = slf.inner.clone().solvent_accessible_surface();
+        slf
+    }
+
+    #[pyo3(signature = (probe_radius=1.4, grid_spacing=0.5, solvent_accessible=false, sharp_boundaries=true))]
+    #[doc = r#"
+Display the protein as a molecular surface with explicit parameters.
+
+Parameters
+----------
+probe_radius : float
+    Solvent probe radius in angstrom.
+grid_spacing : float
+    Distance-grid spacing in angstrom.
+solvent_accessible : bool
+    Return the solvent-accessible surface instead of the solvent-excluded surface.
+sharp_boundaries : bool
+    Subdivide atom patches so their shared edges are exact.
+
+Returns
+-------
+Protein
+    The updated protein object.
+"#]
+    pub fn surface_with_options(
+        mut slf: PyRefMut<'_, Self>,
+        probe_radius: f32,
+        grid_spacing: f32,
+        solvent_accessible: bool,
+        sharp_boundaries: bool,
+    ) -> PyRefMut<'_, Self> {
+        slf.inner = slf.inner.clone().surface_with_settings(
+            cosmol_viewer_core::shapes::ProteinSurfaceOptions {
+                probe_radius,
+                grid_spacing,
+                solvent_accessible,
+                sharp_boundaries,
+            },
+        );
+        slf
+    }
+
+    #[doc = r#"
+Display the protein as a cartoon ribbon.
+
+Returns
+-------
+Protein
+    The updated protein object.
+"#]
+    pub fn ribbon(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
+        slf.inner = slf.inner.clone().ribbon();
+        slf
+    }
 }
 
 impl_stylable_pymethods!(PyProtein, Protein);

@@ -18,6 +18,7 @@ in vec2 i_material;
 
 out vec3 v_normal;
 out vec3 v_frag_pos;
+out vec3 v_eye_pos;
 out vec4 v_color;
 out vec2 v_material;
 
@@ -51,5 +52,7 @@ void main() {
     v_material = i_material;
 
     // 7️⃣ 投影
-    gl_Position = u_projection * u_view * world_pos;
+    vec4 eye_pos = u_view * world_pos;
+    v_eye_pos = eye_pos.xyz;
+    gl_Position = u_projection * eye_pos;
 }

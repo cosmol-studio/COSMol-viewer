@@ -30,6 +30,8 @@ pub struct Scene {
     pub zoom_disabled: bool,
     #[serde(default)]
     pub auto_rotate: AutoRotate,
+    #[serde(default)]
+    pub depth_cue: DepthCue,
     pub camera_state: Option<CameraState>,
     pub named_shapes: HashMap<String, Shape>,
     pub unnamed_shapes: Vec<Shape>,
@@ -55,6 +57,7 @@ impl Default for Scene {
             transparent_background: false,
             zoom_disabled: false,
             auto_rotate: AutoRotate::default(),
+            depth_cue: DepthCue::default(),
             camera_state: None,
             named_shapes: HashMap::new(),
             unnamed_shapes: Vec::new(),
@@ -194,6 +197,45 @@ impl Scene {
         self.auto_rotate = AutoRotate { enabled, speed };
     }
 
+    /// Enable or disable depth cueing for the whole scene.
+    ///
+    /// Depth cueing follows the ChimeraX model: fragment color is linearly
+    /// mixed toward the cue color according to camera-space depth. By default,
+    /// depth cueing is disabled. When enabled, the default cue color follows the
+    /// scene background color, so distant geometry fades into the background. It
+    /// applies to all standard rendered geometry, including molecules, sticks,
+    /// spheres, ribbons, and protein surfaces.
+    pub fn set_depth_cue(&mut self, enabled: bool) {
+        self.depth_cue.enabled = enabled;
+    }
+
+    /// Set the fractional depth cue range.
+    ///
+    /// `start` and `end` are fractions of the current scene depth range. Dimming
+    /// begins at `start` and reaches the cue color at `end`. The default range is
+    /// `0.5..1.0`, matching ChimeraX defaults. The range is only used when depth
+    /// cueing is enabled with [`set_depth_cue`](Self::set_depth_cue).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `start` and `end` do not satisfy `0.0 <= start < end <= 1.0`.
+    pub fn set_depth_cue_range(&mut self, start: f32, end: f32) {
+        if !(0.0..=1.0).contains(&start) || !(0.0..=1.0).contains(&end) || start >= end {
+            panic!("depth cue range must satisfy 0.0 <= start < end <= 1.0");
+        }
+        self.depth_cue.start = start;
+        self.depth_cue.end = end;
+    }
+
+    /// Set an explicit depth cue color.
+    ///
+    /// If this is not called, depth cueing fades geometry toward the scene
+    /// background color. Use this method to override that behavior, for example
+    /// to fade toward black on a non-black background.
+    pub fn set_depth_cue_color<C: Into<Color>>(&mut self, color: C) {
+        self.depth_cue.color = Some(color.into().into());
+    }
+
     pub fn use_black_background(&mut self) {
         self.background_color = Vec3::ZERO;
     }
@@ -304,6 +346,7 @@ impl Interpolatable for Scene {
             transparent_background: self.transparent_background,
             zoom_disabled: self.zoom_disabled,
             auto_rotate: self.auto_rotate,
+            depth_cue: self.depth_cue,
             camera_state: self.camera_state,
             named_shapes,
             unnamed_shapes,
@@ -326,6 +369,26 @@ impl Default for AutoRotate {
         Self {
             enabled: false,
             speed: 20.0,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+pub struct DepthCue {
+    pub enabled: bool,
+    pub start: f32,
+    pub end: f32,
+    #[serde(default)]
+    pub color: Option<Vec3>,
+}
+
+impl Default for DepthCue {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            start: 0.5,
+            end: 1.0,
+            color: None,
         }
     }
 }

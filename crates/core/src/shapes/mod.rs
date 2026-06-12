@@ -7,4 +7,4 @@ pub use stick::StickInstance;
 mod molecules;
 pub use molecules::Molecule;
 mod protein;
-pub use protein::Protein;
+pub use protein::{Protein, ProteinAtom, ProteinRepresentation, ProteinSurfaceOptions};

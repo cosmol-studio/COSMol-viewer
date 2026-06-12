@@ -1,0 +1,23 @@
+This directory contains Rust translations of surface calculation code from
+UCSF ChimeraX.
+
+Copyright 2022 Regents of the University of California. All rights reserved.
+
+The translated portions are distributed under the GNU Lesser General Public
+License version 2.1. The original source files are:
+
+- src/bundles/surface/src/gridsurf.py
+- src/bundles/surface/src/split.py
+- src/bundles/surface/_surface/connected.cpp
+- src/bundles/map/_map/distgrid.cpp
+- src/bundles/map/_map/contour.cpp
+- src/bundles/map/_map/contourdata.cpp
+- src/bundles/surface/_surface/patches.cpp
+- src/bundles/atomic_lib/atomic_cpp/atomstruct_cpp/Atom.cpp
+- src/bundles/atomic_lib/atomic_cpp/element_cpp/Element.cpp
+- src/bundles/atomic_lib/atomic_cpp/atomstruct_cpp/tmpl/amino.cpp
+- src/bundles/atomic_lib/atomic_cpp/atomstruct_cpp/tmpl/namino.cpp
+- src/bundles/atomic_lib/atomic_cpp/atomstruct_cpp/tmpl/camino.cpp
+- src/bundles/atomic_lib/atomic_cpp/atomstruct_cpp/tmpl/idatm/templates/*.idatmres
+
+See https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html.
