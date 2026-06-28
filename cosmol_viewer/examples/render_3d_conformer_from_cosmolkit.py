@@ -20,9 +20,11 @@ mol = (
 )
 
 scene = Scene()
-scene.set_scale(0.9)
+scene.set_scale(1.2)
 scene.set_camera_view(azimuth=35, elevation=22, distance=28, fov=18)
 scene.add_shape_with_id("conformer", mol)
+
+scene.save_image("render_3d_conformer_from_cosmolkit.png", width=1200, height=900)
 
 viewer = Viewer.render(scene, width=800, height=500)
 

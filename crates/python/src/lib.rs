@@ -638,7 +638,7 @@ offscreen path as ``scene.to_png(...)`` and displays the resulting PNG with
 ``IPython.display``. The optional ``background`` argument follows
 ``scene.to_png(...)``.
 "#]
-    #[pyo3(signature = (width=800, height=600, background=None))]
+    #[pyo3(signature = (width=1200, height=900, background=None))]
     pub fn display(
         &self,
         py: Python,

@@ -26,6 +26,18 @@ Unlike purely notebook-bound solutions such as py3Dmol, COSMol-viewer runs every
 
 All implementations share the same Rust rendering engine, ensuring consistent performance and visual output.
 
+## Gallery
+
+<p align="center">
+  <img src="https://pub-0588ab5197fd48f28b5c91f067adf8f4.r2.dev/image/protein_ligand.png" alt="Protein ligand rendering" width="45%" />
+  <img src="https://pub-0588ab5197fd48f28b5c91f067adf8f4.r2.dev/image/render_3d_conformer_from_cosmolkit.png" alt="3D conformer rendering from COSMolKit" width="45%" />
+</p>
+
+<p align="center">
+  <img src="https://pub-0588ab5197fd48f28b5c91f067adf8f4.r2.dev/image/render_molecule_stick.png" alt="Stick molecule rendering" width="45%" />
+  <img src="https://pub-0588ab5197fd48f28b5c91f067adf8f4.r2.dev/image/render_protein.png" alt="Protein cartoon rendering" width="45%" />
+</p>
+
 ---
 
 ## Quick concepts
