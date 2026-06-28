@@ -1,7 +1,7 @@
 use cosmol_viewer::{RenderQuality, Scene, Viewer, shapes::Protein};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let protein = Protein::from_mmcif(include_str!("/6fi1.cif"))?
+    let protein = Protein::from_mmcif(include_str!("./6fi1.cif"))?
         .centered()
         .rainbow_residues();
 

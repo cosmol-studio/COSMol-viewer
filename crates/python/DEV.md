@@ -8,7 +8,6 @@ cargo run -p cosmol_viewer_python --no-default-features --features dev-stub --bi
 
 Generated file:
 
-
 ```text
 ./crates/python/cosmol_viewer.pyi
 ```

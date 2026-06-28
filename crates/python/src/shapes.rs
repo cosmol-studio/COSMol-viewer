@@ -288,6 +288,56 @@ Molecule
     }
 
     #[doc = r#"
+Use the default ball-and-stick molecule style.
+
+Atoms are rendered as spheres and bonds are rendered as sticks.
+
+Returns
+-------
+Molecule
+    The updated molecule object.
+"#]
+    pub fn ball_and_stick(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
+        slf.inner = slf.inner.clone().ball_and_stick();
+        slf
+    }
+
+    #[doc = r#"
+Use a stick-only molecule style.
+
+Bonds are rendered as sticks with same-radius endpoint spheres for smooth joins,
+following the ChimeraX stick-style model. Double and triple bonds remain visible
+as thinner parallel sticks, with spacing derived from the ChimeraX stick radius.
+Aromatic ring bonds render as a single stick plus an inner aromatic line. Van der
+Waals atom spheres are not rendered, so the result remains a compact stick
+depiction where atom colors are carried by the bond segments and junction caps.
+
+Returns
+-------
+Molecule
+    The updated molecule object.
+"#]
+    pub fn stick(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
+        slf.inner = slf.inner.clone().stick();
+        slf
+    }
+
+    #[doc = r#"
+Use a sphere-only molecule style.
+
+Atoms are rendered as spheres and bonds are not rendered.
+
+Returns
+-------
+Molecule
+    The updated molecule object.
+"#]
+    pub fn sphere(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
+        slf.inner = slf.inner.clone().sphere();
+        slf
+    }
+
+    #[doc = r#"
 Configure the molecule outline.
 
 Parameters
@@ -397,12 +447,46 @@ fn try_cosmolkit_molecule_to_viewer_molecule(molecule: &Bound<'_, PyAny>) -> PyR
 }
 
 fn cosmolkit_coords(molecule: &Bound<'_, PyAny>, atom_count: usize) -> PyResult<Vec<[f32; 3]>> {
-    if let Ok(coords) = molecule.call_method0("coords_3d") {
-        return py_rows_to_vec3(&coords, atom_count);
+    if let Some(coords) =
+        first_available_cosmolkit_coords(molecule, atom_count, &["coordinates_3d", "coords_3d"])?
+    {
+        return Ok(coords);
     }
 
-    let coords = molecule.call_method0("coords_2d")?;
-    py_rows_to_vec3(&coords, atom_count)
+    if let Some(coords) =
+        first_available_cosmolkit_coords(molecule, atom_count, &["coordinates_2d", "coords_2d"])?
+    {
+        return Ok(coords);
+    }
+
+    Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+        "COSMolKit molecule exposed no compatible coordinate method; tried coordinates_3d, coords_3d, coordinates_2d, coords_2d",
+    ))
+}
+
+fn first_available_cosmolkit_coords(
+    molecule: &Bound<'_, PyAny>,
+    atom_count: usize,
+    method_names: &[&str],
+) -> PyResult<Option<Vec<[f32; 3]>>> {
+    let mut errors = Vec::new();
+    for method_name in method_names {
+        let Ok(coords) = molecule.call_method0(*method_name) else {
+            continue;
+        };
+        match py_rows_to_vec3(&coords, atom_count) {
+            Ok(coords) => return Ok(Some(coords)),
+            Err(error) => errors.push(format!("{method_name}: {error}")),
+        }
+    }
+
+    if errors.is_empty() {
+        Ok(None)
+    } else {
+        Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            errors.join("; "),
+        ))
+    }
 }
 
 fn py_rows_to_vec3(coords: &Bound<'_, PyAny>, atom_count: usize) -> PyResult<Vec<[f32; 3]>> {

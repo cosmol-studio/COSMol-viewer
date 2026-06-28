@@ -519,7 +519,11 @@ Set the camera field of view in degrees.
 Render this scene directly to a PNG file.
 
 This path uses the native offscreen renderer and does not depend on a Viewer,
-notebook JavaScript, or the current display size.
+notebook JavaScript, or the current display size. On platforms with a headless
+GL path, the in-process renderer avoids creating a GUI event loop. If the
+in-process renderer cannot be created after a native viewer has already run,
+``save_image`` automatically retries in an isolated Python subprocess. Set
+``COSMOL_VIEWER_RENDER_ISOLATED=1`` to force the isolated path.
 
 Parameters
 ----------
@@ -555,21 +559,39 @@ background : str or [int, int, int] or [int, int, int, int], optional
         }
 
         let output_path = absolutize_output_path(path)?;
-        ImageRenderer::save_png_with_background(
+        match ImageRenderer::save_png_with_background(
             &self.inner,
             &output_path,
             width,
             height,
             background.into(),
-        )
-        .map_err(|err| PyRuntimeError::new_err(format!("Error saving image: {err}")))
+        ) {
+            Ok(()) => Ok(()),
+            Err(err) if should_retry_image_render_in_child_process(&err) => {
+                render_scene_in_child_process(
+                    &self.inner,
+                    &path_to_string(&output_path),
+                    width,
+                    height,
+                    background,
+                    false,
+                )
+            }
+            Err(err) => Err(PyRuntimeError::new_err(format!(
+                "Error saving image: {err}"
+            ))),
+        }
     }
 
     #[doc = r#"
 Render this scene directly to PNG bytes.
 
 This is useful in notebooks when you want to display or store an image without
-round-tripping through the browser canvas.
+round-tripping through the browser canvas. On platforms with a headless GL path,
+the in-process renderer avoids creating a GUI event loop. If the in-process
+renderer cannot be created after a native viewer has already run, ``to_png``
+automatically retries in an isolated Python subprocess. Set
+``COSMOL_VIEWER_RENDER_ISOLATED=1`` to force the isolated path.
 
 Parameters
 ----------
@@ -587,29 +609,24 @@ background : str or sequence, optional
     ) -> PyResult<Bound<'py, PyBytes>> {
         let background = py_to_image_background(background)?;
         if !render_images_in_child_process() {
-            let bytes = ImageRenderer::render_png_bytes_with_background(
+            match ImageRenderer::render_png_bytes_with_background(
                 &self.inner,
                 width,
                 height,
                 background.into(),
-            )
-            .map_err(|err| PyRuntimeError::new_err(format!("Error rendering image: {err}")))?;
-            return Ok(PyBytes::new(py, &bytes));
+            ) {
+                Ok(bytes) => return Ok(PyBytes::new(py, &bytes)),
+                Err(err) if !should_retry_image_render_in_child_process(&err) => {
+                    return Err(PyRuntimeError::new_err(format!(
+                        "Error rendering image: {err}"
+                    )));
+                }
+                Err(_) => {}
+            }
         }
 
-        let output_path = unique_temp_path("cosmol_viewer_image", "png")?;
-        render_scene_in_child_process(
-            &self.inner,
-            &path_to_string(&output_path),
-            width,
-            height,
-            background,
-            true,
-        )?;
-        let bytes = std::fs::read(&output_path).map_err(|err| {
-            PyRuntimeError::new_err(format!("Error reading rendered image: {err}"))
-        })?;
-        let _ = std::fs::remove_file(output_path);
+        let bytes =
+            render_scene_to_png_bytes_in_child_process(&self.inner, width, height, background)?;
         Ok(PyBytes::new(py, &bytes))
     }
 
@@ -726,6 +743,27 @@ fn render_scene_in_child_process(
     )))
 }
 
+fn render_scene_to_png_bytes_in_child_process(
+    scene: &_Scene,
+    width: u32,
+    height: u32,
+    background: StaticImageBackground,
+) -> PyResult<Vec<u8>> {
+    let output_path = unique_temp_path("cosmol_viewer_image", "png")?;
+    render_scene_in_child_process(
+        scene,
+        &path_to_string(&output_path),
+        width,
+        height,
+        background,
+        true,
+    )?;
+    let bytes = std::fs::read(&output_path)
+        .map_err(|err| PyRuntimeError::new_err(format!("Error reading rendered image: {err}")))?;
+    let _ = std::fs::remove_file(output_path);
+    Ok(bytes)
+}
+
 fn render_images_in_child_process() -> bool {
     std::env::var("COSMOL_VIEWER_RENDER_ISOLATED")
         .map(|value| {
@@ -735,6 +773,11 @@ fn render_images_in_child_process() -> bool {
             )
         })
         .unwrap_or(false)
+}
+
+fn should_retry_image_render_in_child_process(error: &str) -> bool {
+    error.contains("EventLoop can't be recreated")
+        || error.contains("Offscreen rendering could not create its GL bootstrap event loop")
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]

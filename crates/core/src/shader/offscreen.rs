@@ -1,16 +1,20 @@
 use std::{ffi::CString, num::NonZeroU32, thread};
+#[cfg(target_os = "windows")]
+use std::{ffi::OsStr, num::NonZeroIsize, os::windows::ffi::OsStrExt};
 
 use eframe::glow::{self, HasContext as _};
 use egui_winit::winit::{
     event_loop::EventLoop,
-    raw_window_handle::{HasWindowHandle as _, RawWindowHandle},
+    raw_window_handle::{
+        HasWindowHandle as _, RawDisplayHandle, RawWindowHandle, WindowsDisplayHandle,
+    },
     window::{Window, WindowAttributes},
 };
 use glam::Vec4;
 use glutin::{
     config::{Config, ConfigTemplateBuilder, GlConfig},
     context::{ContextApi, ContextAttributesBuilder, GlProfile, Version},
-    display::{GetGlDisplay as _, GlDisplay as _},
+    display::{Display, DisplayApiPreference, GetGlDisplay as _, GlDisplay as _},
     prelude::*,
     surface::{PbufferSurface, Surface, SurfaceAttributesBuilder},
 };
@@ -34,6 +38,124 @@ struct OffscreenGl {
     _context: glutin::context::PossiblyCurrentContext,
     _surface: Surface<PbufferSurface>,
     _window: Option<Window>,
+    #[cfg(target_os = "windows")]
+    _win32_window: Option<HiddenWin32Window>,
+}
+
+#[cfg(target_os = "windows")]
+struct HiddenWin32Window {
+    hwnd: windows_sys::Win32::Foundation::HWND,
+    hinstance: windows_sys::Win32::Foundation::HINSTANCE,
+    class_name: Vec<u16>,
+}
+
+#[cfg(target_os = "windows")]
+unsafe impl Send for HiddenWin32Window {}
+
+#[cfg(target_os = "windows")]
+impl HiddenWin32Window {
+    fn new(class_name: &str) -> Result<Self, String> {
+        use windows_sys::Win32::{
+            Foundation::HWND,
+            System::LibraryLoader::GetModuleHandleW,
+            UI::WindowsAndMessaging::{
+                CS_OWNDC, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, RegisterClassW,
+                WNDCLASSW, WS_DISABLED, WS_OVERLAPPED,
+            },
+        };
+
+        let class_name = wide_null(class_name);
+        let title = wide_null("cosmol_viewer_offscreen_context");
+        let hinstance = unsafe { GetModuleHandleW(std::ptr::null()) };
+        if hinstance.is_null() {
+            return Err(format!(
+                "GetModuleHandleW failed: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+
+        let wc = WNDCLASSW {
+            style: CS_OWNDC,
+            lpfnWndProc: Some(DefWindowProcW),
+            hInstance: hinstance,
+            lpszClassName: class_name.as_ptr(),
+            ..Default::default()
+        };
+        let atom = unsafe { RegisterClassW(&wc) };
+        if atom == 0 {
+            let error = std::io::Error::last_os_error();
+            const ERROR_CLASS_ALREADY_EXISTS: i32 = 1410;
+            if error.raw_os_error() != Some(ERROR_CLASS_ALREADY_EXISTS) {
+                return Err(format!("RegisterClassW failed: {error}"));
+            }
+        }
+
+        let hwnd = unsafe {
+            CreateWindowExW(
+                0,
+                class_name.as_ptr(),
+                title.as_ptr(),
+                WS_OVERLAPPED | WS_DISABLED,
+                CW_USEDEFAULT,
+                CW_USEDEFAULT,
+                1,
+                1,
+                std::ptr::null_mut::<std::ffi::c_void>() as HWND,
+                std::ptr::null_mut(),
+                hinstance,
+                std::ptr::null(),
+            )
+        };
+        if hwnd.is_null() {
+            return Err(format!(
+                "CreateWindowExW failed: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+
+        Ok(Self {
+            hwnd,
+            hinstance,
+            class_name,
+        })
+    }
+
+    fn raw_window_handle(&self) -> Result<RawWindowHandle, String> {
+        use egui_winit::winit::raw_window_handle::Win32WindowHandle;
+
+        let hwnd = NonZeroIsize::new(self.hwnd as isize)
+            .ok_or_else(|| "hidden Win32 window has null HWND".to_owned())?;
+        let hinstance = NonZeroIsize::new(self.hinstance as isize);
+        let mut handle = Win32WindowHandle::new(hwnd);
+        handle.hinstance = hinstance;
+        Ok(RawWindowHandle::Win32(handle))
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Drop for HiddenWin32Window {
+    fn drop(&mut self) {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{DestroyWindow, UnregisterClassW};
+
+        unsafe {
+            let _ = DestroyWindow(self.hwnd);
+            let _ = UnregisterClassW(self.class_name.as_ptr(), self.hinstance);
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn wide_null(value: &str) -> Vec<u16> {
+    OsStr::new(value).encode_wide().chain(Some(0)).collect()
+}
+
+#[cfg(target_os = "windows")]
+fn unique_wgl_class_name() -> String {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static COUNTER: AtomicUsize = AtomicUsize::new(0);
+    let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("cosmol_viewer_offscreen_wgl_{}_{}", std::process::id(), id)
 }
 
 impl ImageRenderer {
@@ -115,6 +237,16 @@ impl OffscreenGl {
             return Self::new_headless_egl(width, height);
         }
 
+        #[cfg(target_os = "windows")]
+        match Self::new_headless_wgl(width, height) {
+            Ok(gl) => return Ok(gl),
+            Err(err) => {
+                eprintln!(
+                    "[WARN] Headless WGL offscreen initialization failed; falling back to winit bootstrap: {err}"
+                );
+            }
+        }
+
         Self::new_with_winit(width, height)
     }
 
@@ -140,6 +272,37 @@ impl OffscreenGl {
             .map(|handle| handle.as_raw());
 
         Self::new_from_config(width, height, gl_config, raw_window_handle, window)
+    }
+
+    #[cfg(target_os = "windows")]
+    fn new_headless_wgl(width: NonZeroU32, height: NonZeroU32) -> Result<Self, String> {
+        let window = HiddenWin32Window::new(&unique_wgl_class_name())?;
+        let raw_window_handle = window.raw_window_handle()?;
+        let raw_display = RawDisplayHandle::Windows(WindowsDisplayHandle::new());
+        let gl_display = unsafe {
+            Display::new(
+                raw_display,
+                DisplayApiPreference::Wgl(Some(raw_window_handle)),
+            )
+            .map_err(|err| err.to_string())?
+        };
+        let template = offscreen_config_template_builder(width, height).build();
+        let gl_config = unsafe {
+            gl_display
+                .find_configs(template)
+                .map_err(|err| err.to_string())?
+                .max_by_key(|config| config.num_samples())
+                .ok_or_else(|| "WGL display returned no GL configs".to_owned())?
+        };
+
+        Self::new_from_config_with_win32_window(
+            width,
+            height,
+            gl_config,
+            Some(raw_window_handle),
+            window,
+        )
+        .map_err(|err| format!("WGL display: {err}"))
     }
 
     #[cfg(target_os = "linux")]
@@ -272,7 +435,22 @@ impl OffscreenGl {
             _context: context,
             _surface: surface,
             _window: window,
+            #[cfg(target_os = "windows")]
+            _win32_window: None,
         })
+    }
+
+    #[cfg(target_os = "windows")]
+    fn new_from_config_with_win32_window(
+        width: NonZeroU32,
+        height: NonZeroU32,
+        gl_config: Config,
+        raw_window_handle: Option<RawWindowHandle>,
+        win32_window: HiddenWin32Window,
+    ) -> Result<Self, String> {
+        let mut gl = Self::new_from_config(width, height, gl_config, raw_window_handle, None)?;
+        gl._win32_window = Some(win32_window);
+        Ok(gl)
     }
 
     fn render(

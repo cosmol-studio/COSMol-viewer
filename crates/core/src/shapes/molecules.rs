@@ -1,4 +1,6 @@
 pub use crate::utils::Logger;
+use std::collections::VecDeque;
+
 use crate::utils::{Color, InstanceGroups, OutlineInstanceGroup, OutlineSettings};
 use crate::{
     Shape,
@@ -493,6 +495,28 @@ impl Molecule {
         self
     }
 
+    /// Display atoms as spheres and bonds as sticks. This is the default style.
+    pub fn ball_and_stick(mut self) -> Self {
+        self.style = MoleculeStyle::BallAndStick;
+        self
+    }
+
+    /// Display bonds as ChimeraX-style sticks with same-radius endpoint spheres for smooth joins.
+    ///
+    /// Double and triple bonds remain visible, using thinner parallel sticks with spacing derived
+    /// from the ChimeraX stick radius. Aromatic ring bonds render as a single stick plus an inner
+    /// aromatic line.
+    pub fn stick(mut self) -> Self {
+        self.style = MoleculeStyle::Stick;
+        self
+    }
+
+    /// Display only atoms as spheres, without bonds.
+    pub fn sphere(mut self) -> Self {
+        self.style = MoleculeStyle::Sphere;
+        self
+    }
+
     pub fn to_mesh(&self, _scale: f32) -> MeshData {
         MeshData::default()
     }
@@ -532,6 +556,10 @@ fn scaled_point(point: [f32; 3], scale: f32) -> [f32; 3] {
 }
 
 const BOND_EPSILON: f32 = 1.0e-6;
+const CHIMERAX_STICK_RADIUS: f32 = 0.2;
+const CHIMERAX_MULTIBOND_GAP: f32 = 0.02;
+const AROMATIC_LINE_RADIUS_SCALE: f32 = 0.38;
+const AROMATIC_LINE_GAP: f32 = 0.02;
 
 fn perpendicular_unit_vector(dir: Vec3) -> Vec3 {
     let up = if dir.x.abs() < 0.9 { Vec3::X } else { Vec3::Y };
@@ -564,6 +592,97 @@ fn bond_offset_direction(
         .next()
 }
 
+fn aromatic_ring_offsets(
+    atom_posits: &[Vec3],
+    bond_indices: &[[usize; 2]],
+    bond_types: &[BondType],
+) -> Vec<Option<Vec3>> {
+    let mut offsets = vec![None; bond_indices.len()];
+    let mut adjacency = vec![Vec::<(usize, usize)>::new(); atom_posits.len()];
+
+    for (bond_index, [a, b]) in bond_indices.iter().enumerate() {
+        if bond_types.get(bond_index) != Some(&BondType::AROMATIC) {
+            continue;
+        }
+        if *a >= atom_posits.len() || *b >= atom_posits.len() {
+            continue;
+        }
+        adjacency[*a].push((*b, bond_index));
+        adjacency[*b].push((*a, bond_index));
+    }
+
+    for (bond_index, _) in bond_indices.iter().enumerate() {
+        if bond_types.get(bond_index) != Some(&BondType::AROMATIC) {
+            continue;
+        }
+        offsets[bond_index] =
+            aromatic_bond_inner_offset(bond_index, atom_posits, bond_indices, &adjacency);
+    }
+
+    offsets
+}
+
+fn aromatic_bond_inner_offset(
+    bond_index: usize,
+    atom_posits: &[Vec3],
+    bond_indices: &[[usize; 2]],
+    adjacency: &[Vec<(usize, usize)>],
+) -> Option<Vec3> {
+    let [start, goal] = *bond_indices.get(bond_index)?;
+    if start >= atom_posits.len() || goal >= atom_posits.len() {
+        return None;
+    }
+
+    let mut queue = VecDeque::from([start]);
+    let mut visited = vec![false; atom_posits.len()];
+    let mut previous = vec![None::<usize>; atom_posits.len()];
+    visited[start] = true;
+
+    while let Some(current) = queue.pop_front() {
+        for &(next, edge_index) in &adjacency[current] {
+            if edge_index == bond_index || visited[next] {
+                continue;
+            }
+
+            visited[next] = true;
+            previous[next] = Some(current);
+            if next == goal {
+                break;
+            }
+
+            queue.push_back(next);
+        }
+    }
+
+    if !visited[goal] {
+        return None;
+    }
+
+    let mut cycle_atoms = vec![goal];
+    let mut current = goal;
+    while current != start {
+        current = previous[current]?;
+        cycle_atoms.push(current);
+    }
+
+    if cycle_atoms.len() < 3 {
+        return None;
+    }
+
+    let center = cycle_atoms
+        .iter()
+        .map(|atom| atom_posits[*atom])
+        .sum::<Vec3>()
+        / cycle_atoms.len() as f32;
+
+    let bond = atom_posits[goal] - atom_posits[start];
+    let dir = bond.try_normalize()?;
+    let midpoint = 0.5 * (atom_posits[start] + atom_posits[goal]);
+    let inward = center - midpoint;
+    let projected = inward - dir * inward.dot(dir);
+    projected.try_normalize()
+}
+
 impl IntoInstanceGroups for Molecule {
     fn to_instance_group(&self, scale: f32) -> InstanceGroups {
         let mut groups = InstanceGroups {
@@ -574,82 +693,168 @@ impl IntoInstanceGroups for Molecule {
 
         let alpha = self.visual_style.opacity.clamp(0.0, 1.0);
         let material = [Material::default().roughness, Material::default().metallic];
+        let aromatic_offsets =
+            aromatic_ring_offsets(&self.atom_posits, &self.bond_indices, &self.bond_types);
 
-        for (i, pos) in self.atom_posits.iter().enumerate() {
-            let color = self.get_atom_colors(i);
-            groups.spheres.push(SphereInstance::new(
-                [pos[0] * scale, pos[1] * scale, pos[2] * scale],
-                self.atom_types.get(i).map(|x| my_radius(x) * 0.2).unwrap() * scale,
-                [color[0], color[1], color[2], alpha],
-                material,
-            ));
+        if matches!(
+            self.style,
+            MoleculeStyle::BallAndStick | MoleculeStyle::Sphere
+        ) {
+            for (i, pos) in self.atom_posits.iter().enumerate() {
+                let color = self.get_atom_colors(i);
+                groups.spheres.push(SphereInstance::new(
+                    [pos[0] * scale, pos[1] * scale, pos[2] * scale],
+                    self.atom_types.get(i).map(|x| my_radius(x) * 0.2).unwrap() * scale,
+                    [color[0], color[1], color[2], alpha],
+                    material,
+                ));
+            }
         }
 
-        for (i, bond) in self.bond_indices.iter().enumerate() {
-            let [a, b] = bond;
-            let pos_a = self.atom_posits[*a];
-            let pos_b = self.atom_posits[*b];
+        if matches!(
+            self.style,
+            MoleculeStyle::BallAndStick | MoleculeStyle::Stick
+        ) {
+            for (i, bond) in self.bond_indices.iter().enumerate() {
+                let [a, b] = bond;
+                let pos_a = self.atom_posits[*a];
+                let pos_b = self.atom_posits[*b];
 
-            let bond_type = self.bond_types.get(i).unwrap_or(&BondType::SINGLE);
+                let bond_type = self.bond_types.get(i).unwrap_or(&BondType::SINGLE);
 
-            let bond_dir = pos_b - pos_a;
-            if bond_dir.length_squared() <= BOND_EPSILON * BOND_EPSILON {
-                continue;
-            }
-            let Some(dir_n) = bond_dir.try_normalize() else {
-                continue;
-            };
+                let bond_dir = pos_b - pos_a;
+                if bond_dir.length_squared() <= BOND_EPSILON * BOND_EPSILON {
+                    continue;
+                }
+                let Some(dir_n) = bond_dir.try_normalize() else {
+                    continue;
+                };
 
-            // 颜色和半径与原来一致
-            let color_a = self.get_bond_atom_color(*a);
-            let color_b = self.get_bond_atom_color(*b);
-            let color_a = [color_a[0], color_a[1], color_a[2], alpha];
-            let color_b = [color_b[0], color_b[1], color_b[2], alpha];
+                let color_a = self.get_bond_atom_color(*a);
+                let color_b = self.get_bond_atom_color(*b);
+                let color_a = [color_a[0], color_a[1], color_a[2], alpha];
+                let color_b = [color_b[0], color_b[1], color_b[2], alpha];
 
-            // 根据键类型生成多个 stick
-            let (num_sticks, radius) = match bond_type {
-                BondType::SINGLE => (1, 0.135),
-                BondType::DOUBLE => (2, 0.09),
-                BondType::TRIPLE => (3, 0.05),
-                BondType::AROMATIC => (2, 0.09),
-                _ => (1, 0.05), // aromatic等以后再处理
-            };
-            let offset_step = match bond_type {
-                BondType::TRIPLE => 0.14,
-                _ => 0.22,
-            };
-            let off_n = if num_sticks > 1 {
-                bond_offset_direction(*a, *b, &self.atom_posits, &self.bond_indices, dir_n)
-                    .or_else(|| {
-                        bond_offset_direction(*b, *a, &self.atom_posits, &self.bond_indices, dir_n)
-                    })
-                    .unwrap_or_else(|| perpendicular_unit_vector(dir_n))
-            } else {
-                Vec3::ZERO
-            };
+                let (num_sticks, radius, offset_step) = match (self.style, *bond_type) {
+                    (MoleculeStyle::Stick, BondType::SINGLE) => (1, CHIMERAX_STICK_RADIUS, 0.0),
+                    (MoleculeStyle::Stick, BondType::DOUBLE) => {
+                        let radius = CHIMERAX_STICK_RADIUS * 0.5;
+                        (2, radius, radius * 2.0 + CHIMERAX_MULTIBOND_GAP)
+                    }
+                    (MoleculeStyle::Stick, BondType::TRIPLE) => {
+                        let radius = CHIMERAX_STICK_RADIUS / 3.0;
+                        (3, radius, radius * 2.0 + CHIMERAX_MULTIBOND_GAP)
+                    }
+                    (MoleculeStyle::Stick, BondType::AROMATIC) => (1, CHIMERAX_STICK_RADIUS, 0.0),
+                    (MoleculeStyle::Stick, _) => (1, CHIMERAX_STICK_RADIUS, 0.0),
+                    (_, BondType::SINGLE) => (1, 0.135, 0.22),
+                    (_, BondType::DOUBLE) => (2, 0.09, 0.22),
+                    (_, BondType::TRIPLE) => (3, 0.05, 0.14),
+                    (_, BondType::AROMATIC) => (1, 0.135, 0.0),
+                    _ => (1, 0.05, 0.22),
+                };
+                let off_n = if num_sticks > 1 {
+                    bond_offset_direction(*a, *b, &self.atom_posits, &self.bond_indices, dir_n)
+                        .or_else(|| {
+                            bond_offset_direction(
+                                *b,
+                                *a,
+                                &self.atom_posits,
+                                &self.bond_indices,
+                                dir_n,
+                            )
+                        })
+                        .unwrap_or_else(|| perpendicular_unit_vector(dir_n))
+                } else {
+                    Vec3::ZERO
+                };
 
-            for k in 0..num_sticks {
-                let offset_mul = (k as f32 - (num_sticks - 1) as f32 * 0.5) * offset_step;
+                for k in 0..num_sticks {
+                    let offset_mul = (k as f32 - (num_sticks - 1) as f32 * 0.5) * offset_step;
 
-                let pos_a_k = pos_a + off_n * offset_mul;
-                let pos_b_k = pos_b + off_n * offset_mul;
-                let midpoint = 0.5 * (pos_a_k + pos_b_k);
+                    let pos_a_k = pos_a + off_n * offset_mul;
+                    let pos_b_k = pos_b + off_n * offset_mul;
+                    let midpoint = 0.5 * (pos_a_k + pos_b_k);
+                    let scaled_pos_a = scaled_point(pos_a_k.to_array(), scale);
+                    let scaled_pos_b = scaled_point(pos_b_k.to_array(), scale);
+                    let scaled_midpoint = scaled_point(midpoint.to_array(), scale);
+                    let scaled_radius = radius * scale;
 
-                groups.sticks.push(StickInstance::new(
-                    scaled_point(pos_a_k.to_array(), scale),
-                    scaled_point(midpoint.to_array(), scale),
-                    radius * scale,
-                    color_a,
-                    material,
-                ));
+                    if matches!(self.style, MoleculeStyle::Stick) {
+                        groups.spheres.push(SphereInstance::new(
+                            scaled_pos_a,
+                            scaled_radius,
+                            color_a,
+                            material,
+                        ));
+                        groups.spheres.push(SphereInstance::new(
+                            scaled_pos_b,
+                            scaled_radius,
+                            color_b,
+                            material,
+                        ));
+                    }
 
-                groups.sticks.push(StickInstance::new(
-                    scaled_point(pos_b_k.to_array(), scale),
-                    scaled_point(midpoint.to_array(), scale),
-                    radius * scale,
-                    color_b,
-                    material,
-                ));
+                    groups.sticks.push(StickInstance::new(
+                        scaled_pos_a,
+                        scaled_midpoint,
+                        scaled_radius,
+                        color_a,
+                        material,
+                    ));
+
+                    groups.sticks.push(StickInstance::new(
+                        scaled_pos_b,
+                        scaled_midpoint,
+                        scaled_radius,
+                        color_b,
+                        material,
+                    ));
+                }
+
+                if *bond_type == BondType::AROMATIC {
+                    let aromatic_radius = radius * AROMATIC_LINE_RADIUS_SCALE;
+                    let aromatic_offset = radius + aromatic_radius + AROMATIC_LINE_GAP;
+                    if let Some(inward) = aromatic_offsets[i] {
+                        let pos_a_k = pos_a + inward * aromatic_offset;
+                        let pos_b_k = pos_b + inward * aromatic_offset;
+                        let midpoint = 0.5 * (pos_a_k + pos_b_k);
+                        let scaled_pos_a = scaled_point(pos_a_k.to_array(), scale);
+                        let scaled_pos_b = scaled_point(pos_b_k.to_array(), scale);
+                        let scaled_midpoint = scaled_point(midpoint.to_array(), scale);
+                        let scaled_radius = aromatic_radius * scale;
+
+                        if matches!(self.style, MoleculeStyle::Stick) {
+                            groups.spheres.push(SphereInstance::new(
+                                scaled_pos_a,
+                                scaled_radius,
+                                color_a,
+                                material,
+                            ));
+                            groups.spheres.push(SphereInstance::new(
+                                scaled_pos_b,
+                                scaled_radius,
+                                color_b,
+                                material,
+                            ));
+                        }
+
+                        groups.sticks.push(StickInstance::new(
+                            scaled_pos_a,
+                            scaled_midpoint,
+                            scaled_radius,
+                            color_a,
+                            material,
+                        ));
+                        groups.sticks.push(StickInstance::new(
+                            scaled_pos_b,
+                            scaled_midpoint,
+                            scaled_radius,
+                            color_b,
+                            material,
+                        ));
+                    }
+                }
             }
         }
         if self.outline.enabled && self.outline.width > 0.0 {
@@ -940,6 +1145,175 @@ $$$$
                 .all(|value| value.is_finite())
                 && stick.radius.is_finite()
         }));
+    }
+
+    #[test]
+    fn molecule_style_controls_generated_instances() {
+        let molecule = Molecule::from_atom_bond_data(
+            vec![6, 8],
+            vec![[0.0, 0.0, 0.0], [1.2, 0.0, 0.0]],
+            vec![1],
+            vec![[0, 1]],
+            None,
+        )
+        .expect("minimal molecule should convert");
+
+        let ball_and_stick = molecule.clone().ball_and_stick().to_instance_group(1.0);
+        assert_eq!(ball_and_stick.spheres.len(), 2);
+        assert_eq!(ball_and_stick.sticks.len(), 2);
+
+        let stick = molecule.clone().stick().to_instance_group(1.0);
+        assert_eq!(stick.spheres.len(), 2);
+        assert_eq!(stick.sticks.len(), 2);
+        assert!(
+            stick
+                .spheres
+                .iter()
+                .all(|sphere| (sphere.radius - CHIMERAX_STICK_RADIUS).abs() < 1.0e-6)
+        );
+
+        let sphere = molecule.sphere().to_instance_group(1.0);
+        assert_eq!(sphere.spheres.len(), 2);
+        assert!(sphere.sticks.is_empty());
+    }
+
+    #[test]
+    fn stick_style_preserves_bond_order_with_chimerax_scaled_spacing() {
+        let molecule = Molecule::from_atom_bond_data(
+            vec![6, 8, 7],
+            vec![[0.0, 0.0, 0.0], [1.2, 0.0, 0.0], [2.4, 0.0, 0.0]],
+            vec![2, 3],
+            vec![[0, 1], [1, 2]],
+            None,
+        )
+        .expect("minimal molecule should convert");
+
+        let groups = molecule.stick().to_instance_group(1.0);
+
+        assert_eq!(groups.sticks.len(), 10);
+        assert_eq!(groups.spheres.len(), 10);
+
+        let double_radius = CHIMERAX_STICK_RADIUS * 0.5;
+        let triple_radius = CHIMERAX_STICK_RADIUS / 3.0;
+        let double_spacing = double_radius * 2.0 + CHIMERAX_MULTIBOND_GAP;
+        let triple_spacing = triple_radius * 2.0 + CHIMERAX_MULTIBOND_GAP;
+
+        assert!(
+            groups.spheres[0..4]
+                .iter()
+                .all(|sphere| (sphere.radius - double_radius).abs() < 1.0e-6)
+        );
+        assert!(
+            (distance_between(groups.spheres[0].position, groups.spheres[2].position)
+                - double_spacing)
+                .abs()
+                < 1.0e-6
+        );
+        assert!(
+            groups.spheres[4..10]
+                .iter()
+                .all(|sphere| (sphere.radius - triple_radius).abs() < 1.0e-6)
+        );
+        assert!(
+            (distance_between(groups.spheres[4].position, groups.spheres[6].position)
+                - triple_spacing)
+                .abs()
+                < 1.0e-6
+        );
+    }
+
+    #[test]
+    fn aromatic_ring_renders_single_sticks_with_inner_aromatic_lines() {
+        let angle = std::f32::consts::TAU / 6.0;
+        let atom_posits = (0..6)
+            .map(|i| {
+                let theta = angle * i as f32;
+                [theta.cos(), theta.sin(), 0.0]
+            })
+            .collect::<Vec<_>>();
+        let bonds = (0..6).map(|i| [i, (i + 1) % 6]).collect::<Vec<_>>();
+        let molecule =
+            Molecule::from_atom_bond_data(vec![6; 6], atom_posits, vec![5; 6], bonds, None)
+                .expect("aromatic ring should convert");
+
+        let ball_and_stick = molecule.clone().ball_and_stick().to_instance_group(1.0);
+        assert_eq!(ball_and_stick.spheres.len(), 6);
+        assert_eq!(ball_and_stick.sticks.len(), 24);
+        assert_eq!(
+            ball_and_stick
+                .sticks
+                .iter()
+                .filter(|stick| (stick.radius - 0.135).abs() < 1.0e-6)
+                .count(),
+            12
+        );
+        assert_eq!(
+            ball_and_stick
+                .sticks
+                .iter()
+                .filter(|stick| {
+                    (stick.radius - 0.135 * AROMATIC_LINE_RADIUS_SCALE).abs() < 1.0e-6
+                })
+                .count(),
+            12
+        );
+
+        let stick = molecule.stick().to_instance_group(1.0);
+        let aromatic_radius = CHIMERAX_STICK_RADIUS * AROMATIC_LINE_RADIUS_SCALE;
+        assert_eq!(stick.sticks.len(), 24);
+        assert_eq!(stick.spheres.len(), 24);
+        assert_eq!(
+            stick
+                .spheres
+                .iter()
+                .filter(|sphere| (sphere.radius - CHIMERAX_STICK_RADIUS).abs() < 1.0e-6)
+                .count(),
+            12
+        );
+        assert_eq!(
+            stick
+                .spheres
+                .iter()
+                .filter(|sphere| (sphere.radius - aromatic_radius).abs() < 1.0e-6)
+                .count(),
+            12
+        );
+    }
+
+    #[test]
+    fn non_ring_aromatic_bond_renders_as_single_stick_only() {
+        let molecule = Molecule::from_atom_bond_data(
+            vec![6, 6],
+            vec![[0.0, 0.0, 0.0], [1.4, 0.0, 0.0]],
+            vec![5],
+            vec![[0, 1]],
+            None,
+        )
+        .expect("linear aromatic bond should convert");
+
+        let ball_and_stick = molecule.clone().ball_and_stick().to_instance_group(1.0);
+        assert_eq!(ball_and_stick.spheres.len(), 2);
+        assert_eq!(ball_and_stick.sticks.len(), 2);
+        assert!(
+            ball_and_stick
+                .sticks
+                .iter()
+                .all(|stick| (stick.radius - 0.135).abs() < 1.0e-6)
+        );
+
+        let stick = molecule.stick().to_instance_group(1.0);
+        assert_eq!(stick.spheres.len(), 2);
+        assert_eq!(stick.sticks.len(), 2);
+        assert!(
+            stick
+                .spheres
+                .iter()
+                .all(|sphere| (sphere.radius - CHIMERAX_STICK_RADIUS).abs() < 1.0e-6)
+        );
+    }
+
+    fn distance_between(a: [f32; 3], b: [f32; 3]) -> f32 {
+        Vec3::from(a).distance(Vec3::from(b))
     }
 
     #[test]

@@ -76,10 +76,11 @@ scene.save_image("rendered_scene.png", width=1600, height=1000)
 ```
 
 Static exports and native interactive viewers both bootstrap native GL on
-desktop. Until the offscreen backend is fully winit-free, use `save_image` /
-`to_png` / `display` as a static workflow, or use `Viewer.render` as an
-interactive workflow; do not call static export immediately before
-`Viewer.render` in the same native process.
+desktop. `save_image` / `to_png` first try the fast in-process offscreen path;
+on platforms with a headless GL path, this avoids creating a GUI event loop. If
+the in-process path cannot be created after a native viewer has already run,
+they automatically retry in an isolated Python subprocess. Set
+`COSMOL_VIEWER_RENDER_ISOLATED=1` to force that isolated path.
 
 For an interactive native window:
 

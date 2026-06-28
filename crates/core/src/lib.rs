@@ -134,7 +134,7 @@ impl<L: Logger> eframe::App for App<L> {
                     .outer_margin(0.0)
                     .stroke(Stroke::new(0.0, Color32::from_rgb(30, 200, 30))),
             )
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.set_height(ui.available_height());
 
@@ -246,10 +246,10 @@ impl NativeGuiViewer {
                 viewport: ViewportBuilder::default()
                     .with_inner_size(Vec2::new(width, height))
                     .with_icon(icon),
-                vsync: native_vsync(),
                 depth_buffer: native_depth_buffer(),
                 multisampling: native_multisampling(),
                 renderer: Renderer::Glow,
+                glow_options: native_glow_options(),
                 event_loop_builder,
                 ..Default::default()
             };
@@ -353,10 +353,10 @@ impl NativeGuiViewer {
 
             let native_options = NativeOptions {
                 viewport: ViewportBuilder::default().with_inner_size(Vec2::new(width, height)),
-                vsync: native_vsync(),
                 depth_buffer: native_depth_buffer(),
                 multisampling: native_multisampling(),
                 renderer: Renderer::Glow,
+                glow_options: native_glow_options(),
                 event_loop_builder,
                 ..Default::default()
             };
@@ -413,6 +413,14 @@ fn native_vsync() -> bool {
             _ => None,
         })
         .unwrap_or(true)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn native_glow_options() -> eframe::egui_glow::GlowConfiguration {
+    eframe::egui_glow::GlowConfiguration {
+        vsync: native_vsync(),
+        ..Default::default()
+    }
 }
 
 fn load_icon() -> IconData {
