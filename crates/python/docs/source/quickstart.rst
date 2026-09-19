@@ -1,3 +1,6 @@
+.. meta::
+   :description: Render your first molecular scene to PNG, display it in a notebook, and open an interactive COSMol Viewer canvas.
+
 Quick Start
 ===========
 

@@ -1,3 +1,6 @@
+.. meta::
+   :description: Load SDF molecules and COSMolKit conformers, choose molecular representations, and configure colors, materials, and outlines.
+
 Molecules
 =========
 
@@ -43,6 +46,12 @@ Representations
 
 The stick representation retains double and triple bond separation and renders
 aromatic bonds as a single stick with an inner aromatic line.
+
+.. figure:: https://pub-0588ab5197fd48f28b5c91f067adf8f4.r2.dev/image/render_molecule_stick.png
+   :alt: Molecular stick representation with atom colors and outlines
+   :width: 100%
+
+   A molecular stick rendering produced by COSMol Viewer.
 
 Materials and Outlines
 ----------------------

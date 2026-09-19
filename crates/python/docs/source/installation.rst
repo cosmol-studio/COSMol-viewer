@@ -1,3 +1,6 @@
+.. meta::
+   :description: Install COSMol Viewer from PyPI, verify the installation, and choose a desktop, notebook, or headless rendering environment.
+
 Installation
 ============
 

@@ -461,12 +461,43 @@ impl Animation {
         }
     }
 
+    /// Set the time between animation frames in seconds.
+    pub fn set_interval(&mut self, interval: f32) {
+        self.interval = (interval * 1000.0) as u64;
+    }
+
+    /// Set the number of animation loops. Use -1 for infinite looping.
+    pub fn set_loops(&mut self, loops: i64) {
+        self.loops = loops;
+    }
+
+    /// Enable or disable interpolation between animation frames.
+    pub fn set_interpolate(&mut self, interpolate: bool) {
+        self.interpolate = interpolate;
+    }
+
     pub fn add_frame(&mut self, frame: Scene) {
         self.frames.push(frame);
     }
 
     pub fn set_static_scene(&mut self, scene: Scene) {
         self.static_scene = Some(scene);
+    }
+}
+
+#[cfg(test)]
+mod animation_tests {
+    use super::Animation;
+
+    #[test]
+    fn set_playback_options_updates_animation_state() {
+        let mut animation = Animation::new(0.05, -1, false);
+        animation.set_interval(0.02);
+        animation.set_loops(3);
+        animation.set_interpolate(true);
+        assert_eq!(animation.interval, 20);
+        assert_eq!(animation.loops, 3);
+        assert!(animation.interpolate);
     }
 }
 

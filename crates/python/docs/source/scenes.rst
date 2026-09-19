@@ -1,3 +1,6 @@
+.. meta::
+   :description: Compose named shapes and configure camera angles, lighting, backgrounds, and depth cueing in COSMol Viewer scenes.
+
 Scenes, Camera, and Lighting
 ============================
 
@@ -45,6 +48,8 @@ For a native interactive viewer, camera parameter logging prints a compact
 
 .. code-block:: python
 
+   from cosmol_viewer import Viewer
+
    viewer = Viewer.render(scene, width=800, height=500)
    viewer.set_camera_parameter_logging(True)
 
@@ -60,6 +65,7 @@ Background and Depth Cueing
    scene.set_depth_cue_range(0.3, 1.0)
 
 Depth cueing fades distant fragments toward the scene background by default.
+It is disabled initially; its default fractional range is ``0.5..1.0``.
 Use ``set_depth_cue_color()`` to choose a different cue color. Transparent
 interactive canvases are enabled with ``set_transparent_background(True)``;
 static exports can independently request a transparent output background.
@@ -77,5 +83,7 @@ Lighting
        color="#fff7f7",
    )
 
-These are the renderer defaults. ``set_ambient_light()``,
+These values approximate the renderer defaults (the default light color is
+stored as floating-point RGB ``[1.0, 0.97, 0.97]``).
+``set_ambient_light()``,
 ``set_light_intensity()``, and ``set_light_color()`` update individual terms.

@@ -1,83 +1,98 @@
-name: docs
+name: Dioxus documentation
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   pull_request:
-    branches:
-      - main
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
-  group: pages
+  group: viewer-documentation-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   build:
-    name: build docs
+    name: Build and validate documentation
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Setup Rust cache
-        uses: Swatinem/rust-cache@v2
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: viewer-docs-dioxus-0.7.10
+          workspaces: docs-web -> target
+          cache-targets: true
+          cache-all-crates: true
+          cache-workspace-crates: true
+          cache-on-failure: true
+          cache-directories: |
+            ~/.local/share/.dx
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
-      - name: Setup uv
-        uses: astral-sh/setup-uv@v6
-
-      - name: Create documentation environment
+      - uses: astral-sh/setup-uv@v6
+      - name: Install released wheel and documentation tools
         run: |
-          uv venv --python 3.11 .venv
-          uv pip install --python .venv/bin/python "maturin>=1.7,<2.0" "sphinx>=8,<10" "furo>=2024.8.6"
-
-      - name: Prepare embedded WebAssembly assets
+          uv venv --python 3.11 docs-web/.venv
+          uv pip install --python docs-web/.venv/bin/python --only-binary=:all: -r docs-web/requirements.txt
+          docs-web/.venv/bin/python -m playwright install --with-deps chromium
+      - name: Test deployment scripts
+        run: docs-web/.venv/bin/python -m unittest discover -s docs-web/scripts -p 'test_*.py' -v
+      - name: Build Sphinx source
+        run: docs-web/.venv/bin/python -m sphinx -W --keep-going -E -b html crates/python/docs/source crates/python/docs/_build/html
+      - uses: cargo-bins/cargo-binstall@main
+      - name: Install Dioxus and search tooling
         run: |
-          mkdir -p crates/wasm/pkg
-          touch crates/wasm/pkg/cosmol_viewer_wasm.js
-          touch crates/wasm/pkg/cosmol_viewer_wasm_bg.wasm
-
-      - name: Install Python package
-        run: .venv/bin/maturin develop --manifest-path crates/python/Cargo.toml
-
-      - name: Build HTML documentation
+          cargo binstall dioxus-cli --version 0.7.10 --no-confirm --disable-strategies compile
+          docs-web/.venv/bin/python docs-web/scripts/build_search_bundle.py --install-tools
+      - name: Test Rust search engine
+        run: cargo test --manifest-path docs-web/Cargo.toml --lib --no-default-features --features search-engine --release --target-dir docs-web/target/search-engine --locked
+      - name: Build static Dioxus site
+        working-directory: docs-web
         run: |
-          rm -rf crates/python/docs/_build/html
-          .venv/bin/python -m sphinx -W --keep-going -E -b html crates/python/docs/source crates/python/docs/_build/html
-
-      - name: Configure GitHub Pages
-        uses: actions/configure-pages@v5
-
-      - name: Upload documentation artifact
-        uses: actions/upload-pages-artifact@v3
+          public_dir="target/dx/cosmol-viewer-docs-web/release/web/public"
+          if [ -d "$public_dir" ]; then
+            mv "$public_dir" "$RUNNER_TEMP/viewer-docs-public-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          fi
+          dx build --release --web --fullstack true --ssg --features ssg --force-sequential
+      - name: Prepare and validate deployment
+        run: |
+          public_dir="docs-web/target/dx/cosmol-viewer-docs-web/release/web/public"
+          docs-web/.venv/bin/python docs-web/scripts/prepare_deployment.py "$public_dir" crates/python/docs/_build/html
+          docs-web/.venv/bin/python docs-web/scripts/check_ssg_output.py "$public_dir"
+          docs-web/.venv/bin/python docs-web/scripts/check_search_browser.py "$public_dir"
+          docs-web/.venv/bin/python docs-web/scripts/check_layout_browser.py "$public_dir"
+      - uses: actions/upload-artifact@v4
         with:
-          path: crates/python/docs/_build/html
+          name: viewer-docs-public
+          path: docs-web/target/dx/cosmol-viewer-docs-web/release/web/public
+          include-hidden-files: true
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: viewer-docs-screenshots
+          path: docs-web/target/screenshots
+          if-no-files-found: ignore
 
   deploy:
-    name: deploy docs
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-
     steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: viewer-docs-public
+          path: deploy/web/public
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy ./deploy/web/public/ --project-name=cosmol-viewer-docs --branch=main

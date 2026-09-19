@@ -70,13 +70,7 @@ impl Animation {
     #[new]
     pub fn new(interval: f32, loops: i64, interpolate: bool) -> Self {
         Self {
-            inner: _Animation {
-                static_scene: None,
-                frames: Vec::new(),
-                interval: (interval * 1000.0) as u64,
-                loops,
-                interpolate,
-            },
+            inner: _Animation::new(interval, loops, interpolate),
         }
     }
 
@@ -103,6 +97,43 @@ scene : Scene
 "#]
     pub fn set_static_scene(&mut self, scene: Scene) {
         self.inner.static_scene = Some(scene.inner);
+    }
+
+    #[doc = r#"
+Set the time between animation frames.
+
+Parameters
+----------
+interval : float
+    Time in seconds between frames. This uses the same unit as the
+    ``Animation`` constructor and takes effect when the animation is played.
+"#]
+    pub fn set_interval(&mut self, interval: f32) {
+        self.inner.set_interval(interval);
+    }
+
+    #[doc = r#"
+Set the number of animation loops.
+
+Parameters
+----------
+loops : int
+    Number of times to loop the animation. Use ``-1`` for infinite looping.
+"#]
+    pub fn set_loops(&mut self, loops: i64) {
+        self.inner.set_loops(loops);
+    }
+
+    #[doc = r#"
+Enable or disable interpolation between animation frames.
+
+Parameters
+----------
+interpolate : bool
+    Whether to interpolate between compatible frames for smoother visualization.
+"#]
+    pub fn set_interpolate(&mut self, interpolate: bool) {
+        self.inner.set_interpolate(interpolate);
     }
 
     #[doc = r#"

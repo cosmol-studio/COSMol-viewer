@@ -1,3 +1,6 @@
+.. meta::
+   :description: Build annotation geometry with COSMol Viewer spheres and sticks, positions, radii, colors, and materials.
+
 Geometric Shapes
 ================
 

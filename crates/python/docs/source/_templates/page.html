@@ -1,0 +1,17 @@
+{% extends "!page.html" %}
+
+{% block footer %}
+  {{ super() }}
+  <nav class="cosmol_viewer-project-links" aria-label="Project and Rust crates">
+    <p class="cosmol_viewer-project-links__title">Project and Rust crates</p>
+    <div class="cosmol_viewer-project-links__items">
+      <a href="https://github.com/cosmol-studio/COSMol-viewer">Source repository</a>
+      <a href="https://crates.io/crates/cosmol_viewer">cosmol_viewer Rust facade crate</a>
+      <a href="https://crates.io/crates/cosmol_viewer_core">cosmol_viewer_core renderer crate</a>
+      <a href="https://docs.rs/cosmol_viewer/latest/cosmol_viewer/">Rust API documentation</a>
+      <a href="https://pypi.org/project/cosmol-viewer/">COSMol Viewer Python package</a>
+      <a href="https://viewer.cosmol.org/">Documentation</a>
+      <a href="https://tools.cosmol.org/">Web tools</a>
+    </div>
+  </nav>
+{% endblock footer %}

@@ -1,7 +1,10 @@
-COSMol-viewer
+.. meta::
+   :description: COSMol Viewer Python documentation for molecular scenes, protein ribbons and surfaces, interactive viewers, animations, and PNG export.
+
+COSMol Viewer
 ==============
 
-COSMol-viewer is a Python and Rust molecular visualization library backed by a
+COSMol Viewer is a Python and Rust molecular visualization library backed by a
 shared Rust renderer. It supports static PNG export, native desktop viewers,
 interactive Jupyter and Google Colab canvases, molecular animations, protein
 cartoons, and molecular surfaces.

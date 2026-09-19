@@ -1,0 +1,237 @@
+# Documentation route contract. Generated files are build outputs.
+base_url = "https://viewer.cosmol.org/"
+social_image_source = "https://pub-0588ab5197fd48f28b5c91f067adf8f4.r2.dev/cosmol/social-card-viewer.png"
+
+[[pages]]
+component = "Home"
+path = "/"
+binding = "common"
+topic = "home"
+status = "ready"
+indexable = true
+
+[[pages]]
+component = "Python"
+path = "/python"
+binding = "python"
+topic = "landing"
+status = "ready"
+indexable = true
+docname = "index"
+
+[[pages]]
+component = "JavaScript"
+path = "/javascript"
+binding = "javascript"
+topic = "landing"
+status = "placeholder"
+indexable = false
+
+[[pages]]
+component = "Benchmarks"
+path = "/benchmarks"
+binding = "common"
+topic = "benchmarks"
+status = "placeholder"
+indexable = false
+
+[[pages]]
+component = "Validation"
+path = "/validation"
+binding = "common"
+topic = "validation"
+status = "ready"
+indexable = true
+
+[[pages]]
+component = "Installation"
+path = "/python/installation"
+binding = "python"
+topic = "installation"
+status = "ready"
+indexable = true
+docname = "installation"
+source = "sphinx"
+title = "Installation | COSMol Viewer"
+legacy_paths = ["/installation"]
+label = "Installation"
+order = 0
+summary = "Install COSMol Viewer and verify the Python package."
+
+[[pages]]
+component = "Quickstart"
+path = "/python/quickstart"
+binding = "python"
+topic = "quickstart"
+status = "ready"
+indexable = true
+docname = "quickstart"
+source = "sphinx"
+title = "Quick Start | COSMol Viewer"
+legacy_paths = ["/quickstart"]
+label = "Quick Start"
+order = 1
+summary = "Render your first molecule and open an interactive viewer."
+
+[[pages]]
+component = "Scenes"
+path = "/python/scenes"
+binding = "python"
+topic = "scenes"
+status = "ready"
+indexable = true
+docname = "scenes"
+source = "sphinx"
+title = "Scenes and Cameras | COSMol Viewer"
+legacy_paths = ["/scenes"]
+label = "Scenes and Cameras"
+order = 2
+summary = "Compose geometry, frame the camera, and configure lighting."
+
+[[pages]]
+component = "Molecules"
+path = "/python/molecules"
+binding = "python"
+topic = "molecules"
+status = "ready"
+indexable = true
+docname = "molecules"
+source = "sphinx"
+title = "Molecules | COSMol Viewer"
+legacy_paths = ["/molecules"]
+label = "Molecules"
+order = 3
+summary = "Style molecules as balls and sticks, sticks, or spheres."
+
+[[pages]]
+component = "Proteins"
+path = "/python/proteins"
+binding = "python"
+topic = "proteins"
+status = "ready"
+indexable = true
+docname = "proteins"
+source = "sphinx"
+title = "Protein Structures | COSMol Viewer"
+legacy_paths = ["/proteins"]
+label = "Protein Structures"
+order = 4
+summary = "Render protein ribbons and solvent surfaces."
+
+[[pages]]
+component = "Geometry"
+path = "/python/geometry"
+binding = "python"
+topic = "geometry"
+status = "ready"
+indexable = true
+docname = "geometry"
+source = "sphinx"
+title = "Geometry | COSMol Viewer"
+legacy_paths = ["/geometry"]
+label = "Geometry"
+order = 5
+summary = "Add spheres, sticks, colors, and materials to a scene."
+
+[[pages]]
+component = "Rendering"
+path = "/python/rendering"
+binding = "python"
+topic = "rendering"
+status = "ready"
+indexable = true
+docname = "rendering"
+source = "sphinx"
+title = "Rendering and Export | COSMol Viewer"
+legacy_paths = ["/rendering"]
+label = "Rendering and Export"
+order = 6
+summary = "Export PNGs and display images in notebooks."
+
+[[pages]]
+component = "Viewer"
+path = "/python/viewer"
+binding = "python"
+topic = "viewer"
+status = "ready"
+indexable = true
+docname = "viewer"
+source = "sphinx"
+title = "Viewers and Animation | COSMol Viewer"
+legacy_paths = ["/viewer"]
+label = "Viewers and Animation"
+order = 7
+summary = "Open interactive canvases and play molecular trajectories."
+
+[[pages]]
+component = "Rust"
+path = "/python/rust"
+binding = "python"
+topic = "rust"
+status = "ready"
+indexable = true
+docname = "rust"
+source = "sphinx"
+title = "Rust API | COSMol Viewer"
+legacy_paths = ["/rust"]
+label = "Rust API"
+order = 8
+summary = "Use the shared renderer from native Rust applications."
+
+[[pages]]
+component = "Api"
+path = "/python/api"
+binding = "python"
+topic = "api"
+status = "ready"
+indexable = true
+docname = "api"
+source = "sphinx"
+title = "API Reference | COSMol Viewer"
+legacy_paths = ["/api"]
+label = "API Reference"
+order = 9
+summary = "Browse the generated Python classes, methods, and defaults."
+
+[[pages]]
+component = "SearchPage"
+path = "/python/search"
+binding = "python"
+topic = "search"
+status = "ready"
+indexable = false
+docname = "search"
+source = "sphinx"
+title = "Search | COSMol Viewer"
+legacy_paths = ["/search"]
+label = "Search"
+order = 10
+query = "q"
+
+[[pages]]
+component = "Genindex"
+path = "/python/genindex"
+binding = "python"
+topic = "genindex"
+status = "ready"
+indexable = false
+docname = "genindex"
+source = "sphinx"
+title = "General Index | COSMol Viewer"
+legacy_paths = ["/genindex"]
+label = "General Index"
+order = 11
+
+[[pages]]
+component = "PyModindex"
+path = "/python/py-modindex"
+binding = "python"
+topic = "py-modindex"
+status = "ready"
+indexable = false
+docname = "py-modindex"
+source = "sphinx"
+title = "Python Module Index | COSMol Viewer"
+legacy_paths = ["/py-modindex"]
+label = "Python Module Index"
+order = 12

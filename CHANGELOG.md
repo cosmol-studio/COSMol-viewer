@@ -1,7 +1,7 @@
 # Changelog
 
 <!-- release-header:start -->
-**COSMol-viewer** is a molecular visualization library for Rust, Python, and the web.
+**COSMol Viewer** is a molecular visualization library for Rust, Python, and the web.
 
 [Source repository](https://github.com/cosmol-studio/COSMol-viewer) ·
 [Documentation](https://cosmol-studio.github.io/COSMol-viewer/) ·
@@ -10,7 +10,7 @@
 [Python package](https://pypi.org/project/cosmol-viewer/).
 <!-- release-header:end -->
 
-All notable changes to COSMol-viewer are documented in this file.
+All notable changes to COSMol Viewer are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).

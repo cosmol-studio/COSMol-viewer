@@ -1,4 +1,4 @@
-# COSMol-viewer
+# COSMol Viewer
 A high-performance molecular viewer for Python and Rust, powered by a unified Rust core.
 It supports both in-notebook visualization and native desktop rendering, with smooth playback for scientific animations.
 
@@ -6,7 +6,7 @@ It supports both in-notebook visualization and native desktop rendering, with sm
   <a href="https://pypi.org/project/cosmol-viewer/">
     <img src="https://img.shields.io/pypi/v/cosmol-viewer.svg" alt="PyPi Latest Release" />
   </a>
-  <a href="https://cosmol-studio.github.io/COSMol-viewer">
+  <a href="https://viewer.cosmol.org/">
     <img src="https://img.shields.io/badge/docs-latest-blue.svg" alt="Documentation Status" />
   </a>
   <a href="https://crates.io/crates/cosmol_viewer">
@@ -17,8 +17,8 @@ It supports both in-notebook visualization and native desktop rendering, with sm
   </a>
 </div>
 
-COSMol-viewer is a compact, cross-platform renderer for molecular and geometric scenes.
-Unlike purely notebook-bound solutions such as py3Dmol, COSMol-viewer runs everywhere:
+COSMol Viewer is a compact, cross-platform renderer for molecular and geometric scenes.
+Unlike purely notebook-bound solutions such as py3Dmol, COSMol Viewer runs everywhere:
 
 - Native desktop window (Python or Rust) via `egui`
 - Jupyter / IPython notebook via WASM backend
@@ -184,9 +184,10 @@ cargo run --example render_protein
 
 # Documentation
 
-- Python user guide and API reference: <https://cosmol-studio.github.io/COSMol-viewer/>
+- Documentation (Python and JavaScript tracks): <https://viewer.cosmol.org/>
 - Rust API reference: <https://docs.rs/cosmol_viewer/latest/cosmol_viewer/>
 - Documentation sources: [`crates/python/docs/source`](crates/python/docs/source)
+- Documentation website and build instructions: [`docs-web`](docs-web/README.md)
 
 ---
 

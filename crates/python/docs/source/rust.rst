@@ -1,3 +1,6 @@
+.. meta::
+   :description: Use the COSMol Viewer Rust facade to construct scenes and access the shared molecular rendering engine.
+
 Rust API
 ========
 

@@ -1,3 +1,6 @@
+.. meta::
+   :description: Export opaque or transparent PNG images, render in memory, and display molecular scenes in notebooks and headless environments.
+
 Static and Offscreen Rendering
 ==============================
 

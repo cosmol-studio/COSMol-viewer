@@ -1,4 +1,4 @@
-# COSMol-viewer
+# COSMol Viewer
 A high-performance molecular viewer for Python and Rust, powered by a unified Rust core.
 It supports both in-notebook visualization and native desktop rendering, with smooth playback for scientific animations.
 
@@ -20,8 +20,8 @@ Full installation, workflow, and Python API documentation is available at
   </a>
 </div>
 
-COSMol-viewer is a compact, cross-platform renderer for molecular and geometric scenes.
-Unlike purely notebook-bound solutions such as py3Dmol, COSMol-viewer runs everywhere:
+COSMol Viewer is a compact, cross-platform renderer for molecular and geometric scenes.
+Unlike purely notebook-bound solutions such as py3Dmol, COSMol Viewer runs everywhere:
 
 - Native desktop window (Python or Rust) via `egui`
 - Jupyter / IPython notebook via WASM backend

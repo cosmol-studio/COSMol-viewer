@@ -1,3 +1,6 @@
+.. meta::
+   :description: Read PDB and mmCIF structures, color protein ribbons, and configure solvent-excluded and solvent-accessible molecular surfaces.
+
 Proteins and Surfaces
 =====================
 
@@ -28,6 +31,12 @@ Cartoon Ribbons
 
 ``rainbow_residues()`` colors every biopolymer chain independently from its
 first to last rendered residue. Use ``color()`` for a uniform ribbon color.
+
+.. figure:: https://pub-0588ab5197fd48f28b5c91f067adf8f4.r2.dev/image/render_protein.png
+   :alt: Protein ribbon rendering with independently colored chains
+   :width: 100%
+
+   Protein cartoon geometry rendered by COSMol Viewer.
 
 Molecular Surfaces
 ------------------

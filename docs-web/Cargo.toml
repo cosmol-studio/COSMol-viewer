@@ -1,0 +1,38 @@
+[package]
+name = "cosmol-viewer-docs-web"
+version = "0.3.0"
+edition = "2024"
+publish = false
+description = "Dioxus documentation site for COSMol Viewer"
+repository = "https://github.com/cosmol-studio/COSMol-viewer"
+license = "MIT"
+build = "build.rs"
+default-run = "cosmol-viewer-docs-web"
+
+[lib]
+name = "cosmol_viewer_docs_search"
+path = "src/search/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+# This deployable site intentionally remains outside the renderer workspace.
+[workspace]
+
+[dependencies]
+dioxus = { version = "=0.7.10", features = ["router"], optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
+wasm-bindgen = { version = "=0.2.128", optional = true }
+js-sys = { version = "=0.3.105", optional = true }
+web-sys = { version = "=0.3.105", optional = true, features = [
+    "Window", "Document", "Element", "HtmlElement", "HtmlInputElement",
+    "HtmlButtonElement", "Node", "Event", "EventTarget", "History", "Location",
+    "Url", "UrlSearchParams", "NodeList", "HtmlLinkElement", "StyleSheet", "console",
+    "MutationObserver", "MutationObserverInit",
+] }
+
+[features]
+default = ["web"]
+web = ["dep:dioxus", "dioxus/web", "dep:web-sys", "dep:wasm-bindgen", "dep:js-sys"]
+ssg = []
+server = ["dep:dioxus", "dioxus/server", "dioxus/fullstack"]
+search-engine = ["dep:serde", "dep:serde_json", "dep:wasm-bindgen", "dep:js-sys", "dep:web-sys"]

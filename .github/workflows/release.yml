@@ -109,7 +109,7 @@ jobs:
 
           Path("release-notes.md").write_text(
               f"{release_header}\n\n"
-              f"## COSMol-viewer v{version} - {match.group('date')}\n\n"
+              f"## COSMol Viewer v{version} - {match.group('date')}\n\n"
               f"{version_notes}\n",
               encoding="utf-8",
           )
@@ -119,7 +119,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.release.outputs.tag }}
-          name: COSMol-viewer ${{ steps.release.outputs.version }}
+          name: COSMol Viewer ${{ steps.release.outputs.version }}
           body_path: release-notes.md
           draft: false
           prerelease: false

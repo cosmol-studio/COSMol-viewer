@@ -243,7 +243,7 @@ impl Molecule {
     }
 
     pub fn from_cosmolkit(molecule: &CosmolkitMolecule) -> Result<Self, ParseSdfError> {
-        let molecule = match molecule.with_kekulized_bonds(true) {
+        let molecule = match molecule.with_kekulized_bonds() {
             Ok(molecule) => molecule,
             Err(error) => {
                 eprintln!(

@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="Layer_1" xmlns="http://www.w3.org/2000/svg" version="1.1" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1024 1024">
+  <!-- Generator: Adobe Illustrator 29.6.0, SVG Export Plug-In . SVG Version: 2.1.1 Build 207)  -->
+  <defs>
+    <style>
+      .st0 {
+        fill: #969de4;
+      }
+
+      .st1 {
+        fill: #77479b;
+      }
+
+      .st2 {
+        fill: #cf57fc;
+        stroke: #fab3fd;
+        stroke-miterlimit: 4;
+        stroke-width: 21px;
+      }
+
+      .st3, .st4 {
+        fill: none;
+        stroke-linecap: round;
+      }
+
+      .st3, .st4, .st5 {
+        stroke-width: 24px;
+      }
+
+      .st3, .st5, .st6 {
+        stroke: #fff;
+      }
+
+      .st7 {
+        fill: #535eb0;
+      }
+
+      .st8 {
+        fill: #fff;
+      }
+
+      .st9 {
+        fill: #ac73f9;
+        stroke: #f2f0fd;
+        stroke-width: 19px;
+      }
+
+      .st9, .st5, .st6 {
+        stroke-miterlimit: 10;
+      }
+
+      .st4 {
+        stroke: url(#linear-gradient1);
+      }
+
+      .st10 {
+        fill: #6d6e9e;
+      }
+
+      .st11 {
+        fill: #5e5489;
+      }
+
+      .st5 {
+        fill: #808aff;
+      }
+
+      .st6 {
+        fill: #b571fb;
+        stroke-width: 31px;
+      }
+
+      .st12 {
+        fill: url(#linear-gradient);
+      }
+
+      .st13 {
+        fill: #fdfdfd;
+      }
+    </style>
+    <linearGradient id="linear-gradient" x1="66.7" y1="231.8" x2="950.2" y2="1121.3" gradientTransform="translate(0 1201.9) scale(1 -1)" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#201b39"/>
+      <stop offset=".3" stop-color="#343761"/>
+      <stop offset="1" stop-color="#3c4170"/>
+    </linearGradient>
+    <linearGradient id="linear-gradient1" x1="63.9" y1="371.9" x2="364.7" y2="371.9" gradientTransform="translate(301.6 928.9) rotate(16.3) scale(.8 -.7) skewX(-29.5)" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fab3fd"/>
+      <stop offset=".9" stop-color="#fff"/>
+    </linearGradient>
+  </defs>
+  <path class="st10" d="M180,0h664C943.3,0,1024,80.7,1024,180v21.1H0v-21.1C0,80.7,80.7,0,180,0Z"/>
+  <rect class="st12" y="19.4" width="1024" height="1004.6" rx="180" ry="180"/>
+  <path class="st1" d="M1024,632.5c-79.7,0-144.4,64.7-144.4,144.4s55.7,135,127.5,143.4c10.9-23.2,16.9-49,16.9-76.3v-211.5h0Z"/>
+  <path class="st7" d="M844,0h-291.7c49.3,100,139.9,176,249.5,205.8h0c6.5,1.8,12.8,3.3,19.1,4.8,21,4.6,42.7,7.5,64.8,8.5,6.1.2,12.5.4,19.3.4,41.5,0,81.5-6.4,119-18.3v-21C1024,80.6,943.4,0,844,0Z"/>
+  <path class="st11" d="M1024,321.8v-120.7c-37.5,11.9-77.5,18.3-119,18.3s-70.3-4.8-103.2-13.7c-1.2,6.7-2.2,13.5-2.9,20.4,92,6.5,172.6,42.6,225.1,95.6h0Z"/>
+  <path class="st0" d="M844,0h-291.7c3.2,6.6,6.7,13,10.3,19.4h281.4c99.4,0,180,80.6,180,180v1.7h0v-21.1C1024,80.6,943.4,0,844,0Z"/>
+  <circle class="st8" cx="200" cy="150" r="16.3"/>
+  <circle class="st8" cx="593.5" cy="305" r="16.3"/>
+  <circle class="st8" cx="691.9" cy="682.6" r="8"/>
+  <circle class="st8" cx="913" cy="351.3" r="8"/>
+  <circle class="st8" cx="350" cy="900" r="7.8"/>
+  <circle class="st8" cx="130" cy="562" r="7.8"/>
+  <circle class="st8" cx="450.6" cy="833.9" r="22.7"/>
+  <circle class="st8" cx="242.3" cy="584.7" r="22.7"/>
+  <circle class="st8" cx="968.4" cy="817.9" r="16"/>
+  <line class="st3" x1="512" y1="535.3" x2="185.8" y2="377.2"/>
+  <line class="st3" x1="512" y1="535.3" x2="819" y2="211"/>
+  <line class="st4" x1="428" y1="606.5" x2="273.4" y2="737.6"/>
+  <line class="st3" x1="512" y1="535.3" x2="750" y2="829.9"/>
+  <circle class="st6" cx="512" cy="535.3" r="93.4"/>
+  <circle class="st9" cx="185.8" cy="377.2" r="33.9"/>
+  <circle class="st13" cx="819" cy="211" r="94"/>
+  <circle class="st2" cx="235.2" cy="769.5" r="40" transform="translate(-475.2 391.7) rotate(-45)"/>
+  <circle class="st5" cx="750" cy="829.9" r="65.1"/>
+  <path class="st8" d="M312,222.3s44.8-8.1,44.8-57.4c0,49.3,44.8,57.4,44.8,57.4,0,0-44.8,8.1-44.8,57.4,0-49.3-44.8-57.4-44.8-57.4h0Z"/>
+  <path class="st8" d="M813,540s34.1-6.9,34.1-49.4c0,42.4,34.1,49.4,34.1,49.4,0,0-34.1,6.9-34.1,49.4,0-42.4-34.1-49.4-34.1-49.4Z"/>
+</svg>
