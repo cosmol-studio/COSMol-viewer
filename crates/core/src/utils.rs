@@ -1,4 +1,5 @@
 use glam::{Mat4, Vec3, Vec4};
+use iceoryx2::prelude::ZeroCopySend;
 use serde::{Deserialize, Serialize};
 
 use crate::shapes::{Molecule, Protein, Sphere, SphereInstance, Stick, StickInstance};
@@ -61,7 +62,6 @@ pub trait Interpolatable {
 }
 
 // -------------------- 图元结构体 --------------------------
-
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum Shape {
     Sphere(Sphere),

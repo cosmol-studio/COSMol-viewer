@@ -1,5 +1,6 @@
 use cosmol_viewer::shapes::Sphere;
 use cosmol_viewer::{Scene, Viewer};
+use cosmol_viewer_core::register_render;
 use std::{
     f32::consts::PI,
     thread,
@@ -7,6 +8,8 @@ use std::{
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    register_render();
+
     let mut scene = Scene::new();
 
     let ids = ["a", "b", "c", "d", "e", "f"];
@@ -25,7 +28,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let frame_interval = Duration::from_millis(5);
 
-    loop {
+    while viewer.is_open() {
         let elapsed = start_time.elapsed().as_secs_f32();
         let t = elapsed * angular_speed;
 
@@ -55,4 +58,5 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         thread::sleep(frame_interval);
     }
+    Ok(())
 }

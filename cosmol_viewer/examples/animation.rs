@@ -3,6 +3,7 @@ use cosmol_viewer::{Animation, Scene, Viewer};
 use std::f32::consts::PI;
 
 fn main() {
+    cosmol_viewer_core::register_render();
     // Sphere ID
     let ids = ["a", "b", "c", "d", "e", "f"];
 

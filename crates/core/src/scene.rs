@@ -21,6 +21,7 @@ use crate::{
 // }
 //
 
+#[repr(C)]
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Scene {
     pub background_color: Vec3,
@@ -39,7 +40,6 @@ pub struct Scene {
     pub viewport: Option<[usize; 2]>,
     pub scene_center: [f32; 3],
     pub camera_lights: Option<Lighting>,
-    // pub _world_lights: Lighting,
 }
 
 #[derive(Error, Debug)]

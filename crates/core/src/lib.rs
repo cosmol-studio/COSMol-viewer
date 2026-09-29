@@ -1,10 +1,22 @@
 mod shader;
 pub mod surface;
 use crate::egui::IconData;
-use std::sync::{Arc, Mutex};
+use iceoryx2::{
+    node::{Node, NodeBuilder},
+    port::{publisher::Publisher, subscriber::Subscriber},
+    service::{ipc, port_factory::publish_subscribe::PortFactory},
+};
+use std::{
+    cell::Cell,
+    process::{Child, Command, Stdio},
+    sync::Arc,
+    thread,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+};
 use thiserror::Error;
 
 pub mod parser;
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub mod utils;
 pub use crate::utils::RenderQuality;
 pub use eframe;
@@ -22,10 +34,180 @@ pub use crate::utils::{Logger, RustLogger, Shape};
 pub mod shapes;
 use crate::scene::Scene;
 
+type FeedbackSender = Publisher<ipc::Service, [u8], ()>;
+
 pub mod scene;
+fn feedback(tx: &FeedbackSender, message: Feedback) {
+    let bytes = postcard::to_allocvec(&(VERSION, message)).unwrap();
+    let mut sample = tx.loan_slice(bytes.len()).unwrap();
+    sample.payload_mut().copy_from_slice(&bytes);
+    assert_ne!(sample.send().unwrap(), 0, "feedback has no receiver");
+}
+
+fn decode_feedback(bytes: &[u8]) -> Feedback {
+    let (version, message): (&str, Feedback) = postcard::from_bytes(bytes).unwrap();
+    assert_eq!(version, VERSION, "feedback protocol mismatch");
+    message
+}
 use image::{ImageBuffer, Rgba};
 
-pub struct AppWrapper<L: Logger>(pub Arc<Mutex<Option<App<L>>>>);
+#[derive(serde::Serialize, serde::Deserialize)]
+enum Request {
+    InitializeScene {
+        request_id: u64,
+        scene: Scene,
+        width: f32,
+        height: f32,
+    },
+    InitializeAnimation {
+        request_id: u64,
+        animation: Animation,
+        width: f32,
+        height: f32,
+    },
+    UpdateScene {
+        request_id: u64,
+        scene: Scene,
+    },
+}
+
+fn decode_request(bytes: &[u8]) -> Request {
+    let (version, request): (&str, Request) = postcard::from_bytes(bytes).unwrap();
+    assert_eq!(version, VERSION, "request protocol mismatch");
+    request
+}
+
+#[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+enum Feedback {
+    Ready {
+        pid: u32,
+    },
+    /// App construction completed, not frame presentation.
+    Initialized {
+        request_id: u64,
+    },
+    Applied {
+        request_id: u64,
+    },
+    Closed,
+}
+struct ReceiverState {
+    rx: Subscriber<ipc::Service, [u8], ()>,
+    tx: FeedbackSender,
+}
+
+fn create_ipc_services(
+    name: &str,
+) -> (
+    Node<ipc::Service>,
+    PortFactory<ipc::Service, [u8], ()>,
+    PortFactory<ipc::Service, [u8], ()>,
+) {
+    iceoryx2::prelude::set_log_level(iceoryx2::prelude::LogLevel::Error);
+    let node = NodeBuilder::new().create::<ipc::Service>().unwrap();
+    let scenes = node
+        .service_builder(&format!("{name}/scene-v2").as_str().try_into().unwrap())
+        .publish_subscribe::<[u8]>()
+        .subscriber_max_buffer_size(4)
+        .subscriber_max_borrowed_samples(2)
+        .enable_safe_overflow(false)
+        .open_or_create()
+        .unwrap();
+    let events = node
+        .service_builder(&format!("{name}/feedback-v2").as_str().try_into().unwrap())
+        .publish_subscribe::<[u8]>()
+        .subscriber_max_buffer_size(16)
+        .enable_safe_overflow(false)
+        .open_or_create()
+        .unwrap();
+    (node, scenes, events)
+}
+
+pub fn register_render() {
+    let args: Vec<_> = std::env::args().collect();
+    let child_index = args.iter().position(|a| a == "--child");
+    if child_index.is_none() {
+        return;
+    }
+    let name = match child_index {
+        Some(i) => args
+            .get(i + 1)
+            .ok_or("missing service name")
+            .unwrap()
+            .clone(),
+        None => format!(
+            "cosmol-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ),
+    };
+    let headless = args.iter().any(|a| a == "--smoke" || a == "--headless");
+    // run(
+    //     child_index.is_some(),
+    //     headless,
+    //     headless || args.iter().any(|a| a == "--gui-smoke"),
+    //     &name,
+    // )
+    let (_node, scenes, events) = create_ipc_services(&name);
+    let rx = scenes.subscriber_builder().create().unwrap();
+    let tx = events
+        .publisher_builder()
+        .initial_max_slice_len(64)
+        .allocation_strategy(iceoryx2::prelude::AllocationStrategy::PowerOfTwo)
+        .create()
+        .unwrap();
+    feedback(
+        &tx,
+        Feedback::Ready {
+            pid: std::process::id(),
+        },
+    );
+    let sample = loop {
+        if let Some(sample) = rx.receive().unwrap() {
+            break sample;
+        }
+        thread::sleep(Duration::from_millis(2));
+    };
+    let request = decode_request(sample.payload());
+    let (width, height) = match &request {
+        Request::InitializeScene { width, height, .. }
+        | Request::InitializeAnimation { width, height, .. } => (*width, *height),
+        Request::UpdateScene { .. } => panic!("expected initialization request"),
+    };
+    drop(sample);
+    eframe::run_native(
+        "COSMol Viewer iceoryx2",
+        eframe::NativeOptions {
+            viewport: egui::ViewportBuilder::default().with_inner_size([width, height]),
+            depth_buffer: native_depth_buffer(),
+            multisampling: native_multisampling(),
+            renderer: eframe::Renderer::Glow,
+            glow_options: native_glow_options(),
+            ..Default::default()
+        },
+        Box::new(move |cc| {
+            let (mut app, request_id) = match request {
+                Request::InitializeScene {
+                    request_id, scene, ..
+                } => (App::new(cc, &scene, RustLogger), request_id),
+                Request::InitializeAnimation {
+                    request_id,
+                    animation,
+                    ..
+                } => (App::new_play(cc, animation, RustLogger), request_id),
+                Request::UpdateScene { .. } => unreachable!(),
+            };
+            feedback(&tx, Feedback::Initialized { request_id });
+            app.ipc = Some(ReceiverState { rx, tx });
+            Ok(Box::new(app))
+        }),
+    )
+    .unwrap();
+    std::process::exit(0);
+}
 
 pub const BUILD_ID: &str = concat!(
     env!("CARGO_PKG_VERSION"),
@@ -33,24 +215,8 @@ pub const BUILD_ID: &str = concat!(
     compile_time::datetime_str!()
 );
 
-impl<L: Logger> eframe::App for AppWrapper<L> {
-    fn ui(&mut self, ui: &mut Ui, frame: &mut eframe::Frame) {
-        if let Some(app) = &mut *self.0.lock().unwrap() {
-            app.ui(ui, frame);
-        }
-    }
-
-    fn clear_color(&self, visuals: &egui::Visuals) -> [f32; 4] {
-        self.0
-            .lock()
-            .unwrap()
-            .as_ref()
-            .map(|app| app.clear_color(visuals))
-            .unwrap_or([0.0, 0.0, 0.0, 0.0])
-    }
-}
-
 pub struct App<L: Logger> {
+    ipc: Option<ReceiverState>,
     canvas: Canvas<L>,
     _gl: Option<Arc<eframe::glow::Context>>,
     pub ctx: egui::Context,
@@ -65,6 +231,7 @@ impl<L: Logger> App<L> {
         let gl = cc.gl.clone();
         let canvas = Canvas::new(gl.as_ref().unwrap().clone(), scene, logger).unwrap();
         App {
+            ipc: None,
             _gl: gl,
             canvas,
             ctx: cc.egui_ctx.clone(),
@@ -79,6 +246,7 @@ impl<L: Logger> App<L> {
         let gl = cc.gl.clone();
         let canvas = Canvas::new_play(gl.as_ref().unwrap().clone(), animation, logger).unwrap();
         App {
+            ipc: None,
             _gl: gl,
             canvas,
             ctx: cc.egui_ctx.clone(),
@@ -123,6 +291,21 @@ fn color_image_to_rgba_bytes(image: &egui::ColorImage) -> Vec<u8> {
 
 impl<L: Logger> eframe::App for App<L> {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+        if let Some(state) = &self.ipc {
+            for _ in 0..4 {
+                let Some(sample) = state.rx.receive().unwrap() else {
+                    break;
+                };
+                match decode_request(sample.payload()) {
+                    Request::UpdateScene { request_id, scene } => {
+                        self.canvas.update_scene(&scene);
+                        feedback(&state.tx, Feedback::Applied { request_id });
+                    }
+                    _ => panic!("expected UpdateScene, received an initialization request"),
+                }
+            }
+            ui.ctx().request_repaint_after(Duration::from_millis(5));
+        }
         #[cfg(not(target_arch = "wasm32"))]
         egui_extras::install_image_loaders(ui);
         let panel_fill = if self.canvas.transparent_background() {
@@ -172,6 +355,12 @@ impl<L: Logger> eframe::App for App<L> {
             });
     }
 
+    fn on_exit(&mut self, _: Option<&eframe::glow::Context>) {
+        if let Some(state) = &self.ipc {
+            feedback(&state.tx, Feedback::Closed);
+        }
+    }
+
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         if self.canvas.transparent_background() {
             [0.0, 0.0, 0.0, 0.0]
@@ -182,7 +371,11 @@ impl<L: Logger> eframe::App for App<L> {
 }
 
 pub struct NativeGuiViewer {
-    pub app: Arc<Mutex<Option<App<RustLogger>>>>,
+    tx: Publisher<ipc::Service, [u8], ()>,
+    rx: Subscriber<ipc::Service, [u8], ()>,
+    request_id: Cell<u64>,
+    closed: Cell<bool>,
+    child: ChildGuard,
 }
 
 #[derive(Error, Debug)]
@@ -193,7 +386,73 @@ pub enum RenderError {
     InitializationTimeout,
 }
 
+struct ChildGuard(Child);
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        if !matches!(self.0.try_wait(), Ok(Some(_))) {
+            let _ = self.0.kill();
+        }
+        let _ = self.0.wait();
+    }
+}
+const TIMEOUT: Duration = Duration::from_secs(30);
+
+fn wait_event(rx: &Subscriber<ipc::Service, [u8], ()>, child: &mut ChildGuard) -> Feedback {
+    let start = Instant::now();
+    loop {
+        if let Some(sample) = rx.receive().unwrap() {
+            return decode_feedback(sample.payload());
+        }
+        if let Some(status) = child.0.try_wait().unwrap() {
+            // panic!(format!("viewer exited before feedback: {status}"));
+            panic!("viewer exited before feedback: {status}");
+        }
+        if start.elapsed() > TIMEOUT {
+            panic!("feedback timeout");
+        }
+        thread::sleep(Duration::from_millis(2));
+    }
+}
+
 impl NativeGuiViewer {
+    pub fn new() -> Self {
+        let name = format!(
+            "cosmol-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let (_node, scenes, events) = create_ipc_services(&name);
+        let tx = scenes
+            .publisher_builder()
+            .initial_max_slice_len(4096)
+            .allocation_strategy(iceoryx2::prelude::AllocationStrategy::PowerOfTwo)
+            .create()
+            .unwrap();
+        let rx = events.subscriber_builder().create().unwrap();
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command.args(["--child", &name]).stdin(Stdio::null());
+        let mut child = ChildGuard(command.spawn().unwrap());
+        let pid = match wait_event(&rx, &mut child) {
+            Feedback::Ready { pid } => pid,
+            other => panic!("expected Ready, received {other:?}"),
+        };
+        eprintln!(
+            "iceoryx2: producer PID {} -> viewer PID {}",
+            std::process::id(),
+            pid
+        );
+        Self {
+            tx,
+            rx,
+            request_id: Cell::new(0),
+            closed: Cell::new(false),
+            child,
+        }
+    }
+
     pub fn render(scene: &Scene, width: f32, height: f32) -> Result<Self, RenderError> {
         Self::render_with_quality(scene, width, height, RenderQuality::Medium)
     }
@@ -204,190 +463,132 @@ impl NativeGuiViewer {
         height: f32,
         quality: RenderQuality,
     ) -> Result<Self, RenderError> {
-        use std::time::Duration;
-        use std::{
-            sync::{Arc, Mutex},
-            thread,
-        };
+        let mut this = Self::new();
+        let bytes = postcard::to_allocvec(&(
+            VERSION,
+            Request::InitializeScene {
+                request_id: 0,
+                scene: scene.clone(),
+                width,
+                height,
+            },
+        ))
+        .unwrap();
+        let mut sample = this.tx.loan_slice(bytes.len()).unwrap();
+        sample.payload_mut().copy_from_slice(&bytes);
+        assert_eq!(sample.send().unwrap(), 1);
+        assert_eq!(
+            wait_event(&this.rx, &mut this.child),
+            Feedback::Initialized { request_id: 0 }
+        );
+        Ok(this)
+    }
 
-        #[cfg(not(target_arch = "wasm32"))]
-        use eframe::{
-            NativeOptions, Renderer,
-            egui::{Vec2, ViewportBuilder},
-        };
-
-        let app: Arc<Mutex<Option<App<RustLogger>>>> = Arc::new(Mutex::new(None));
-        let (tx, rx) = std::sync::mpsc::channel();
-        let app_clone = Arc::clone(&app);
-
-        let scene = Arc::new(scene.clone());
-        #[cfg(not(target_arch = "wasm32"))]
-        thread::spawn(move || {
-            use eframe::{EventLoopBuilderHook, run_native};
-            use std::process;
-            let event_loop_builder: Option<EventLoopBuilderHook> =
-                Some(Box::new(|event_loop_builder| {
-                    #[cfg(target_family = "windows")]
-                    {
-                        use egui_winit::winit::platform::windows::EventLoopBuilderExtWindows;
-                        event_loop_builder.with_any_thread(true);
-                    }
-                    #[cfg(feature = "wayland")]
-                    {
-                        use egui_winit::winit::platform::wayland::EventLoopBuilderExtWayland;
-                        event_loop_builder.with_any_thread(true);
-                    }
-                    #[cfg(feature = "x11")]
-                    {
-                        use egui_winit::winit::platform::x11::EventLoopBuilderExtX11;
-                        event_loop_builder.with_any_thread(true);
-                    }
-                }));
-
-            let icon = load_icon();
-
-            let native_options = NativeOptions {
-                viewport: ViewportBuilder::default()
-                    .with_inner_size(Vec2::new(width, height))
-                    .with_icon(icon),
-                depth_buffer: native_depth_buffer(),
-                multisampling: native_multisampling(),
-                renderer: Renderer::Glow,
-                glow_options: native_glow_options(),
-                event_loop_builder,
-                ..Default::default()
-            };
-
-            let _ = run_native(
-                "cosmol_viewer",
-                native_options,
-                Box::new(move |cc| {
-                    let mut guard = app_clone.lock().unwrap();
-                    *guard = Some(App::new(cc, scene.as_ref(), RustLogger));
-                    let _ = tx.send(());
-                    Ok(Box::new(AppWrapper(app_clone.clone())))
-                }),
-            );
-            process::exit(0);
-        });
-
-        rx.recv_timeout(Duration::from_secs(30))
-            .map_err(|_| RenderError::InitializationTimeout)?;
-
-        Ok(Self { app })
+    pub fn is_open(&self) -> bool {
+        !self.closed.get()
     }
 
     pub fn update(&self, scene: &Scene) {
-        let mut app_guard = self.app.lock().unwrap();
-        if let Some(app) = &mut *app_guard {
-            app.update_scene(scene);
-            app.ctx.request_repaint();
-        } else {
-            panic!("App not initialized")
+        if self.closed.get() {
+            return;
         }
-    }
-
-    pub fn set_camera_parameter_logging(&self, enabled: bool) {
-        let mut app_guard = self.app.lock().unwrap();
-        if let Some(app) = &mut *app_guard {
-            app.set_camera_parameter_logging(enabled);
-            app.ctx.request_repaint();
-        } else {
-            panic!("App not initialized")
+        while let Some(event) = self.rx.receive().unwrap() {
+            if decode_feedback(event.payload()) == Feedback::Closed {
+                self.closed.set(true);
+                return;
+            }
         }
-    }
-
-    pub fn take_screenshot(&self) -> ImageBuffer<Rgba<u8>, Vec<u8>> {
+        let request_id = self.request_id.get() + 1;
+        self.request_id.set(request_id);
+        let bytes = postcard::to_allocvec(&(
+            VERSION,
+            Request::UpdateScene {
+                request_id,
+                scene: scene.clone(),
+            },
+        ))
+        .unwrap();
+        let mut sample = self.tx.loan_slice(bytes.len()).unwrap();
+        sample.payload_mut().copy_from_slice(&bytes);
+        sample.send().unwrap();
+        let start = Instant::now();
         loop {
-            let mut app_guard = self.app.lock().unwrap();
-            if let Some(app) = &mut *app_guard {
-                println!("Taking screenshot");
-                app.take_screenshot();
-                app.ctx.request_repaint();
+            if let Some(event) = self.rx.receive().unwrap() {
+                match decode_feedback(event.payload()) {
+                    Feedback::Closed => {
+                        self.closed.set(true);
+                        return;
+                    }
+                    Feedback::Applied { request_id: ack } => assert_eq!(ack, request_id),
+                    other => panic!("expected Applied, received {other:?}"),
+                }
                 break;
             }
-            drop(app_guard);
-            std::thread::sleep(std::time::Duration::from_millis(1000));
-        }
-        std::thread::sleep(std::time::Duration::from_millis(100));
-        loop {
-            let mut app_guard = self.app.lock().unwrap();
-            if let Some(app) = &mut *app_guard {
-                if let Some(image) = app.poll_screenshot() {
-                    return image;
-                }
-            }
-            drop(app_guard);
-            std::thread::sleep(std::time::Duration::from_millis(100));
+            assert!(start.elapsed() < TIMEOUT, "update acknowledgment timeout");
+            thread::sleep(Duration::from_millis(2));
         }
     }
+
+    // pub fn set_camera_parameter_logging(&self, enabled: bool) {
+    //     let mut app_guard = self.app.lock().unwrap();
+    //     if let Some(app) = &mut *app_guard {
+    //         app.set_camera_parameter_logging(enabled);
+    //         app.ctx.request_repaint();
+    //     } else {
+    //         panic!("App not initialized")
+    //     }
+    // }
+
+    // pub fn take_screenshot(&self) -> ImageBuffer<Rgba<u8>, Vec<u8>> {
+    //     loop {
+    //         let mut app_guard = self.app.lock().unwrap();
+    //         if let Some(app) = &mut *app_guard {
+    //             println!("Taking screenshot");
+    //             app.take_screenshot();
+    //             app.ctx.request_repaint();
+    //             break;
+    //         }
+    //         drop(app_guard);
+    //         std::thread::sleep(std::time::Duration::from_millis(1000));
+    //     }
+    //     std::thread::sleep(std::time::Duration::from_millis(100));
+    //     loop {
+    //         let mut app_guard = self.app.lock().unwrap();
+    //         if let Some(app) = &mut *app_guard {
+    //             if let Some(image) = app.poll_screenshot() {
+    //                 return image;
+    //             }
+    //         }
+    //         drop(app_guard);
+    //         std::thread::sleep(std::time::Duration::from_millis(100));
+    //     }
+    // }
 
     pub fn play(animation: Animation, width: f32, height: f32) -> Result<Self, RenderError> {
         if animation.frames.is_empty() {
             return Err(RenderError::NoFramesProvided);
         }
 
-        use std::{
-            sync::{Arc, Mutex},
-            thread,
-        };
-
-        #[cfg(not(target_arch = "wasm32"))]
-        use eframe::{
-            NativeOptions, Renderer,
-            egui::{Vec2, ViewportBuilder},
-        };
-
-        let app: Arc<Mutex<Option<App<RustLogger>>>> = Arc::new(Mutex::new(None));
-        let app_clone = Arc::clone(&app);
-
-        #[cfg(not(target_arch = "wasm32"))]
-        thread::spawn(move || {
-            use std::process;
-
-            use eframe::{EventLoopBuilderHook, run_native};
-            let event_loop_builder: Option<EventLoopBuilderHook> =
-                Some(Box::new(|event_loop_builder| {
-                    #[cfg(target_family = "windows")]
-                    {
-                        use egui_winit::winit::platform::windows::EventLoopBuilderExtWindows;
-                        event_loop_builder.with_any_thread(true);
-                    }
-                    #[cfg(feature = "wayland")]
-                    {
-                        use egui_winit::winit::platform::wayland::EventLoopBuilderExtWayland;
-                        event_loop_builder.with_any_thread(true);
-                    }
-                    #[cfg(feature = "x11")]
-                    {
-                        use egui_winit::winit::platform::x11::EventLoopBuilderExtX11;
-                        event_loop_builder.with_any_thread(true);
-                    }
-                }));
-
-            let native_options = NativeOptions {
-                viewport: ViewportBuilder::default().with_inner_size(Vec2::new(width, height)),
-                depth_buffer: native_depth_buffer(),
-                multisampling: native_multisampling(),
-                renderer: Renderer::Glow,
-                glow_options: native_glow_options(),
-                event_loop_builder,
-                ..Default::default()
-            };
-
-            let _ = run_native(
-                "cosmol_viewer",
-                native_options,
-                Box::new(move |cc| {
-                    let mut guard = app_clone.lock().unwrap();
-                    *guard = Some(App::new_play(cc, animation, RustLogger));
-                    Ok(Box::new(AppWrapper(app_clone.clone())))
-                }),
-            );
-            process::exit(0);
-        });
-
-        loop {}
+        let mut this = Self::new();
+        let bytes = postcard::to_allocvec(&(
+            VERSION,
+            Request::InitializeAnimation {
+                request_id: 1,
+                animation,
+                width,
+                height,
+            },
+        ))
+        .unwrap();
+        let mut sample = this.tx.loan_slice(bytes.len()).unwrap();
+        sample.payload_mut().copy_from_slice(&bytes);
+        assert_eq!(sample.send().unwrap(), 1);
+        assert_eq!(
+            wait_event(&this.rx, &mut this.child),
+            Feedback::Initialized { request_id: 1 }
+        );
+        assert!(this.child.0.wait().unwrap().success());
+        Ok(this)
     }
 
     pub fn save_video(

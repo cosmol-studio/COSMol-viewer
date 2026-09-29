@@ -7,10 +7,8 @@ use crate::{
     shapes::{sphere::SphereInstance, stick::StickInstance},
     utils::{Interaction, Interpolatable, IntoInstanceGroups, Material, MeshData, Stylable},
 };
-use cosmolkit::{
-    BondOrder as CosmolkitBondOrder, Element, Molecule as CosmolkitMolecule,
-    io::sdf::{SdfCoordinateMode, SdfReadParams, read_sdf_from_str_with_params},
-};
+use cosmolkit::{self as ck, SdfCoordinateMode, SdfReadParams};
+use cosmolkit::{BondOrder as CosmolkitBondOrder, Element, Molecule as CosmolkitMolecule};
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
@@ -225,21 +223,17 @@ pub enum ParseSdfError {
 
 impl Molecule {
     pub fn from_sdf(sdf: &str) -> Result<Self, ParseSdfError> {
-        let record = read_sdf_from_str_with_params(
+        let mol = ck::Molecule::from_sdf_with_params(
             sdf,
-            SdfReadParams {
+            &SdfReadParams {
                 sanitize: false,
-                remove_hs: false,
+                remove_hydrogens: false,
                 coordinate_mode: SdfCoordinateMode::Require3D,
                 ..Default::default()
             },
         )
         .map_err(|e| ParseSdfError::ParsingError(e.to_string()))?;
-        let mut molecule = record.molecule;
-        for (field_name, field_value) in record.data_fields {
-            molecule = molecule.with_sdf_data_field(field_name, field_value);
-        }
-        Self::from_cosmolkit(&molecule)
+        Self::from_cosmolkit(&mol)
     }
 
     pub fn from_cosmolkit(molecule: &CosmolkitMolecule) -> Result<Self, ParseSdfError> {
@@ -255,9 +249,10 @@ impl Molecule {
 
         let molecule = if molecule.conformers_3d().is_empty() && molecule.coordinates_2d().is_none()
         {
-            molecule
-                .with_2d_coordinates()
-                .map_err(|e| ParseSdfError::ParsingError(e.to_string()))?
+            // molecule
+            //     .with_2d_coordinates()
+            //     .map_err(|e| ParseSdfError::ParsingError(e.to_string()))?
+            unimplemented!()
         } else {
             molecule
         };
@@ -973,7 +968,7 @@ fn atom_colors_from_cosmolkit_weights(molecule: &CosmolkitMolecule) -> Option<Ve
         .iter()
         .map(|atom| {
             atom.prop("WEIGHT")
-                .and_then(|value| value.parse::<f64>().ok())
+                .and_then(|value| value.as_double().ok())
                 .map(color_from_weight)
         })
         .collect::<Vec<_>>();
@@ -1004,7 +999,6 @@ impl TryFrom<CosmolkitMolecule> for Molecule {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cosmolkit::io::sdf::read_sdf_from_str_with_coordinate_mode;
 
     #[test]
     fn from_sdf_kekulizes_aromatic_bonds() {
@@ -1338,10 +1332,16 @@ M  END
 $$$$
 ";
 
-        let record = read_sdf_from_str_with_coordinate_mode(sdf, SdfCoordinateMode::Require3D)
-            .expect("COSMolKit should parse dummy point SDF");
+        let record = ck::SdfRecord::from_sdf_with_params(
+            sdf,
+            &ck::SdfReadParams {
+                coordinate_mode: ck::SdfCoordinateMode::Require3D,
+                ..Default::default()
+            },
+        )
+        .expect("COSMolKit should parse dummy point SDF");
         assert_eq!(
-            record.data_fields,
+            record.data_fields(),
             vec![("DUMMY_WEIGHTS".to_string(), "0.25\n0.75".to_string())]
         );
 
@@ -1389,17 +1389,21 @@ M  END
 
 $$$$
 ";
-
-        let record = read_sdf_from_str_with_coordinate_mode(sdf, SdfCoordinateMode::Require3D)
-            .expect("COSMolKit should parse indexed dummy point SDF");
+        let record = ck::SdfRecord::from_sdf_with_params(
+            sdf,
+            &ck::SdfReadParams {
+                coordinate_mode: ck::SdfCoordinateMode::Require3D,
+                ..Default::default()
+            },
+        )
+        .expect("COSMolKit should parse dummy point SDF");
         assert_eq!(
-            record.data_fields,
+            record.data_fields(),
             vec![
                 ("DUMMY_ATOM_INDICES".to_string(), "3\n4".to_string()),
                 ("DUMMY_WEIGHTS".to_string(), "0.25\n0.75".to_string()),
             ]
         );
-
         let molecule = Molecule::from_sdf(sdf).expect("indexed dummy point SDF should convert");
 
         assert_eq!(

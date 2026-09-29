@@ -45,6 +45,28 @@ pub struct WebHandle {
     wasm_logger: WasmLogger,
 }
 
+// WebHandle and WebRunner still share the app for JavaScript updates and screenshots.
+#[cfg(target_arch = "wasm32")]
+struct WebApp(Arc<Mutex<Option<App<WasmLogger>>>>);
+
+#[cfg(target_arch = "wasm32")]
+impl eframe::App for WebApp {
+    fn ui(&mut self, ui: &mut eframe::egui::Ui, frame: &mut eframe::Frame) {
+        if let Some(app) = &mut *self.0.lock().unwrap() {
+            app.ui(ui, frame);
+        }
+    }
+
+    fn clear_color(&self, visuals: &eframe::egui::Visuals) -> [f32; 4] {
+        self.0
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|app| app.clear_color(visuals))
+            .unwrap_or([0.0, 0.0, 0.0, 0.0])
+    }
+}
+
 #[wasm_bindgen]
 impl WebHandle {
     #[wasm_bindgen(constructor)]
@@ -80,11 +102,9 @@ impl WebHandle {
                         ..Default::default()
                     },
                     Box::new(move |cc| {
-                        use cosmol_viewer_core::AppWrapper;
-
                         let mut guard = app.lock().unwrap();
                         *guard = Some(App::new(cc, &scene, WasmLogger));
-                        Ok(Box::new(AppWrapper(app.clone())))
+                        Ok(Box::new(WebApp(app.clone())))
                     }),
                 )
                 .await;
@@ -132,11 +152,9 @@ impl WebHandle {
                     _canvas,
                     eframe::WebOptions::default(),
                     Box::new(move |cc| {
-                        use cosmol_viewer_core::AppWrapper;
-
                         let mut guard = app.lock().unwrap();
                         *guard = Some(App::new_play(cc, animation, WasmLogger));
-                        Ok(Box::new(AppWrapper(app.clone())))
+                        Ok(Box::new(WebApp(app.clone())))
                     }),
                 )
                 .await;
