@@ -27,7 +27,7 @@ egui_extras = { version = "0.35.0", default-features = false }
 glutin = "0.32.3"
 glutin-winit = "0.5.0"
 serde = { version = "1.0.228" , features = ["derive"] }
-cosmolkit = { version = "=0.5.0-rc.8", default-features = false, features = ["bio","smiles","io","kekulize"] }
+cosmolkit = { version = "=0.5.0-rc.8", default-features = false, features = ["bio","smiles","io","kekulize","sanitize","hydrogens"] }
 serde_json = "1.0.149"
 thiserror = "2.0.18"
 base64 = "0.23.1"

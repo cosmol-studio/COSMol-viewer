@@ -2,6 +2,8 @@ use cosmol_viewer::{Scene, Viewer, cosmolkit, shapes::Molecule};
 use std::path::Path;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    cosmol_viewer_core::register_render();
+
     let base = cosmolkit::Molecule::from_smiles("CC(=O)Nc1ccc(O)cc1")?.sanitize()?;
 
     let mut params = cosmolkit::EmbedParameters::etkdg_v3();
@@ -20,13 +22,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let viewer = Viewer::render(&scene, 800.0, 500.0)?;
     viewer
-        .take_screenshot()
+        .take_screenshot()?
         .save(Path::new("cosmolkit_3d_conformer_viewer.png"))?;
 
-    println!("Press Enter to exit...");
-    use std::io::{self, Write};
-    let _ = io::stdout().flush();
-    let _ = io::stdin().read_line(&mut String::new());
+    viewer.keep_alive()?;
 
     Ok(())
 }

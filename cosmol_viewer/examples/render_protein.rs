@@ -1,6 +1,8 @@
 use cosmol_viewer::{RenderQuality, Scene, Viewer, shapes::Protein};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    cosmol_viewer_core::register_render();
+
     let prot = Protein::from_mmcif(include_str!("../examples/6fi1.cif"))?.rainbow_residues();
 
     let mut scene = Scene::new();
@@ -10,12 +12,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     scene.set_background_color("#021529");
 
     // Viewer::render(&scene, 800.0, 500.0)?;
-    Viewer::render_with_quality(&scene, 800.0, 500.0, RenderQuality::High)?;
+    let viewer = Viewer::render_with_quality(&scene, 800.0, 500.0, RenderQuality::High)?;
 
-    println!("Press Enter to exit...");
-    use std::io::{self, Write};
-    let _ = io::stdout().flush();
-    let _ = io::stdin().read_line(&mut String::new());
+    viewer.keep_alive()?;
 
     Ok(())
 }

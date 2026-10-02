@@ -9,7 +9,10 @@ use iceoryx2::{
 use std::{
     cell::Cell,
     process::{Child, Command, Stdio},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -17,6 +20,7 @@ use thiserror::Error;
 
 pub mod parser;
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+static RENDER_REGISTERED: AtomicBool = AtomicBool::new(false);
 pub mod utils;
 pub use crate::utils::RenderQuality;
 pub use eframe;
@@ -69,6 +73,9 @@ enum Request {
         request_id: u64,
         scene: Scene,
     },
+    TakeScreenshot {
+        request_id: u64,
+    },
 }
 
 fn decode_request(bytes: &[u8]) -> Request {
@@ -90,6 +97,12 @@ enum Feedback {
         request_id: u64,
     },
     Closed,
+    ScreenshotTaken {
+        request_id: u64,
+        width: u32,
+        height: u32,
+        rgba: Vec<u8>,
+    },
 }
 struct ReceiverState {
     rx: Subscriber<ipc::Service, [u8], ()>,
@@ -124,6 +137,8 @@ fn create_ipc_services(
 }
 
 pub fn register_render() {
+    RENDER_REGISTERED.store(true, Ordering::Relaxed);
+
     let args: Vec<_> = std::env::args().collect();
     let child_index = args.iter().position(|a| a == "--child");
     if child_index.is_none() {
@@ -176,6 +191,7 @@ pub fn register_render() {
         Request::InitializeScene { width, height, .. }
         | Request::InitializeAnimation { width, height, .. } => (*width, *height),
         Request::UpdateScene { .. } => panic!("expected initialization request"),
+        Request::TakeScreenshot { .. } => panic!("expected initialization request"),
     };
     drop(sample);
     eframe::run_native(
@@ -199,6 +215,7 @@ pub fn register_render() {
                     ..
                 } => (App::new_play(cc, animation, RustLogger), request_id),
                 Request::UpdateScene { .. } => unreachable!(),
+                Request::TakeScreenshot { .. } => unreachable!(),
             };
             feedback(&tx, Feedback::Initialized { request_id });
             app.ipc = Some(ReceiverState { rx, tx });
@@ -220,7 +237,7 @@ pub struct App<L: Logger> {
     canvas: Canvas<L>,
     _gl: Option<Arc<eframe::glow::Context>>,
     pub ctx: egui::Context,
-    screenshot_requested: bool,
+    screenshot_requested: Option<u64>,
     screenshot_result: Option<(Arc<egui::ColorImage>, egui::TextureHandle)>,
     _logger: L,
 }
@@ -235,7 +252,7 @@ impl<L: Logger> App<L> {
             _gl: gl,
             canvas,
             ctx: cc.egui_ctx.clone(),
-            screenshot_requested: false,
+            screenshot_requested: None,
             screenshot_result: None,
             _logger: logger,
         }
@@ -250,7 +267,7 @@ impl<L: Logger> App<L> {
             _gl: gl,
             canvas,
             ctx: cc.egui_ctx.clone(),
-            screenshot_requested: false,
+            screenshot_requested: None,
             screenshot_result: None,
             _logger: logger,
         }
@@ -264,9 +281,9 @@ impl<L: Logger> App<L> {
         self.canvas.set_camera_parameter_logging(enabled);
     }
 
-    pub fn take_screenshot(&mut self) {
-        self.screenshot_requested = true;
-    }
+    // pub fn take_screenshot(&mut self) {
+    //     self.screenshot_requested = true;
+    // }
 
     pub fn poll_screenshot(&mut self) -> Option<ImageBuffer<Rgba<u8>, Vec<u8>>> {
         if let Some((arc_image, _handle)) = self.screenshot_result.take() {
@@ -292,6 +309,12 @@ fn color_image_to_rgba_bytes(image: &egui::ColorImage) -> Vec<u8> {
 impl<L: Logger> eframe::App for App<L> {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         if let Some(state) = &self.ipc {
+            // if let Some((arc_image, _handle)) = self.screenshot_result.take() {
+            //     let image = arc_image.as_ref();
+            //     let width = image.size[0] as u32;
+            //     let height = image.size[1] as u32;
+            //     let raw_rgba = color_image_to_rgba_bytes(image);
+            // }
             for _ in 0..4 {
                 let Some(sample) = state.rx.receive().unwrap() else {
                     break;
@@ -300,6 +323,9 @@ impl<L: Logger> eframe::App for App<L> {
                     Request::UpdateScene { request_id, scene } => {
                         self.canvas.update_scene(&scene);
                         feedback(&state.tx, Feedback::Applied { request_id });
+                    }
+                    Request::TakeScreenshot { request_id } => {
+                        self.screenshot_requested = Some(request_id);
                     }
                     _ => panic!("expected UpdateScene, received an initialization request"),
                 }
@@ -326,18 +352,21 @@ impl<L: Logger> eframe::App for App<L> {
                 ui.set_height(ui.available_height());
 
                 self.canvas.custom_painting(ui);
-                if self.screenshot_requested {
+                if let Some(request_id) = self.screenshot_requested.take() {
                     ui.ctx()
-                        .send_viewport_cmd(ViewportCommand::Screenshot(UserData::default()));
-                    self.screenshot_requested = false; // only request once
+                        .send_viewport_cmd(ViewportCommand::Screenshot(UserData::new(request_id)));
                 }
 
-                let image = ui.ctx().input(|i| {
+                let screenshot = ui.ctx().input(|i| {
                     i.events
                         .iter()
                         .filter_map(|e| {
-                            if let egui::Event::Screenshot { image, .. } = e {
-                                Some(image.clone())
+                            if let egui::Event::Screenshot {
+                                image, user_data, ..
+                            } = e
+                            {
+                                let request_id = *user_data.data.as_ref()?.downcast_ref::<u64>()?;
+                                Some((request_id, image.clone()))
                             } else {
                                 None
                             }
@@ -345,12 +374,18 @@ impl<L: Logger> eframe::App for App<L> {
                         .next_back()
                 });
 
-                if let Some(image) = image {
-                    self.screenshot_result = Some((
-                        image.clone(),
-                        ui.ctx()
-                            .load_texture("screenshot_demo", image, Default::default()),
-                    ));
+                if let Some((request_id, image)) = screenshot {
+                    if let Some(state) = &self.ipc {
+                        feedback(
+                            &state.tx,
+                            Feedback::ScreenshotTaken {
+                                request_id,
+                                width: image.size[0] as u32,
+                                height: image.size[1] as u32,
+                                rgba: color_image_to_rgba_bytes(&image),
+                            },
+                        );
+                    }
                 }
             });
     }
@@ -380,10 +415,20 @@ pub struct NativeGuiViewer {
 
 #[derive(Error, Debug)]
 pub enum RenderError {
+    #[error("Call cosmol_viewer_core::register_render() at the start of main()")]
+    NotRegistered,
     #[error("No frames provided")]
     NoFramesProvided,
     #[error("Timeout waiting for App to initialize")]
     InitializationTimeout,
+}
+
+#[derive(Error, Debug)]
+pub enum ImageError {
+    #[error("closed")]
+    Closed,
+    #[error("other: {0}")]
+    Other(String),
 }
 
 struct ChildGuard(Child);
@@ -415,7 +460,11 @@ fn wait_event(rx: &Subscriber<ipc::Service, [u8], ()>, child: &mut ChildGuard) -
 }
 
 impl NativeGuiViewer {
-    pub fn new() -> Self {
+    pub fn new() -> Result<Self, RenderError> {
+        if !RENDER_REGISTERED.load(Ordering::Relaxed) {
+            return Err(RenderError::NotRegistered);
+        }
+
         let name = format!(
             "cosmol-{}-{}",
             std::process::id(),
@@ -444,13 +493,13 @@ impl NativeGuiViewer {
             std::process::id(),
             pid
         );
-        Self {
+        Ok(Self {
             tx,
             rx,
             request_id: Cell::new(0),
             closed: Cell::new(false),
             child,
-        }
+        })
     }
 
     pub fn render(scene: &Scene, width: f32, height: f32) -> Result<Self, RenderError> {
@@ -463,7 +512,7 @@ impl NativeGuiViewer {
         height: f32,
         quality: RenderQuality,
     ) -> Result<Self, RenderError> {
-        let mut this = Self::new();
+        let mut this = Self::new()?;
         let bytes = postcard::to_allocvec(&(
             VERSION,
             Request::InitializeScene {
@@ -486,6 +535,22 @@ impl NativeGuiViewer {
 
     pub fn is_open(&self) -> bool {
         !self.closed.get()
+    }
+
+    /// Keeps the viewer alive while blocking the calling thread for console input.
+    ///
+    /// Prints an exit prompt and waits until Enter is pressed or stdin reaches EOF.
+    /// This consumes the viewer. On return, including an I/O error, its child
+    /// process is closed and reaped by the existing cleanup guard.
+    pub fn keep_alive(self) -> std::io::Result<()> {
+        use std::io::{self, Write};
+
+        println!("Press Enter to exit...");
+        io::stdout().flush()?;
+        io::stdin().read_line(&mut String::new())?;
+
+        drop(self);
+        Ok(())
     }
 
     pub fn update(&self, scene: &Scene) {
@@ -539,37 +604,50 @@ impl NativeGuiViewer {
     //     }
     // }
 
-    // pub fn take_screenshot(&self) -> ImageBuffer<Rgba<u8>, Vec<u8>> {
-    //     loop {
-    //         let mut app_guard = self.app.lock().unwrap();
-    //         if let Some(app) = &mut *app_guard {
-    //             println!("Taking screenshot");
-    //             app.take_screenshot();
-    //             app.ctx.request_repaint();
-    //             break;
-    //         }
-    //         drop(app_guard);
-    //         std::thread::sleep(std::time::Duration::from_millis(1000));
-    //     }
-    //     std::thread::sleep(std::time::Duration::from_millis(100));
-    //     loop {
-    //         let mut app_guard = self.app.lock().unwrap();
-    //         if let Some(app) = &mut *app_guard {
-    //             if let Some(image) = app.poll_screenshot() {
-    //                 return image;
-    //             }
-    //         }
-    //         drop(app_guard);
-    //         std::thread::sleep(std::time::Duration::from_millis(100));
-    //     }
-    // }
+    pub fn take_screenshot(&self) -> Result<ImageBuffer<Rgba<u8>, Vec<u8>>, ImageError> {
+        if self.closed.get() {
+            return Err(ImageError::Other("closed".to_string()));
+        }
+        while let Some(event) = self.rx.receive().unwrap() {
+            if decode_feedback(event.payload()) == Feedback::Closed {
+                self.closed.set(true);
+                return Err(ImageError::Closed);
+            }
+        }
+        let request_id = self.request_id.get() + 1;
+        self.request_id.set(request_id);
+        let bytes =
+            postcard::to_allocvec(&(VERSION, Request::TakeScreenshot { request_id })).unwrap();
+        let mut sample = self.tx.loan_slice(bytes.len()).unwrap();
+        sample.payload_mut().copy_from_slice(&bytes);
+        sample.send().unwrap();
+
+        loop {
+            if let Some(event) = self.rx.receive().unwrap() {
+                match decode_feedback(event.payload()) {
+                    Feedback::ScreenshotTaken {
+                        request_id: _,
+                        width,
+                        height,
+                        rgba,
+                    } => {
+                        let buffer: ImageBuffer<Rgba<u8>, _> =
+                            ImageBuffer::from_raw(width, height, rgba)
+                                .expect("Invalid dimensions or data");
+                        return Ok(buffer);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
 
     pub fn play(animation: Animation, width: f32, height: f32) -> Result<Self, RenderError> {
         if animation.frames.is_empty() {
             return Err(RenderError::NoFramesProvided);
         }
 
-        let mut this = Self::new();
+        let mut this = Self::new()?;
         let bytes = postcard::to_allocvec(&(
             VERSION,
             Request::InitializeAnimation {
