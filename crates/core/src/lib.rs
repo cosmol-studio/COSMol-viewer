@@ -160,29 +160,18 @@ pub fn register_render() {
     if child_index.is_none() {
         return;
     }
-    let name = match child_index {
-        Some(i) => args
-            .get(i + 1)
-            .ok_or("missing service name")
-            .unwrap()
-            .clone(),
-        None => format!(
-            "cosmol-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ),
-    };
-    let headless = args.iter().any(|a| a == "--smoke" || a == "--headless");
-    // run(
-    //     child_index.is_some(),
-    //     headless,
-    //     headless || args.iter().any(|a| a == "--gui-smoke"),
-    //     &name,
-    // )
-    let (_node, scenes, events) = create_ipc_services(&name);
+    let name = args
+        .get(child_index.unwrap() + 1)
+        .expect("missing service name");
+    run_render_child(name).unwrap();
+    std::process::exit(0);
+}
+
+/// Runs the native rendering child on this thread using an existing IPC service.
+/// Call this from a dedicated executable's main thread, not from the producer.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn run_render_child(name: &str) -> eframe::Result<()> {
+    let (_node, scenes, events) = create_ipc_services(name);
     let rx = scenes.subscriber_builder().create().unwrap();
     let tx = events
         .publisher_builder()
@@ -242,8 +231,6 @@ pub fn register_render() {
             Ok(Box::new(app))
         }),
     )
-    .unwrap();
-    std::process::exit(0);
 }
 
 pub const BUILD_ID: &str = concat!(
@@ -461,6 +448,8 @@ pub enum RenderError {
     NoFramesProvided,
     #[error("Timeout waiting for App to initialize")]
     InitializationTimeout,
+    #[error("Failed to launch native viewer: {0}")]
+    Spawn(#[from] std::io::Error),
 }
 
 #[derive(Error, Debug)]
@@ -490,27 +479,38 @@ fn wait_for_exit_or_input(
     child: &mut Child,
     input: &std::sync::mpsc::Receiver<std::io::Result<()>>,
 ) -> std::io::Result<()> {
-    use std::{io, sync::mpsc::RecvTimeoutError};
+    wait_for_exit_or_input_with_wait(child, input, |duration| {
+        thread::sleep(duration);
+        Ok(())
+    })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn wait_for_exit_or_input_with_wait<E: From<std::io::Error>>(
+    child: &mut Child,
+    input: &std::sync::mpsc::Receiver<std::io::Result<()>>,
+    mut wait: impl FnMut(Duration) -> Result<(), E>,
+) -> Result<(), E> {
+    use std::{io, sync::mpsc::TryRecvError};
 
     loop {
         if let Some(status) = child.try_wait()? {
             return if status.success() {
                 Ok(())
             } else {
-                Err(io::Error::other(format!(
-                    "Viewer process exited with {status}"
-                )))
+                Err(io::Error::other(format!("Viewer process exited with {status}")).into())
             };
         }
 
-        match input.recv_timeout(Duration::from_millis(20)) {
-            Ok(result) => return result,
-            Err(RecvTimeoutError::Timeout) => {}
-            Err(RecvTimeoutError::Disconnected) => {
+        match input.try_recv() {
+            Ok(result) => return result.map_err(E::from),
+            Err(TryRecvError::Empty) => wait(Duration::from_millis(20))?,
+            Err(TryRecvError::Disconnected) => {
                 return Err(io::Error::new(
                     io::ErrorKind::BrokenPipe,
                     "Viewer console input thread disconnected",
-                ));
+                )
+                .into());
             }
         }
     }
@@ -541,6 +541,14 @@ impl NativeGuiViewer {
             return Err(RenderError::NotRegistered);
         }
 
+        Self::new_with_executable(std::env::current_exe()?)
+    }
+
+    /// Starts a dedicated renderer executable. Unlike `new`, this does not
+    /// re-enter the producer's main function and needs no `register_render` call.
+    pub fn new_with_executable(
+        executable: impl AsRef<std::path::Path>,
+    ) -> Result<Self, RenderError> {
         let name = format!(
             "cosmol-{}-{}",
             std::process::id(),
@@ -557,13 +565,18 @@ impl NativeGuiViewer {
             .create()
             .unwrap();
         let rx = events.subscriber_builder().create().unwrap();
-        let mut command = Command::new(std::env::current_exe().unwrap());
+        let mut command = Command::new(executable.as_ref());
         command.args(["--child", &name]).stdin(Stdio::null());
-        let mut child = ChildGuard(command.spawn().unwrap());
+        let mut child = ChildGuard(command.spawn()?);
         let pid = match wait_event(&rx, &mut child) {
             Feedback::Ready { pid } => pid,
             other => panic!("expected Ready, received {other:?}"),
         };
+        assert_eq!(
+            pid,
+            child.0.id(),
+            "renderer must be the direct child process"
+        );
         eprintln!(
             "iceoryx2: producer PID {} -> viewer PID {}",
             std::process::id(),
@@ -588,7 +601,25 @@ impl NativeGuiViewer {
         height: f32,
         quality: RenderQuality,
     ) -> Result<Self, RenderError> {
-        let mut this = Self::new()?;
+        Self::new()?.initialize_scene(scene, width, height)
+    }
+
+    /// Renders a scene in a dedicated executable without registering the producer.
+    pub fn render_with_executable(
+        scene: &Scene,
+        width: f32,
+        height: f32,
+        executable: impl AsRef<std::path::Path>,
+    ) -> Result<Self, RenderError> {
+        Self::new_with_executable(executable)?.initialize_scene(scene, width, height)
+    }
+
+    fn initialize_scene(
+        mut self,
+        scene: &Scene,
+        width: f32,
+        height: f32,
+    ) -> Result<Self, RenderError> {
         let bytes = postcard::to_allocvec(&(
             VERSION,
             Request::InitializeScene {
@@ -599,14 +630,14 @@ impl NativeGuiViewer {
             },
         ))
         .unwrap();
-        let mut sample = this.tx.loan_slice(bytes.len()).unwrap();
+        let mut sample = self.tx.loan_slice(bytes.len()).unwrap();
         sample.payload_mut().copy_from_slice(&bytes);
         assert_eq!(sample.send().unwrap(), 1);
         assert_eq!(
-            wait_event(&this.rx, &mut this.child),
+            wait_event(&self.rx, &mut self.child),
             Feedback::Initialized { request_id: 0 }
         );
-        Ok(this)
+        Ok(self)
     }
 
     pub fn is_open(&self) -> bool {
@@ -623,6 +654,23 @@ impl NativeGuiViewer {
     /// by the existing cleanup guard. If the child exits before console input,
     /// the input thread may remain blocked until input arrives or the parent exits.
     pub fn keep_alive(mut self) -> std::io::Result<()> {
+        self.keep_alive_impl(wait_for_exit_or_input)
+    }
+
+    /// Like `keep_alive`, but delegates each short idle wait to the caller.
+    /// Bindings can release their runtime lock and check for interruptions here.
+    #[doc(hidden)]
+    pub fn keep_alive_with_wait<E: From<std::io::Error>>(
+        mut self,
+        wait: impl FnMut(Duration) -> Result<(), E>,
+    ) -> Result<(), E> {
+        self.keep_alive_impl(|child, input| wait_for_exit_or_input_with_wait(child, input, wait))
+    }
+
+    fn keep_alive_impl<E: From<std::io::Error>>(
+        &mut self,
+        wait: impl FnOnce(&mut Child, &std::sync::mpsc::Receiver<std::io::Result<()>>) -> Result<(), E>,
+    ) -> Result<(), E> {
         use std::io::{self, Write};
 
         println!("Press Enter to exit...");
@@ -636,9 +684,7 @@ impl NativeGuiViewer {
                 let _ = input_tx.send(result);
             })?;
 
-        let result = wait_for_exit_or_input(&mut self.child.0, &input_rx);
-        drop(self);
-        result
+        wait(&mut self.child.0, &input_rx)
     }
 
     pub fn update(&self, scene: &Scene) {
@@ -732,7 +778,31 @@ impl NativeGuiViewer {
             return Err(RenderError::NoFramesProvided);
         }
 
-        let mut this = Self::new()?;
+        let mut this = Self::new()?.initialize_animation(animation, width, height)?;
+        assert!(this.child.0.wait().unwrap().success());
+        Ok(this)
+    }
+
+    /// Starts animation playback and returns immediately after initialization.
+    /// The caller owns the child and can finalize it with `keep_alive`.
+    pub fn play_with_executable(
+        animation: Animation,
+        width: f32,
+        height: f32,
+        executable: impl AsRef<std::path::Path>,
+    ) -> Result<Self, RenderError> {
+        if animation.frames.is_empty() {
+            return Err(RenderError::NoFramesProvided);
+        }
+        Self::new_with_executable(executable)?.initialize_animation(animation, width, height)
+    }
+
+    fn initialize_animation(
+        mut self,
+        animation: Animation,
+        width: f32,
+        height: f32,
+    ) -> Result<Self, RenderError> {
         let bytes = postcard::to_allocvec(&(
             VERSION,
             Request::InitializeAnimation {
@@ -743,15 +813,14 @@ impl NativeGuiViewer {
             },
         ))
         .unwrap();
-        let mut sample = this.tx.loan_slice(bytes.len()).unwrap();
+        let mut sample = self.tx.loan_slice(bytes.len()).unwrap();
         sample.payload_mut().copy_from_slice(&bytes);
         assert_eq!(sample.send().unwrap(), 1);
         assert_eq!(
-            wait_event(&this.rx, &mut this.child),
+            wait_event(&self.rx, &mut self.child),
             Feedback::Initialized { request_id: 1 }
         );
-        assert!(this.child.0.wait().unwrap().success());
-        Ok(this)
+        Ok(self)
     }
 
     pub fn save_video(
@@ -893,5 +962,54 @@ mod keep_alive_tests {
             .unwrap();
         let error = wait_for_exit_or_input(&mut child.0, &input_rx).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn idle_wait_can_be_interrupted() {
+        let mut child = spawn_child("wait");
+        let (_input_tx, input_rx) = mpsc::channel();
+        let mut waits = 0;
+        let error = wait_for_exit_or_input_with_wait(&mut child.0, &input_rx, |duration| {
+            waits += 1;
+            assert_eq!(duration, Duration::from_millis(20));
+            Err::<(), _>(io::Error::new(io::ErrorKind::Interrupted, "interrupted"))
+        })
+        .unwrap_err();
+        assert_eq!(waits, 1);
+        assert_eq!(error.kind(), io::ErrorKind::Interrupted);
+        assert!(child.0.try_wait().unwrap().is_none());
+    }
+
+    #[test]
+    fn disconnected_input_returns_an_error() {
+        let mut child = spawn_child("wait");
+        let (input_tx, input_rx) = mpsc::channel();
+        drop(input_tx);
+        let error = wait_for_exit_or_input(&mut child.0, &input_rx).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);
+    }
+
+    #[test]
+    fn missing_renderer_executable_returns_a_spawn_error() {
+        let missing = std::env::temp_dir().join(format!(
+            "cosmol-missing-renderer-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+        ));
+        assert!(matches!(
+            NativeGuiViewer::new_with_executable(missing),
+            Err(RenderError::Spawn(error)) if error.kind() == io::ErrorKind::NotFound
+        ));
+    }
+
+    #[test]
+    fn self_launch_still_requires_registration() {
+        assert!(matches!(
+            NativeGuiViewer::new(),
+            Err(RenderError::NotRegistered)
+        ));
     }
 }

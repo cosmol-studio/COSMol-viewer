@@ -13,8 +13,4 @@ scene.save_image("render_molecule_offscreen.png", width=800, height=500)
 
 viewer = Viewer.render(scene, width=800, height=500)
 
-print("Press Any Key to exit...", end="", flush=True)
-try:
-    _ = input()
-except EOFError:
-    pass
+viewer.keep_alive()

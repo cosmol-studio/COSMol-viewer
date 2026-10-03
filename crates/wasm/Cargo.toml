@@ -6,6 +6,7 @@ description.workspace = true
 repository.workspace = true
 homepage.workspace = true
 publish = false
+include = ["Cargo.toml", "src/**", "pkg/cosmol_viewer_wasm.js", "pkg/cosmol_viewer_wasm_bg.wasm"]
 
 [dependencies]
 cosmol_viewer_core.workspace = true

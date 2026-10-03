@@ -37,7 +37,5 @@ for frame_idx in range(num_frames):
     animation.add_frame(scene)
 
 # One-time submission: interval of 0.02 seconds
-Viewer.play(animation, width=800.0, height=500.0)
-
-print("Press Any Key to exit...", end="", flush=True)
-_ = input()
+viewer = Viewer.play(animation, width=800.0, height=500.0)
+viewer.keep_alive()

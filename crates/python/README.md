@@ -95,9 +95,16 @@ from cosmol_viewer import Viewer
 
 viewer = Viewer.render(scene, width=800, height=500)
 
-print("Press Any Key to exit...", end='', flush=True)
-_ = input()
+viewer.keep_alive()
 ```
+
+`keep_alive()` waits for Enter, stdin EOF, or the native viewer process to exit,
+then closes the viewer. It is a finalization step: the viewer cannot be reused
+afterwards. Calling it in Jupyter or Colab raises `RuntimeError`.
+
+Native viewers run in a dedicated executable bundled with the Python wheel.
+No `register_render()` call is needed in Python. For a source development build,
+see [DEV.md](DEV.md).
 
 In a notebook, use a static PNG display when you do not need interaction:
 

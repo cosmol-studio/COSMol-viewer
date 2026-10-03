@@ -7,6 +7,7 @@ Run after installing the extension:
 import contextlib
 import io
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -45,17 +46,22 @@ def verify_backend(mode):
 
     from cosmol_viewer import Animation, Scene, Viewer
 
+    assert callable(Viewer.keep_alive)
+
     scene = Scene()
     animation = Animation(interval=0.1, loops=1, interpolate=False)
     animation.add_frame(scene)
 
     if mode in {"plain", "terminal", "unsupported"}:
+        # Missing renderer errors must stay recoverable and must not open a GUI.
+        os.environ["COSMOL_VIEWER_NATIVE_PATH"] = str(Path(__file__).with_name("missing-native-viewer"))
         for create, item in ((Viewer.render, scene), (Viewer.play, animation)):
             try:
                 create(item, 100.0, 100.0)
             except (RuntimeError, ValueError) as error:
-                expected = "runtime environment" if mode == "unsupported" else "native GUI viewer"
+                expected = "runtime environment" if mode == "unsupported" else "Native viewer executable is missing"
                 assert expected in str(error), str(error)
+                assert "NotRegistered" not in str(error)
             else:
                 raise AssertionError("A failed backend creation returned a Viewer")
         return
@@ -63,6 +69,17 @@ def verify_backend(mode):
     assert Viewer.get_environment() == {"colab": "Colab", "jupyter": "Jupyter"}[mode]
     viewer = Viewer.render(scene, 100.0, 100.0)
     assert any("start_with_scene" in item.data for item in displays)
+    display_count = len(displays)
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        try:
+            viewer.keep_alive()
+        except RuntimeError as error:
+            assert "not Jupyter or Colab" in str(error), str(error)
+        else:
+            raise AssertionError("Notebook keep_alive() did not reject the call")
+    assert output.getvalue() == ""
+    assert len(displays) == display_count
     output = io.StringIO()
     with contextlib.redirect_stdout(output):
         viewer.update(scene)
@@ -77,6 +94,12 @@ def verify_backend(mode):
 
     playing = Viewer.play(animation, 100.0, 100.0)
     assert any("initiate_viewer_and_play" in item.data for item in displays)
+    try:
+        playing.keep_alive()
+    except RuntimeError as error:
+        assert "not Jupyter or Colab" in str(error), str(error)
+    else:
+        raise AssertionError("Notebook animation keep_alive() did not reject the call")
     output = io.StringIO()
     with contextlib.redirect_stdout(output):
         playing.update(scene)

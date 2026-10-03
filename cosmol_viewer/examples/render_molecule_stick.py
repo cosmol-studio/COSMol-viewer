@@ -14,8 +14,4 @@ scene.save_image("render_molecule_stick.png", width=1200, height=900)
 
 viewer = Viewer.render(scene, width=800, height=500)
 
-print("Press Any Key to exit...", end="", flush=True)
-try:
-    _ = input()
-except EOFError:
-    pass
+viewer.keep_alive()

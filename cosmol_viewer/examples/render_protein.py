@@ -16,5 +16,4 @@ scene.save_image("render_protein.png", width=1200, height=900)
 
 viewer = Viewer.render(scene, width=800, height=500)
 
-print("Press Any Key to exit...", end="", flush=True)
-_ = input()
+viewer.keep_alive()

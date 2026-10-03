@@ -58,3 +58,7 @@ x11 = []
 [[bench]]
 name = "molecule_instances"
 harness = false
+
+[[bin]]
+name = "cosmol-viewer-native"
+path = "src/bin/native_viewer.rs"

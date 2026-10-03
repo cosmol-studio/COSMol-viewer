@@ -1264,6 +1264,7 @@ enum ViewerBackend {
     Jupyter(NotebookState),
     PlainScript(NativeGuiViewer),
     IPythonTerminal(NativeGuiViewer),
+    Closed,
 }
 
 #[cfg_attr(feature = "stubgen", gen_stub_pyclass)]
@@ -1282,7 +1283,8 @@ appropriate backend:
 Use ``Viewer.render(scene, width, height)`` to display a scene interactively, or
 ``Viewer.play(animation, width, height)`` to play an animation. Use
 ``scene.save_image(path, width, height)`` or ``scene.to_png(width, height)`` for
-static image output.
+static image output. Call ``viewer.keep_alive()`` at the end of a native script
+to wait until Enter is pressed or the viewer window closes.
 "#]
 pub struct Viewer {
     backend: ViewerBackend,
@@ -1331,6 +1333,35 @@ def detect_env():
 
     let _ = RUNTIME_ENV.set(env);
     Ok(env)
+}
+
+fn native_viewer_executable(py: Python) -> PyResult<PathBuf> {
+    let executable = if let Some(path) = std::env::var_os("COSMOL_VIEWER_NATIVE_PATH") {
+        PathBuf::from(path)
+    } else {
+        let native_package = py.import("cosmol_viewer_native").map_err(|_| {
+            PyRuntimeError::new_err(
+                "Native viewer package is missing. Reinstall cosmol-viewer, or build it with \
+                 python crates/python/build_native_viewer.py before maturin develop",
+            )
+        })?;
+        let package_file: PathBuf = native_package.getattr("__file__")?.extract()?;
+        package_file
+            .parent()
+            .ok_or_else(|| PyRuntimeError::new_err("Invalid native viewer package path"))?
+            .join(format!(
+                "cosmol-viewer-native{}",
+                std::env::consts::EXE_SUFFIX
+            ))
+    };
+    if !executable.is_file() {
+        return Err(PyRuntimeError::new_err(format!(
+            "Native viewer executable is missing: {}. Run python crates/python/build_native_viewer.py \
+             before maturin develop, or reinstall cosmol-viewer",
+            executable.display()
+        )));
+    }
+    Ok(executable)
 }
 
 #[cfg_attr(feature = "stubgen", gen_stub_pymethods)]
@@ -1392,7 +1423,13 @@ Viewer
                 })
             }
             RuntimeEnv::PlainScript | RuntimeEnv::IPythonTerminal => {
-                let native_gui_viewer = match NativeGuiViewer::render(&scene.inner, width, height) {
+                let executable = native_viewer_executable(py)?;
+                let native_gui_viewer = match NativeGuiViewer::render_with_executable(
+                    &scene.inner,
+                    width,
+                    height,
+                    executable,
+                ) {
                     Ok(viewer) => viewer,
                     Err(err) => {
                         return Err(PyRuntimeError::new_err(format!(
@@ -1465,12 +1502,18 @@ Viewer
             }
 
             RuntimeEnv::PlainScript | RuntimeEnv::IPythonTerminal => {
-                let native_gui_viewer = NativeGuiViewer::play(animation.inner, width, height)
-                    .map_err(|err| {
-                        PyRuntimeError::new_err(format!(
-                            "Error: Failed to initialize native GUI viewer: {err}"
-                        ))
-                    })?;
+                let executable = native_viewer_executable(py)?;
+                let native_gui_viewer = NativeGuiViewer::play_with_executable(
+                    animation.inner,
+                    width,
+                    height,
+                    executable,
+                )
+                .map_err(|err| {
+                    PyRuntimeError::new_err(format!(
+                        "Error: Failed to initialize native GUI viewer: {err}"
+                    ))
+                })?;
 
                 Ok(Viewer {
                     backend: if env_type == RuntimeEnv::PlainScript {
@@ -1485,6 +1528,50 @@ Viewer
                 env_type
             ))),
         }
+    }
+
+    #[doc = r#"
+Keep a native viewer alive until Enter is pressed or its child process exits.
+
+This blocks the calling thread, but releases the Python GIL during short waits.
+Enter or stdin EOF closes the child process. A normal child exit returns normally;
+an unsuccessful child exit or an I/O failure raises ``OSError``. Ctrl+C raises
+``KeyboardInterrupt`` and also closes the child process.
+
+This is a finalization step: afterwards the viewer cannot be updated or reused,
+including when an error interrupts the wait.
+
+Raises
+------
+RuntimeError
+    If called in Jupyter or Colab, or on an already finalized viewer.
+OSError
+    If console I/O fails or the child process exits unsuccessfully.
+KeyboardInterrupt
+    If the wait is interrupted by Ctrl+C.
+"#]
+    pub fn keep_alive(&mut self, py: Python) -> PyResult<()> {
+        match &self.backend {
+            ViewerBackend::Colab(_) | ViewerBackend::Jupyter(_) => {
+                return Err(PyRuntimeError::new_err(
+                    "keep_alive() is only available for native viewers, not Jupyter or Colab",
+                ));
+            }
+            ViewerBackend::Closed => {
+                return Err(PyRuntimeError::new_err("Viewer has already been finalized"));
+            }
+            _ => {}
+        }
+
+        let viewer = match std::mem::replace(&mut self.backend, ViewerBackend::Closed) {
+            ViewerBackend::PlainScript(viewer) | ViewerBackend::IPythonTerminal(viewer) => viewer,
+            _ => unreachable!(),
+        };
+        // Keep the non-Send IPC handles on their owning thread; only detach the sleep.
+        viewer.keep_alive_with_wait(|duration| {
+            py.detach(move || std::thread::sleep(duration));
+            py.check_signals()
+        })
     }
 
     #[doc = r#"
@@ -1517,6 +1604,9 @@ rendering capacity, which can lead to delayed or incomplete rendering.
             ViewerBackend::PlainScript(viewer) | ViewerBackend::IPythonTerminal(viewer) => {
                 viewer.update(&scene.inner);
             }
+            ViewerBackend::Closed => {
+                return Err(PyRuntimeError::new_err("Viewer has already been finalized"));
+            }
         }
         Ok(())
     }
@@ -1547,6 +1637,9 @@ enabled : bool, optional
             }
             ViewerBackend::Colab(state) | ViewerBackend::Jupyter(state) => {
                 state.viewer.set_camera_parameter_logging(py, enabled)
+            }
+            ViewerBackend::Closed => {
+                Err(PyRuntimeError::new_err("Viewer has already been finalized"))
             }
         }
     }

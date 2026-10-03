@@ -56,10 +56,13 @@ jobs:
         platform:
           - runner: ubuntu-22.04
             target: x86_64
+            rust_target: x86_64-unknown-linux-gnu
           - runner: ubuntu-22.04
             target: x86
+            rust_target: i686-unknown-linux-gnu
           - runner: ubuntu-22.04
             target: aarch64
+            rust_target: aarch64-unknown-linux-gnu
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -83,6 +86,7 @@ jobs:
           working-directory: crates/python
           sccache: true
           manylinux: auto
+          before-script-linux: python3 build_native_viewer.py --release --target ${{ matrix.platform.rust_target }} --features x11,wayland
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
@@ -97,14 +101,21 @@ jobs:
         platform:
           - runner: windows-2025
             target: x64
+            rust_target: x86_64-pc-windows-msvc
           - runner: windows-2025
             target: x86
+            rust_target: i686-pc-windows-msvc
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
           python-version: 3.x
           architecture: ${{ matrix.platform.target }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform.rust_target }}
+      - name: Build native renderer
+        run: python crates/python/build_native_viewer.py --release --target ${{ matrix.platform.rust_target }}
       - name: Download wasm pkg
         uses: actions/download-artifact@v4
         with:
@@ -163,13 +174,20 @@ jobs:
         platform:
           - runner: macos-26
             target: x86_64
+            rust_target: x86_64-apple-darwin
           - runner: macos-26
             target: aarch64
+            rust_target: aarch64-apple-darwin
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
           python-version: 3.x
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform.rust_target }}
+      - name: Build native renderer
+        run: python crates/python/build_native_viewer.py --release --target ${{ matrix.platform.rust_target }}
       - name: Download wasm pkg
         uses: actions/download-artifact@v4
         with:
@@ -194,9 +212,20 @@ jobs:
           path: crates/python/dist
 
   sdist:
+    needs: wasm
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - name: Download wasm pkg
+        uses: actions/download-artifact@v4
+        with:
+          name: wasm-pkg
+          path: crates/wasm/pkg
+      - name: Download pyi
+        uses: actions/download-artifact@v4
+        with:
+          name: pyi
+          path: crates/python/
       - name: Build sdist
         uses: PyO3/maturin-action@v1
         with:

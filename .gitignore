@@ -5,6 +5,9 @@
 frames/
 cosmol_viewer/*.png
 crates/python/cosmol_viewer.pyi
+crates/python/cosmol_viewer_native/cosmol-viewer-native*
+crates/python/**/__pycache__/
+tools/__pycache__/
 crates/python/docs/_build
 ./docs/
 AGENTS.md
