@@ -18,8 +18,8 @@
 // behavior claim and must stay adjacent to the Rust code that implements it.
 
 use crate::parser::utils::{Residue, RibbonResidueInfo, SecondaryStructure};
+use cosmolkit::ResidueCode;
 use glam::Vec3;
-use na_seq::AminoAcid;
 
 type HBondMatrix = Vec<Vec<bool>>;
 
@@ -152,7 +152,7 @@ impl SecondaryStructureCalculator {
                 ca: residue.ca,
                 o: residue.o,
                 h: residue.h,
-                is_proline: residue.residue_type == AminoAcid::Pro,
+                is_proline: residue.residue_type == ResidueCode::PRO,
             })
             .collect();
 

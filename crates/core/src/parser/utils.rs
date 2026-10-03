@@ -1,33 +1,48 @@
+use cosmolkit::ResidueCode;
 use glam::Vec3;
-use na_seq::{AaIdent, AminoAcid};
 use serde::{Deserialize, Serialize};
 
-mod aa_serde {
+// Temporary adapter until CK provides Serde for ResidueCode. Preserve CK's
+// residue names rather than collapsing modified residues to one-letter codes.
+mod residue_code_serde {
     use super::*;
     use serde::{Deserializer, Serializer};
-    use std::str::FromStr;
 
-    pub fn serialize<S>(aa: &AminoAcid, s: S) -> Result<S::Ok, S::Error>
+    pub fn serialize<S>(code: &ResidueCode, s: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        s.serialize_str(&aa.to_str(AaIdent::OneLetter))
+        let name = if *code == ResidueCode::UNKNOWN {
+            "UNKNOWN"
+        } else {
+            cosmolkit::residue_info(usize::from(code.as_u16())).name
+        };
+        s.serialize_str(name)
     }
 
-    pub fn deserialize<'de, D>(d: D) -> Result<AminoAcid, D::Error>
+    pub fn deserialize<'de, D>(d: D) -> Result<ResidueCode, D::Error>
     where
         D: Deserializer<'de>,
     {
         let name = String::deserialize(d)?;
-        AminoAcid::from_str(&name)
-            .map_err(|_| serde::de::Error::custom(format!("Invalid amino acid string: {}", name)))
+        if name == "UNKNOWN" {
+            return Ok(ResidueCode::UNKNOWN);
+        }
+        let info = cosmolkit::find_residue_info(&name);
+        if !info.found() {
+            return Err(serde::de::Error::custom(format!(
+                "Invalid CK residue name: {name}"
+            )));
+        }
+        Ok(info.code)
     }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Residue {
-    #[serde(with = "aa_serde")]
-    pub residue_type: AminoAcid,
+    /// CK residue identity, temporarily serialized using the CK residue name.
+    #[serde(with = "residue_code_serde")]
+    pub residue_type: ResidueCode,
     pub sns: usize,
 
     pub c: Vec3,

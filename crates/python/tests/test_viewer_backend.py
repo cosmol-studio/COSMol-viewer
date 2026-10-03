@@ -44,11 +44,19 @@ def verify_backend(mode):
     if mode == "colab":
         sys.modules["google.colab"] = types.ModuleType("google.colab")
 
-    from cosmol_viewer import Animation, Scene, Viewer
+    from cosmol_viewer import Animation, Protein, Scene, Viewer
 
     assert callable(Viewer.keep_alive)
 
     scene = Scene()
+    # Exercise the temporary CK residue-name Serde adapter in actual WASM payloads.
+    scene.add_shape(Protein.from_pdb("""\
+ATOM      1  N   MSE A   1      11.104  13.207   9.900  1.00 20.00           N
+ATOM      2  CA  MSE A   1      12.210  13.912  10.555  1.00 20.00           C
+ATOM      3  C   MSE A   1      13.470  13.079  10.413  1.00 20.00           C
+ATOM      4  O   MSE A   1      14.000  12.500  11.000  1.00 20.00           O
+END
+"""))
     animation = Animation(interval=0.1, loops=1, interpolate=False)
     animation.add_frame(scene)
 

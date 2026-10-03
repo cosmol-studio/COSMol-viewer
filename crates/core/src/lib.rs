@@ -28,7 +28,6 @@ pub mod utils;
 pub use crate::utils::RenderQuality;
 pub use eframe;
 use eframe::egui::{self, Ui};
-pub use na_seq;
 #[cfg(not(target_arch = "wasm32"))]
 pub use shader::{ImageBackground, ImageRenderer};
 

@@ -86,7 +86,8 @@ jobs:
           working-directory: crates/python
           sccache: true
           manylinux: auto
-          before-script-linux: python3 build_native_viewer.py --release --target ${{ matrix.platform.rust_target }} --features x11,wayland
+          # The hook runs before sccache is installed; bypass it for this command only.
+          before-script-linux: RUSTC_WRAPPER= python3 build_native_viewer.py --release --target ${{ matrix.platform.rust_target }} --features x11,wayland
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:

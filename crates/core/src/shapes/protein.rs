@@ -7,14 +7,11 @@ use crate::surface::radii::default_radius;
 use crate::surface::{SurfaceError, SurfaceGeometry, ses_surface_geometry, sharp_edge_patches};
 use crate::utils::{Material, MeshData, Stylable};
 use cosmolkit::{self as ck, BioCoordinateFormat};
-// use cosmolkit::{BioCoorFormat, ChainSourceIds, Protein as CosmolkitProtein};
 use glam::{Quat, Vec3, Vec4};
-use na_seq::AminoAcid;
 use once_cell::sync::OnceCell;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
-use std::str::FromStr;
 
 #[repr(C)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -180,6 +177,7 @@ impl Protein {
                 }
                 raw_residues.push(RawProteinResidue {
                     name: residue_ref.name().as_str().to_string(),
+                    residue_type: residue_ref.code(),
                     atoms: raw_atoms,
                     seq_id: residue_ref
                         .row()
@@ -193,9 +191,6 @@ impl Protein {
             select_best_alt_locs(&mut raw_residues);
             let mut residues = Vec::new();
             for (residue_index, raw_residue) in raw_residues.iter().enumerate() {
-                let Ok(amino_acid) = AminoAcid::from_str(&raw_residue.name) else {
-                    continue;
-                };
                 let atom_position = |name: &str| {
                     raw_residue
                         .atoms
@@ -214,7 +209,7 @@ impl Protein {
 
                 centers.push(ca);
                 residues.push(Residue {
-                    residue_type: amino_acid,
+                    residue_type: raw_residue.residue_type,
                     ca,
                     c,
                     n,
@@ -278,6 +273,7 @@ struct RawProteinAtom {
 
 struct RawProteinResidue {
     name: String,
+    residue_type: ck::ResidueCode,
     atoms: Vec<RawProteinAtom>,
     seq_id: Option<(i32, Option<u8>)>,
     label_seq_id: Option<i32>,

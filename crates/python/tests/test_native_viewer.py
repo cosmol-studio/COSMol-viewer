@@ -14,10 +14,18 @@ import unittest
 
 
 def run_viewer(mode):
-    from cosmol_viewer import Animation, Scene, Sphere, Viewer
+    from cosmol_viewer import Animation, Protein, Scene, Sphere, Viewer
 
     scene = Scene()
     scene.add_shape_with_id("sphere", Sphere([0.0, 0.0, 0.0], 1.0))
+    # Native IPC must preserve modified CK residue codes through render and update.
+    scene.add_shape_with_id("protein", Protein.from_pdb("""\
+ATOM      1  N   HYP A   1      11.104  13.207   9.900  1.00 20.00           N
+ATOM      2  CA  HYP A   1      12.210  13.912  10.555  1.00 20.00           C
+ATOM      3  C   HYP A   1      13.470  13.079  10.413  1.00 20.00           C
+ATOM      4  O   HYP A   1      14.000  12.500  11.000  1.00 20.00           O
+END
+"""))
     if mode == "play":
         animation = Animation(0.05, -1, False)
         animation.add_frame(scene)
