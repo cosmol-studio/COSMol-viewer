@@ -1254,6 +1254,18 @@ impl std::fmt::Display for RuntimeEnv {
     }
 }
 
+struct NotebookState {
+    viewer: NotebookViewer,
+    first_update: bool,
+}
+
+enum ViewerBackend {
+    Colab(NotebookState),
+    Jupyter(NotebookState),
+    PlainScript(NativeGuiViewer),
+    IPythonTerminal(NativeGuiViewer),
+}
+
 #[cfg_attr(feature = "stubgen", gen_stub_pyclass)]
 #[pyclass]
 #[pyo3(crate = "pyo3", unsendable)]
@@ -1273,10 +1285,7 @@ Use ``Viewer.render(scene, width, height)`` to display a scene interactively, or
 static image output.
 "#]
 pub struct Viewer {
-    environment: RuntimeEnv,
-    wasm_viewer: Option<NotebookViewer>,
-    native_gui_viewer: Option<NativeGuiViewer>,
-    first_update: bool,
+    backend: ViewerBackend,
 }
 
 fn detect_runtime_env(py: Python) -> PyResult<RuntimeEnv> {
@@ -1368,13 +1377,18 @@ Viewer
                 setup_wasm_if_needed(py, env_type)?;
                 let mut scene = scene.inner.clone();
                 scene.prepare_for_wasm();
-                let wasm_viewer = NotebookViewer::initiate_viewer(py, &scene, width, height)?;
+                let wasm_viewer = NotebookViewer::render(py, &scene, width, height)?;
 
-                Ok(Viewer {
-                    environment: env_type,
-                    wasm_viewer: Some(wasm_viewer),
-                    native_gui_viewer: None,
+                let state = NotebookState {
+                    viewer: wasm_viewer,
                     first_update: true,
+                };
+                Ok(Viewer {
+                    backend: if env_type == RuntimeEnv::Colab {
+                        ViewerBackend::Colab(state)
+                    } else {
+                        ViewerBackend::Jupyter(state)
+                    },
                 })
             }
             RuntimeEnv::PlainScript | RuntimeEnv::IPythonTerminal => {
@@ -1389,10 +1403,11 @@ Viewer
                 };
 
                 Ok(Viewer {
-                    environment: env_type,
-                    wasm_viewer: None,
-                    native_gui_viewer: Some(native_gui_viewer),
-                    first_update: true,
+                    backend: if env_type == RuntimeEnv::PlainScript {
+                        ViewerBackend::PlainScript(native_gui_viewer)
+                    } else {
+                        ViewerBackend::IPythonTerminal(native_gui_viewer)
+                    },
                 })
             }
             _ => Err(PyValueError::new_err("Error: Invalid runtime environment")),
@@ -1421,7 +1436,7 @@ Viewer
         if animation.inner.frames.is_empty() {
             return Err(PyErr::new::<PyRuntimeError, _>("No frames provided"));
         }
-        let env_type = detect_runtime_env(py).unwrap();
+        let env_type = detect_runtime_env(py)?;
 
         match env_type {
             RuntimeEnv::Colab | RuntimeEnv::Jupyter => {
@@ -1436,22 +1451,33 @@ Viewer
                 let wasm_viewer =
                     NotebookViewer::initiate_viewer_and_play(py, animation, width, height)?;
 
-                Ok(Viewer {
-                    environment: env_type,
-                    wasm_viewer: Some(wasm_viewer),
-                    native_gui_viewer: None,
+                let state = NotebookState {
+                    viewer: wasm_viewer,
                     first_update: false,
+                };
+                Ok(Viewer {
+                    backend: if env_type == RuntimeEnv::Colab {
+                        ViewerBackend::Colab(state)
+                    } else {
+                        ViewerBackend::Jupyter(state)
+                    },
                 })
             }
 
             RuntimeEnv::PlainScript | RuntimeEnv::IPythonTerminal => {
-                let _ = NativeGuiViewer::play(animation.inner, width, height);
+                let native_gui_viewer = NativeGuiViewer::play(animation.inner, width, height)
+                    .map_err(|err| {
+                        PyRuntimeError::new_err(format!(
+                            "Error: Failed to initialize native GUI viewer: {err}"
+                        ))
+                    })?;
 
                 Ok(Viewer {
-                    environment: env_type,
-                    wasm_viewer: None,
-                    native_gui_viewer: None,
-                    first_update: false,
+                    backend: if env_type == RuntimeEnv::PlainScript {
+                        ViewerBackend::PlainScript(native_gui_viewer)
+                    } else {
+                        ViewerBackend::IPythonTerminal(native_gui_viewer)
+                    },
                 })
             }
             _ => Err(PyErr::new::<PyRuntimeError, _>(format!(
@@ -1475,48 +1501,37 @@ In Jupyter or Colab, frequent animation updates may be limited by notebook
 rendering capacity, which can lead to delayed or incomplete rendering.
 "#]
     pub fn update(&mut self, scene: &Scene, py: Python) -> PyResult<()> {
-        let env_type = self.environment;
-        match env_type {
-            RuntimeEnv::Colab | RuntimeEnv::Jupyter => {
-                if self.first_update {
+        match &mut self.backend {
+            ViewerBackend::Colab(state) | ViewerBackend::Jupyter(state) => {
+                if state.first_update {
                     print_to_notebook(
                         c_str!(
                             r###"print("\033[33m⚠️ Note: When running in Jupyter or Colab, animation updates may be limited by the notebook's output capacity, which can cause incomplete or delayed rendering.\033[0m")"###
                         ),
                         py,
                     );
-                    self.first_update = false;
+                    state.first_update = false;
                 }
-                if let Some(ref wasm_viewer) = self.wasm_viewer {
-                    wasm_viewer.update(py, &scene.inner)?;
-                } else {
-                    return Err(PyErr::new::<PyRuntimeError, _>(
-                        "Viewer is not initialized properly",
-                    ));
-                }
+                state.viewer.update(py, &scene.inner)?;
             }
-            RuntimeEnv::PlainScript | RuntimeEnv::IPythonTerminal => {
-                if let Some(ref mut native_gui_viewer) = self.native_gui_viewer {
-                    native_gui_viewer.update(&scene.inner);
-                } else {
-                    return Err(PyErr::new::<PyRuntimeError, _>(
-                        "Viewer is not initialized properly",
-                    ));
-                }
+            ViewerBackend::PlainScript(viewer) | ViewerBackend::IPythonTerminal(viewer) => {
+                viewer.update(&scene.inner);
             }
-            _ => unreachable!(),
         }
         Ok(())
     }
 
     #[doc = r#"
-Enable or disable logging camera parameters whenever the native viewer camera moves.
+Enable or disable logging camera parameters whenever the viewer camera moves.
 
-When enabled, native viewer interaction logs one line of orbit-style camera
+When enabled, viewer interaction logs one line of orbit-style camera
 parameters after drag, zoom, or auto-rotation changes the camera. The printed
 values can be passed back to ``scene.set_camera_view(...)`` to reproduce the
 view. Logging is disabled by default, and the angle conversion is only computed
 while this option is enabled.
+
+Native viewers log to the terminal. Notebook viewers log to the browser console;
+the command is submitted without waiting for a browser response.
 
 Parameters
 ----------
@@ -1524,24 +1539,15 @@ enabled : bool, optional
     Whether to print camera parameters on camera movement. Defaults to ``True``.
 "#]
     #[pyo3(signature = (enabled=true))]
-    pub fn set_camera_parameter_logging(&mut self, enabled: bool) -> PyResult<()> {
-        match self.environment {
-            RuntimeEnv::PlainScript | RuntimeEnv::IPythonTerminal => {
-                if let Some(ref native_gui_viewer) = self.native_gui_viewer {
-                    native_gui_viewer.set_camera_parameter_logging(enabled);
-                    Ok(())
-                } else {
-                    Err(PyRuntimeError::new_err(
-                        "Native viewer is not initialized properly",
-                    ))
-                }
+    pub fn set_camera_parameter_logging(&mut self, enabled: bool, py: Python) -> PyResult<()> {
+        match &self.backend {
+            ViewerBackend::PlainScript(viewer) | ViewerBackend::IPythonTerminal(viewer) => {
+                viewer.set_camera_parameter_logging(enabled);
+                Ok(())
             }
-            RuntimeEnv::Colab | RuntimeEnv::Jupyter => Err(PyRuntimeError::new_err(
-                "Camera parameter logging is only available for native viewers",
-            )),
-            _ => Err(PyRuntimeError::new_err(
-                "Camera parameter logging is not available in this runtime environment",
-            )),
+            ViewerBackend::Colab(state) | ViewerBackend::Jupyter(state) => {
+                state.viewer.set_camera_parameter_logging(py, enabled)
+            }
         }
     }
 }

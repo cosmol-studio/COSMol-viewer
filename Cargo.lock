@@ -409,14 +409,13 @@ dependencies = [
 
 [[package]]
 name = "calloop"
-version = "0.14.4"
+version = "0.14.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4dbf9978365bac10f54d1d4b04f7ce4427e51f71d61f2fe15e3fed5166474df7"
+checksum = "43b32313e937c8721c9d17ee9bf60699a6402b4b7c2cb6ac1bee0ffcaa4b4e5e"
 dependencies = [
  "bitflags 2.13.2",
  "polling",
  "rustix 1.1.5",
- "slab",
  "tracing",
 ]
 
@@ -438,7 +437,7 @@ version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "138efcf0940a02ebf0cc8d1eff41a1682a46b431630f4c52450d6265876021fa"
 dependencies = [
- "calloop 0.14.4",
+ "calloop 0.14.5",
  "rustix 1.1.5",
  "wayland-backend",
  "wayland-client",
@@ -446,9 +445,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.5.1"
+version = "1.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f360145194ee8e21db5ee7f3fcd4fe52210864c75c985dae33218202c8bbe040"
+checksum = "f74872d07caf508b30a21f6836e7d7016a2eaf7d9ff4f48deaa58cd8a0407630"
 dependencies = [
  "find-msvc-tools",
  "jobserver",
@@ -570,9 +569,9 @@ dependencies = [
 
 [[package]]
 name = "compile-time"
-version = "0.3.7"
+version = "0.3.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "93ae90e9d2c5ee878600b1604aa04ded144a0c7e9ec233cd879ae0922d40f0a1"
+checksum = "33a054bcef24c012b062eb2ab9c9abeb70a8cd723f216ff0dcf25394eb02decd"
 dependencies = [
  "compile-time-macros",
  "semver",
@@ -581,9 +580,9 @@ dependencies = [
 
 [[package]]
 name = "compile-time-macros"
-version = "0.3.7"
+version = "0.3.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fa04123619670d1d4f8299132b864e7b7a65aedba0dbe2ea40fa8dd0c9e2873b"
+checksum = "431f53b5d65f3240c053885f0cef52e04df61b39c35f35ad8362e77899bf2894"
 dependencies = [
  "macro-string",
  "proc-macro2",
@@ -734,23 +733,26 @@ dependencies = [
 
 [[package]]
 name = "cosmolkit"
-version = "0.5.0-rc.8"
+version = "0.5.0-rc.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "91768256b44b5e5c752d49f287d76f7d828d276c4011c4d10c465136a333950d"
+checksum = "bcb3c2409ad788e79426294e5488c05aab1c6f3116ce93eb5fef71d493a90e5c"
 dependencies = [
  "cosmolkit-bio",
  "cosmolkit-core",
+ "cosmolkit-descriptors",
  "cosmolkit-io",
  "cosmolkit-macros",
  "cosmolkit-model",
  "cosmolkit-smiles",
+ "cosmolkit-stereo",
+ "cosmolkit-tautomer",
 ]
 
 [[package]]
 name = "cosmolkit-bio"
-version = "0.5.0-rc.8"
+version = "0.5.0-rc.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "74d845a35f24825816df9765b74ef4d10ff878da3e6999c3c994aa8e28fb7440"
+checksum = "1ea7efe24487b6d17f1e50ec58980d1d3ba28b85a30c8f63a7f9523a006052e5"
 dependencies = [
  "cosmolkit-model",
  "cosmolkit-types",
@@ -758,9 +760,9 @@ dependencies = [
 
 [[package]]
 name = "cosmolkit-core"
-version = "0.5.0-rc.8"
+version = "0.5.0-rc.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ed9db545d1ad614efd3e2cba8dc18b5fe1e45d96ef0e43491caed5fc4c1fe10"
+checksum = "2e757d36e6298a13d92564b59b73622501384035eead9e719f9d631baa720d58"
 dependencies = [
  "cosmolkit-model",
  "cosmolkit-ringdecomposer",
@@ -770,15 +772,27 @@ dependencies = [
 
 [[package]]
 name = "cosmolkit-cx"
-version = "0.5.0-rc.8"
+version = "0.5.0-rc.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "60e9a0b8140a58a7f7c98be76bb44114816ae1ee959a0c50f872d51feee551f3"
+checksum = "c02abd56798188d4ede0187db5036e60035328ffc519745bf41458ab6d6320c7"
+
+[[package]]
+name = "cosmolkit-descriptors"
+version = "0.5.0-rc.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8056474e24876c98fd99517f4aa7f3b43c672b4942c19a4be435349f092ba565"
+dependencies = [
+ "cosmolkit-core",
+ "cosmolkit-model",
+ "cosmolkit-search",
+ "thiserror 2.0.21",
+]
 
 [[package]]
 name = "cosmolkit-io"
-version = "0.5.0-rc.8"
+version = "0.5.0-rc.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "549df36b3a0366f3c6cb716e96bc02460dc7581f431a088ab687d2881327edf1"
+checksum = "43dd86389ee45e9fc4bc13413382f6ccd3254369d891b7f3dfe411d904d00910"
 dependencies = [
  "cosmolkit-bio",
  "cosmolkit-core",
@@ -790,9 +804,9 @@ dependencies = [
 
 [[package]]
 name = "cosmolkit-macros"
-version = "0.5.0-rc.8"
+version = "0.5.0-rc.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3f4b3d5687d217f1b8d7eac2281aff7c2abf77b3f92740996e9f88b86fbe0373"
+checksum = "c939a6eda2ae441647e48bc65202b1cfc206435d17a1ea7720576bf492fc983a"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -801,9 +815,9 @@ dependencies = [
 
 [[package]]
 name = "cosmolkit-model"
-version = "0.5.0-rc.8"
+version = "0.5.0-rc.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "801ec13a064e61c700b823032ac5c430454ab5b0ec0f81cb360781f1ee7d907c"
+checksum = "08e461fa70810eb44d835dde8588bd352ab7eca7a13dad7bb7f04323e5d57f1b"
 dependencies = [
  "cosmolkit-types",
  "thiserror 2.0.21",
@@ -811,18 +825,18 @@ dependencies = [
 
 [[package]]
 name = "cosmolkit-ringdecomposer"
-version = "0.5.0-rc.8"
+version = "0.5.0-rc.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8e3ca1fce3dfa32d366cffc6827f93f90d2c84b4e1182dd4c7b6fe1ae3698d70"
+checksum = "f627cc062a529bea706b5794b6c31de84e41810e3db8ca11e5fe6b8c42c37f08"
 dependencies = [
  "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "cosmolkit-search"
-version = "0.5.0-rc.8"
+version = "0.5.0-rc.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "872f918264fb5037f218eeb6b7b36cad831ed840b1a16a1617caf724e07d9531"
+checksum = "c1325ff4ed65add657d35c5298eccab38046f40c7e235424f06a98b25833a5b4"
 dependencies = [
  "cosmolkit-core",
  "cosmolkit-cx",
@@ -834,9 +848,9 @@ dependencies = [
 
 [[package]]
 name = "cosmolkit-smiles"
-version = "0.5.0-rc.8"
+version = "0.5.0-rc.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a04ef3737560e418a364c06181ccb9cf7b821a04b7797255aa9e90daa5f745ea"
+checksum = "b7e9995a1f9f761238a15f9261727c06f89b7c7dd1907dda797f90c976aec649"
 dependencies = [
  "cosmolkit-core",
  "cosmolkit-cx",
@@ -846,10 +860,31 @@ dependencies = [
 ]
 
 [[package]]
-name = "cosmolkit-types"
-version = "0.5.0-rc.8"
+name = "cosmolkit-stereo"
+version = "0.5.0-rc.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aa170006ce4ab65b012cd518a81b22e70310405dfe4e94127a4c200f5ebdcbd2"
+checksum = "f83c59dce333f854a243727a63aa1283d82825ac85b357344de1192a7fee21de"
+dependencies = [
+ "cosmolkit-core",
+ "cosmolkit-model",
+ "cosmolkit-types",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "cosmolkit-tautomer"
+version = "0.5.0-rc.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2ac5a9133ead1d1ed55ada4da1ffc4de2381b2bb02d22f597355d6ffabbdc392"
+dependencies = [
+ "cosmolkit-model",
+]
+
+[[package]]
+name = "cosmolkit-types"
+version = "0.5.0-rc.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "db095ce79b4eb4bf4efc987ead64a5d6b251449f29270d8940c6a8790a1f3aa8"
 dependencies = [
  "serde",
  "thiserror 2.0.21",
@@ -1367,9 +1402,9 @@ dependencies = [
 
 [[package]]
 name = "font-types"
-version = "0.12.5"
+version = "0.12.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8eb065f3251655b3c90e22e5e363f310fc5332fb3402e37bbc94752283248f6"
+checksum = "6c92d9081c7ab3bd83ef1eecdfad090f3d966e3ce74106779664114cfe1a6274"
 dependencies = [
  "bytemuck",
 ]
@@ -1556,9 +1591,9 @@ dependencies = [
 
 [[package]]
 name = "glam"
-version = "0.33.11"
+version = "0.33.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "35b4e837a1d133645d1dcf283e146a4b9901e390a1c13545f959cfed3a72f24f"
+checksum = "37bfe73dc8ec21f54d181e5a60554327ec3f1c600c455a75ccbfc65d2106a6c4"
 dependencies = [
  "bytemuck",
  "serde_core",
@@ -2316,6 +2351,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "itertools"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b4baf93f58d4425749ca49a51c50ebab072c5df6994d08fed93541c331481dc"
+dependencies = [
+ "either",
+]
+
+[[package]]
 name = "itoa"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2452,9 +2496,9 @@ checksum = "7a79a3332a6609480d7d0c9eab957bca6b455b91bb84e66d19f5ff66294b85b8"
 
 [[package]]
 name = "libc"
-version = "0.2.189"
+version = "0.2.190"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
+checksum = "ce5d3ddc6d3fa000eb1536d85e147bfe31aacaba692ed6a876f95cb7c855be78"
 
 [[package]]
 name = "libfuzzer-sys"
@@ -3462,9 +3506,9 @@ checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
 
 [[package]]
 name = "pyo3"
-version = "0.29.2"
+version = "0.29.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4688ddedf473e32662b9b067670129a8afb8c18e351482c70d62ba4a88171e8b"
+checksum = "700d18fa267b73b9b521fd7e13580e2f446916f176cacee1ab63fcc8191f1655"
 dependencies = [
  "inventory",
  "libc",
@@ -3477,18 +3521,18 @@ dependencies = [
 
 [[package]]
 name = "pyo3-build-config"
-version = "0.29.2"
+version = "0.29.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f41027e41b4bd03f6e60f9f417fe24a6341a6bb744edd62b6f709f2a52ea30e9"
+checksum = "7b3fc0c4d08f6bb10e71fe39dfb9e2f59c6eb6854e22ec8092f50c69a4499adb"
 dependencies = [
  "target-lexicon",
 ]
 
 [[package]]
 name = "pyo3-ffi"
-version = "0.29.2"
+version = "0.29.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e591a95526fead067432c3b3a33fc74770b87b1e04e73671090d9c2055a2b327"
+checksum = "dfc0b8e19df29aad7086cf977bb0c2a2f143e30567eb113e9cf72b62ca698330"
 dependencies = [
  "libc",
  "pyo3-build-config",
@@ -3496,9 +3540,9 @@ dependencies = [
 
 [[package]]
 name = "pyo3-macros"
-version = "0.29.2"
+version = "0.29.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "73225868fc1cd84eef2c3c230ddb91273bf1de46aeb8a4248da76d32a0924a1c"
+checksum = "6100e8a4b5eba53afaa5ed078364851a0b2499c553a44c31026b929049b49dc6"
 dependencies = [
  "proc-macro2",
  "pyo3-macros-backend",
@@ -3508,9 +3552,9 @@ dependencies = [
 
 [[package]]
 name = "pyo3-macros-backend"
-version = "0.29.2"
+version = "0.29.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "571575aa3749fa6216757dd47d2a3e7ef360f329a40f0666a9fbd14889024952"
+checksum = "6143877a16e82b5a727b7127ff4cd86858a24a28d745d72f43e6f227c7b1bdb3"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -3520,15 +3564,15 @@ dependencies = [
 
 [[package]]
 name = "pyo3-stub-gen"
-version = "0.23.0"
+version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a267ea4da9a831f534def7f1d8e14f581d5640d3e5af6527072724f216f4dbbf"
+checksum = "0f0a0f9bd0305226d63aa45a5e7d51e54a6648eb1cba47d38ec0aca6a8fd6f6c"
 dependencies = [
  "anyhow",
  "chrono",
  "indexmap",
  "inventory",
- "itertools 0.14.0",
+ "itertools 0.15.0",
  "log",
  "maplit",
  "num-complex",
@@ -3543,16 +3587,16 @@ dependencies = [
 
 [[package]]
 name = "pyo3-stub-gen-derive"
-version = "0.23.0"
+version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6573423a5e8cc43ec7565eccccbc2dd35e1fc9032d9ca404afab875429eb8cf0"
+checksum = "6b4b8aba4df490324d0e2fee5e32034dccf65ebd97940f588bfc1d0800b1ee63"
 dependencies = [
  "heck",
  "indexmap",
  "proc-macro2",
  "quote",
  "rustpython-parser",
- "syn 2.0.119",
+ "syn 3.0.6",
 ]
 
 [[package]]
@@ -3761,7 +3805,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "046a7d674daf459825b32f5062056d6882db0d2f5a479fbd76ccfc870ac18709"
 dependencies = [
  "bytemuck",
- "font-types 0.12.5",
+ "font-types 0.12.6",
  "once_cell",
 ]
 
@@ -4216,7 +4260,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0512da38f5e2b31201a93524adb8d3136276fa4fe4aafab4e1f727a82b534cc0"
 dependencies = [
  "bitflags 2.13.2",
- "calloop 0.14.4",
+ "calloop 0.14.5",
  "calloop-wayland-source 0.4.1",
  "cursor-icon",
  "libc",
@@ -4784,9 +4828,9 @@ checksum = "b6c140620e7ffbb22c2dee59cafe6084a59b5ffc27a8859a5f0d494b5d52b6be"
 
 [[package]]
 name = "uuid"
-version = "1.26.1"
+version = "1.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2ef6dac1e96601b4fb3acccccff2139741fcb757cb9a36089bf5be91cfb285ce"
+checksum = "97277d36b9c3ace13e58fa6e753f8b0bbbf302a18dd193240d70f9e29681059a"
 dependencies = [
  "getrandom 0.4.3",
  "js-sys",
@@ -5700,9 +5744,9 @@ dependencies = [
 
 [[package]]
 name = "yoke-derive"
-version = "0.8.3"
+version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "33811428bee40dbceb6d545e95754741d17a6aef9a4849f0fd62e2ba4f412a78"
+checksum = "ec8ebde2db3681e8c9980cc27822030e68752690ddfa9473e739aeb4dbde6d71"
 dependencies = [
  "proc-macro2",
  "quote",

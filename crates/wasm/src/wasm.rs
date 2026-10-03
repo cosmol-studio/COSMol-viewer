@@ -1,3 +1,4 @@
+use crate::protocol::ViewerCommand;
 use crate::utils::compress_data;
 #[cfg(target_arch = "wasm32")]
 use crate::utils::decompress_animation;
@@ -113,17 +114,23 @@ impl WebHandle {
     }
 
     #[wasm_bindgen]
-    pub async fn update_scene(&mut self, scene_json: String) -> Result<(), JsValue> {
-        let scene: Scene =
-            decompress_data(&scene_json).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    pub fn dispatch(&mut self, payload: String) -> Result<(), JsValue> {
+        let command: ViewerCommand =
+            decompress_data(&payload).map_err(|e| JsValue::from_str(&e.to_string()))?;
 
         let mut app_guard = self.app.lock().unwrap();
         if let Some(app) = &mut *app_guard {
-            app.update_scene(&scene);
+            match command {
+                ViewerCommand::UpdateScene { scene } => app.update_scene(&scene),
+                ViewerCommand::SetCameraParameterLogging { enabled } => {
+                    app.set_camera_parameter_logging(enabled);
+                }
+            }
             app.ctx.request_repaint();
         } else {
-            self.wasm_logger
-                .warn("scene update received but app is not initialized");
+            return Err(JsValue::from_str(
+                "Viewer command received before app initialization",
+            ));
         }
         Ok(())
     }

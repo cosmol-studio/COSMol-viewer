@@ -1,3 +1,4 @@
+use crate::protocol::ViewerCommand;
 use crate::utils::compress_animation;
 use crate::utils::compress_data;
 use crate::utils::decompress_data;
@@ -20,7 +21,7 @@ pub struct NotebookViewer {
 }
 
 impl NotebookViewer {
-    pub fn initiate_viewer(py: Python, scene: &Scene, width: f32, height: f32) -> PyResult<Self> {
+    pub fn render(py: Python, scene: &Scene, width: f32, height: f32) -> PyResult<Self> {
         use pyo3::types::PyAnyMethods;
         use uuid::Uuid;
 
@@ -157,11 +158,12 @@ impl NotebookViewer {
         Ok(Self { id: unique_id })
     }
 
-    pub fn call<T: Serialize>(&self, py: Python, name: &str, input: T) -> PyResult<()> {
+    /// Submits a typed command without waiting for a browser response.
+    pub fn send(&self, py: Python, command: &ViewerCommand) -> PyResult<()> {
         use pyo3::types::PyAnyMethods;
 
         let escaped = serde_json::to_string::<String>(
-            &compress_data(&input)
+            &compress_data(command)
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?,
         )
         .unwrap();
@@ -173,10 +175,9 @@ impl NotebookViewer {
     const app = instances["{id}"];
     if (app) {{
         try {{
-            const result = await app.{name}({escaped});
-            // console.log("Call `{name}` on instance {id} (v{BUILD_ID}) result:", result);
+            await app.dispatch({escaped});
         }} catch (err) {{
-            console.error("Error calling `{name}` on instance {id} (v{BUILD_ID}):", err);
+            console.error("Error dispatching command on instance {id} (v{BUILD_ID}):", err);
         }}
     }} else {{
         console.error("No app found for ID {id} in namespace", ns);
@@ -185,7 +186,6 @@ impl NotebookViewer {
         "#,
             BUILD_ID = BUILD_ID,
             id = self.id,
-            name = name,
             escaped = escaped
         );
 
@@ -393,7 +393,16 @@ def create_bridge():
         Ok(result)
     }
     pub fn update(&self, py: Python, scene: &Scene) -> PyResult<()> {
-        self.call(py, "update_scene", scene)
+        self.send(
+            py,
+            &ViewerCommand::UpdateScene {
+                scene: scene.clone(),
+            },
+        )
+    }
+
+    pub fn set_camera_parameter_logging(&self, py: Python, enabled: bool) -> PyResult<()> {
+        self.send(py, &ViewerCommand::SetCameraParameterLogging { enabled })
     }
 
     pub fn take_screenshot_colab(&self, py: Python) -> PyResult<Vec<u8>> {

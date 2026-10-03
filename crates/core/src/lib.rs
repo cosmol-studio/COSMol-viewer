@@ -1,25 +1,28 @@
 mod shader;
 pub mod surface;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::egui::IconData;
+#[cfg(not(target_arch = "wasm32"))]
 use iceoryx2::{
     node::{Node, NodeBuilder},
     port::{publisher::Publisher, subscriber::Subscriber},
     service::{ipc, port_factory::publish_subscribe::PortFactory},
 };
+use std::sync::Arc;
+#[cfg(not(target_arch = "wasm32"))]
 use std::{
     cell::Cell,
     process::{Child, Command, Stdio},
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::atomic::{AtomicBool, Ordering},
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use thiserror::Error;
 
 pub mod parser;
+#[cfg(not(target_arch = "wasm32"))]
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+#[cfg(not(target_arch = "wasm32"))]
 static RENDER_REGISTERED: AtomicBool = AtomicBool::new(false);
 pub mod utils;
 pub use crate::utils::RenderQuality;
@@ -38,9 +41,11 @@ pub use crate::utils::{Logger, RustLogger, Shape};
 pub mod shapes;
 use crate::scene::Scene;
 
+#[cfg(not(target_arch = "wasm32"))]
 type FeedbackSender = Publisher<ipc::Service, [u8], ()>;
 
 pub mod scene;
+#[cfg(not(target_arch = "wasm32"))]
 fn feedback(tx: &FeedbackSender, message: Feedback) {
     let bytes = postcard::to_allocvec(&(VERSION, message)).unwrap();
     let mut sample = tx.loan_slice(bytes.len()).unwrap();
@@ -48,6 +53,7 @@ fn feedback(tx: &FeedbackSender, message: Feedback) {
     assert_ne!(sample.send().unwrap(), 0, "feedback has no receiver");
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn decode_feedback(bytes: &[u8]) -> Feedback {
     let (version, message): (&str, Feedback) = postcard::from_bytes(bytes).unwrap();
     assert_eq!(version, VERSION, "feedback protocol mismatch");
@@ -56,6 +62,7 @@ fn decode_feedback(bytes: &[u8]) -> Feedback {
 use image::{ImageBuffer, Rgba};
 
 #[derive(serde::Serialize, serde::Deserialize)]
+#[cfg(not(target_arch = "wasm32"))]
 enum Request {
     InitializeScene {
         request_id: u64,
@@ -76,8 +83,13 @@ enum Request {
     TakeScreenshot {
         request_id: u64,
     },
+    SetCameraParameterLogging {
+        request_id: u64,
+        enabled: bool,
+    },
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn decode_request(bytes: &[u8]) -> Request {
     let (version, request): (&str, Request) = postcard::from_bytes(bytes).unwrap();
     assert_eq!(version, VERSION, "request protocol mismatch");
@@ -85,6 +97,7 @@ fn decode_request(bytes: &[u8]) -> Request {
 }
 
 #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[cfg(not(target_arch = "wasm32"))]
 enum Feedback {
     Ready {
         pid: u32,
@@ -104,11 +117,13 @@ enum Feedback {
         rgba: Vec<u8>,
     },
 }
+#[cfg(not(target_arch = "wasm32"))]
 struct ReceiverState {
     rx: Subscriber<ipc::Service, [u8], ()>,
     tx: FeedbackSender,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn create_ipc_services(
     name: &str,
 ) -> (
@@ -136,6 +151,7 @@ fn create_ipc_services(
     (node, scenes, events)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn register_render() {
     RENDER_REGISTERED.store(true, Ordering::Relaxed);
 
@@ -192,12 +208,15 @@ pub fn register_render() {
         | Request::InitializeAnimation { width, height, .. } => (*width, *height),
         Request::UpdateScene { .. } => panic!("expected initialization request"),
         Request::TakeScreenshot { .. } => panic!("expected initialization request"),
+        Request::SetCameraParameterLogging { .. } => panic!("expected initialization request"),
     };
     drop(sample);
     eframe::run_native(
-        "COSMol Viewer iceoryx2",
+        "cosmol_viewer",
         eframe::NativeOptions {
-            viewport: egui::ViewportBuilder::default().with_inner_size([width, height]),
+            viewport: egui::ViewportBuilder::default()
+                .with_inner_size([width, height])
+                .with_icon(load_icon()),
             depth_buffer: native_depth_buffer(),
             multisampling: native_multisampling(),
             renderer: eframe::Renderer::Glow,
@@ -216,6 +235,7 @@ pub fn register_render() {
                 } => (App::new_play(cc, animation, RustLogger), request_id),
                 Request::UpdateScene { .. } => unreachable!(),
                 Request::TakeScreenshot { .. } => unreachable!(),
+                Request::SetCameraParameterLogging { .. } => unreachable!(),
             };
             feedback(&tx, Feedback::Initialized { request_id });
             app.ipc = Some(ReceiverState { rx, tx });
@@ -233,6 +253,7 @@ pub const BUILD_ID: &str = concat!(
 );
 
 pub struct App<L: Logger> {
+    #[cfg(not(target_arch = "wasm32"))]
     ipc: Option<ReceiverState>,
     canvas: Canvas<L>,
     _gl: Option<Arc<eframe::glow::Context>>,
@@ -248,6 +269,7 @@ impl<L: Logger> App<L> {
         let gl = cc.gl.clone();
         let canvas = Canvas::new(gl.as_ref().unwrap().clone(), scene, logger).unwrap();
         App {
+            #[cfg(not(target_arch = "wasm32"))]
             ipc: None,
             _gl: gl,
             canvas,
@@ -263,6 +285,7 @@ impl<L: Logger> App<L> {
         let gl = cc.gl.clone();
         let canvas = Canvas::new_play(gl.as_ref().unwrap().clone(), animation, logger).unwrap();
         App {
+            #[cfg(not(target_arch = "wasm32"))]
             ipc: None,
             _gl: gl,
             canvas,
@@ -273,17 +296,17 @@ impl<L: Logger> App<L> {
         }
     }
 
-    pub fn update_scene(&mut self, scene: &Scene) {
-        self.canvas.update_scene(scene);
-    }
-
     pub fn set_camera_parameter_logging(&mut self, enabled: bool) {
         self.canvas.set_camera_parameter_logging(enabled);
     }
 
-    // pub fn take_screenshot(&mut self) {
-    //     self.screenshot_requested = true;
-    // }
+    pub fn update_scene(&mut self, scene: &Scene) {
+        self.canvas.update_scene(scene);
+    }
+
+    pub fn take_screenshot(&mut self) {
+        self.screenshot_requested = Some(0);
+    }
 
     pub fn poll_screenshot(&mut self) -> Option<ImageBuffer<Rgba<u8>, Vec<u8>>> {
         if let Some((arc_image, _handle)) = self.screenshot_result.take() {
@@ -308,6 +331,7 @@ fn color_image_to_rgba_bytes(image: &egui::ColorImage) -> Vec<u8> {
 
 impl<L: Logger> eframe::App for App<L> {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+        #[cfg(not(target_arch = "wasm32"))]
         if let Some(state) = &self.ipc {
             // if let Some((arc_image, _handle)) = self.screenshot_result.take() {
             //     let image = arc_image.as_ref();
@@ -326,6 +350,13 @@ impl<L: Logger> eframe::App for App<L> {
                     }
                     Request::TakeScreenshot { request_id } => {
                         self.screenshot_requested = Some(request_id);
+                    }
+                    Request::SetCameraParameterLogging {
+                        request_id,
+                        enabled,
+                    } => {
+                        self.canvas.set_camera_parameter_logging(enabled);
+                        feedback(&state.tx, Feedback::Applied { request_id });
                     }
                     _ => panic!("expected UpdateScene, received an initialization request"),
                 }
@@ -374,23 +405,31 @@ impl<L: Logger> eframe::App for App<L> {
                         .next_back()
                 });
 
-                if let Some((request_id, image)) = screenshot {
+                if let Some((_request_id, image)) = screenshot {
+                    #[cfg(not(target_arch = "wasm32"))]
                     if let Some(state) = &self.ipc {
                         feedback(
                             &state.tx,
                             Feedback::ScreenshotTaken {
-                                request_id,
+                                request_id: _request_id,
                                 width: image.size[0] as u32,
                                 height: image.size[1] as u32,
                                 rgba: color_image_to_rgba_bytes(&image),
                             },
                         );
+                        return;
                     }
+                    self.screenshot_result = Some((
+                        image.clone(),
+                        ui.ctx()
+                            .load_texture("screenshot", image, Default::default()),
+                    ));
                 }
             });
     }
 
     fn on_exit(&mut self, _: Option<&eframe::glow::Context>) {
+        #[cfg(not(target_arch = "wasm32"))]
         if let Some(state) = &self.ipc {
             feedback(&state.tx, Feedback::Closed);
         }
@@ -405,6 +444,7 @@ impl<L: Logger> eframe::App for App<L> {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub struct NativeGuiViewer {
     tx: Publisher<ipc::Service, [u8], ()>,
     rx: Subscriber<ipc::Service, [u8], ()>,
@@ -431,7 +471,9 @@ pub enum ImageError {
     Other(String),
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 struct ChildGuard(Child);
+#[cfg(not(target_arch = "wasm32"))]
 impl Drop for ChildGuard {
     fn drop(&mut self) {
         if !matches!(self.0.try_wait(), Ok(Some(_))) {
@@ -440,8 +482,41 @@ impl Drop for ChildGuard {
         let _ = self.0.wait();
     }
 }
+#[cfg(not(target_arch = "wasm32"))]
 const TIMEOUT: Duration = Duration::from_secs(30);
 
+#[cfg(not(target_arch = "wasm32"))]
+fn wait_for_exit_or_input(
+    child: &mut Child,
+    input: &std::sync::mpsc::Receiver<std::io::Result<()>>,
+) -> std::io::Result<()> {
+    use std::{io, sync::mpsc::RecvTimeoutError};
+
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return if status.success() {
+                Ok(())
+            } else {
+                Err(io::Error::other(format!(
+                    "Viewer process exited with {status}"
+                )))
+            };
+        }
+
+        match input.recv_timeout(Duration::from_millis(20)) {
+            Ok(result) => return result,
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "Viewer console input thread disconnected",
+                ));
+            }
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn wait_event(rx: &Subscriber<ipc::Service, [u8], ()>, child: &mut ChildGuard) -> Feedback {
     let start = Instant::now();
     loop {
@@ -459,6 +534,7 @@ fn wait_event(rx: &Subscriber<ipc::Service, [u8], ()>, child: &mut ChildGuard) -
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl NativeGuiViewer {
     pub fn new() -> Result<Self, RenderError> {
         if !RENDER_REGISTERED.load(Ordering::Relaxed) {
@@ -537,23 +613,42 @@ impl NativeGuiViewer {
         !self.closed.get()
     }
 
-    /// Keeps the viewer alive while blocking the calling thread for console input.
+    /// Keeps the viewer alive until console input completes or its child exits.
     ///
-    /// Prints an exit prompt and waits until Enter is pressed or stdin reaches EOF.
-    /// This consumes the viewer. On return, including an I/O error, its child
-    /// process is closed and reaped by the existing cleanup guard.
-    pub fn keep_alive(self) -> std::io::Result<()> {
+    /// Prints an exit prompt and blocks until Enter is pressed, stdin reaches EOF,
+    /// or the viewer process exits. A successful child exit returns `Ok(())`;
+    /// an unsuccessful exit or an I/O failure returns an error.
+    ///
+    /// This consumes the viewer. On return its child process is closed and reaped
+    /// by the existing cleanup guard. If the child exits before console input,
+    /// the input thread may remain blocked until input arrives or the parent exits.
+    pub fn keep_alive(mut self) -> std::io::Result<()> {
         use std::io::{self, Write};
 
         println!("Press Enter to exit...");
         io::stdout().flush()?;
-        io::stdin().read_line(&mut String::new())?;
 
+        let (input_tx, input_rx) = std::sync::mpsc::channel();
+        thread::Builder::new()
+            .name("cosmol-viewer-console-input".into())
+            .spawn(move || {
+                let result = io::stdin().read_line(&mut String::new()).map(|_| ());
+                let _ = input_tx.send(result);
+            })?;
+
+        let result = wait_for_exit_or_input(&mut self.child.0, &input_rx);
         drop(self);
-        Ok(())
+        result
     }
 
     pub fn update(&self, scene: &Scene) {
+        self.apply_request(|request_id| Request::UpdateScene {
+            request_id,
+            scene: scene.clone(),
+        });
+    }
+
+    fn apply_request(&self, request: impl FnOnce(u64) -> Request) {
         if self.closed.get() {
             return;
         }
@@ -565,14 +660,7 @@ impl NativeGuiViewer {
         }
         let request_id = self.request_id.get() + 1;
         self.request_id.set(request_id);
-        let bytes = postcard::to_allocvec(&(
-            VERSION,
-            Request::UpdateScene {
-                request_id,
-                scene: scene.clone(),
-            },
-        ))
-        .unwrap();
+        let bytes = postcard::to_allocvec(&(VERSION, request(request_id))).unwrap();
         let mut sample = self.tx.loan_slice(bytes.len()).unwrap();
         sample.payload_mut().copy_from_slice(&bytes);
         sample.send().unwrap();
@@ -594,15 +682,12 @@ impl NativeGuiViewer {
         }
     }
 
-    // pub fn set_camera_parameter_logging(&self, enabled: bool) {
-    //     let mut app_guard = self.app.lock().unwrap();
-    //     if let Some(app) = &mut *app_guard {
-    //         app.set_camera_parameter_logging(enabled);
-    //         app.ctx.request_repaint();
-    //     } else {
-    //         panic!("App not initialized")
-    //     }
-    // }
+    pub fn set_camera_parameter_logging(&self, enabled: bool) {
+        self.apply_request(|request_id| Request::SetCameraParameterLogging {
+            request_id,
+            enabled,
+        });
+    }
 
     pub fn take_screenshot(&self) -> Result<ImageBuffer<Rgba<u8>, Vec<u8>>, ImageError> {
         if self.closed.get() {
@@ -716,6 +801,7 @@ fn native_glow_options() -> eframe::egui_glow::GlowConfiguration {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn load_icon() -> IconData {
     let bytes = include_bytes!(concat!(env!("OUT_DIR"), "/icon.png"));
     let image = image::load_from_memory(bytes)
@@ -728,5 +814,84 @@ fn load_icon() -> IconData {
         rgba: image.into_raw(),
         width,
         height,
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod keep_alive_tests {
+    use super::*;
+    use std::{io, sync::mpsc};
+
+    // Run only in subprocesses created by these tests; no GUI or IPC is needed.
+    #[test]
+    fn child_process() {
+        let Ok(mode) = std::env::var("COSMOL_VIEWER_KEEP_ALIVE_TEST_CHILD") else {
+            return;
+        };
+        match mode.as_str() {
+            "success" => std::process::exit(0),
+            "failure" => std::process::exit(7),
+            "wait" => {
+                thread::sleep(Duration::from_secs(60));
+                std::process::exit(0);
+            }
+            _ => panic!("unknown test child mode"),
+        }
+    }
+
+    fn spawn_child(mode: &str) -> ChildGuard {
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
+            .args(["--exact", "keep_alive_tests::child_process"])
+            .env("COSMOL_VIEWER_KEEP_ALIVE_TEST_CHILD", mode)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        }
+        ChildGuard(command.spawn().unwrap())
+    }
+
+    #[test]
+    fn successful_child_exit_does_not_wait_for_input() {
+        let mut child = spawn_child("success");
+        let (_input_tx, input_rx) = mpsc::channel();
+        wait_for_exit_or_input(&mut child.0, &input_rx).unwrap();
+        assert!(child.0.try_wait().unwrap().unwrap().success());
+    }
+
+    #[test]
+    fn unsuccessful_child_exit_returns_an_error() {
+        let mut child = spawn_child("failure");
+        let (_input_tx, input_rx) = mpsc::channel();
+        let error = wait_for_exit_or_input(&mut child.0, &input_rx).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::Other);
+        assert_eq!(child.0.try_wait().unwrap().unwrap().code(), Some(7));
+    }
+
+    #[test]
+    fn console_input_returns_while_child_is_still_running() {
+        let mut child = spawn_child("wait");
+        let (input_tx, input_rx) = mpsc::channel();
+        input_tx.send(Ok(())).unwrap();
+        wait_for_exit_or_input(&mut child.0, &input_rx).unwrap();
+        assert!(child.0.try_wait().unwrap().is_none());
+    }
+
+    #[test]
+    fn console_input_error_is_propagated() {
+        let mut child = spawn_child("wait");
+        let (input_tx, input_rx) = mpsc::channel();
+        input_tx
+            .send(Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "input error",
+            )))
+            .unwrap();
+        let error = wait_for_exit_or_input(&mut child.0, &input_rx).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
     }
 }

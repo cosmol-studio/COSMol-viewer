@@ -1,5 +1,4 @@
 use glam::{Mat4, Vec3, Vec4};
-use iceoryx2::prelude::ZeroCopySend;
 use serde::{Deserialize, Serialize};
 
 use crate::shapes::{Molecule, Protein, Sphere, SphereInstance, Stick, StickInstance};
