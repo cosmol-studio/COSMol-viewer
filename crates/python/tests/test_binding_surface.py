@@ -46,6 +46,9 @@ class BindingSurfaceTests(unittest.TestCase):
         self.assertEqual(wait["python"]["platforms"], ["native"])
         self.assertIsNone(wait["javascript"]["name"])
         self.assertTrue(wait["javascript"]["unsupported_reason"])
+        status = rows["Viewer.is_open"]
+        self.assertEqual(status["python"]["platforms"], ["native"])
+        self.assertIsNone(status["javascript"]["name"])
 
 
 if __name__ == "__main__":

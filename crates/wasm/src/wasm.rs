@@ -20,26 +20,6 @@ impl Logger for WasmLogger {
     }
 }
 #[cfg(target_arch = "wasm32")]
-pub(crate) struct WebApp(
-    pub std::sync::Arc<std::sync::Mutex<Option<cosmol_viewer_core::App<WasmLogger>>>>,
-);
-#[cfg(target_arch = "wasm32")]
-impl eframe::App for WebApp {
-    fn ui(&mut self, ui: &mut eframe::egui::Ui, frame: &mut eframe::Frame) {
-        if let Some(app) = &mut *self.0.lock().unwrap() {
-            app.ui(ui, frame);
-        }
-    }
-    fn clear_color(&self, visuals: &eframe::egui::Visuals) -> [f32; 4] {
-        self.0
-            .lock()
-            .unwrap()
-            .as_ref()
-            .map(|app| app.clear_color(visuals))
-            .unwrap_or([0.0; 4])
-    }
-}
-#[cfg(target_arch = "wasm32")]
 pub(crate) fn canvas(id: &str) -> Result<web_sys::HtmlCanvasElement, String> {
     use wasm_bindgen::JsCast;
     web_sys::window()

@@ -44,16 +44,18 @@ Use ``rotate_camera()`` for relative changes. ``set_camera_distance()``,
 components.
 
 For a native interactive viewer, camera parameter logging prints a compact
-``set_camera_view(...)`` call whenever the camera moves:
+parameter line whenever the camera moves:
 
 .. code-block:: python
 
    from cosmol_viewer import Viewer
 
    viewer = Viewer.render(scene, width=800, height=500)
-   viewer.set_camera_parameter_logging(True)
+   viewer.camera_parameter_logging(True)
 
-This logging feature is native-only and disabled by default.
+Logging is disabled by default. Native viewers log to the terminal;
+notebook viewers log to the browser console. To display the parameters in the
+viewport instead, call ``viewer.show_camera_parameters(True)``.
 
 Background and Depth Cueing
 ---------------------------

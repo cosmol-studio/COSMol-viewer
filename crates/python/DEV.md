@@ -1,37 +1,7 @@
-## Upgrade the Release Version
+# Python Binding Development
 
-From the repository root, preview and then apply a release bump:
-
-```bash
-python tools/bump_version.py 0.5.0rc2 --dry-run
-python tools/bump_version.py 0.5.0rc2
-```
-
-The script accepts `X.Y.Z`, Python-style `X.Y.ZrcN`, and Rust-style
-`X.Y.Z-rc.N`. For this release, Python uses `0.5.0rc2` and Rust uses
-`0.5.0-rc.2`.
-
-It updates the workspace package version, the three versioned internal workspace
-dependencies, and `crates/python/pyproject.toml`. The Rust facade, core,
-Python binding, WASM binding, and derive helper inherit the workspace version. It then runs
-`cargo update --workspace` to refresh their lockfile entries without requesting
-a blanket third-party dependency upgrade.
-
-`--dry-run` only prints the planned edits; it does not write files or run Cargo.
-All manifest edits are prepared before writing. If the Cargo command fails,
-the script reports failure and leaves the version edits available for inspection
-and retry.
-
-COSMolKit dependency versions, historical changelog entries, and the documentation site's published-package
-pin are not release fields managed by this script. Generated WASM assets and
-native binaries must be rebuilt through the normal build workflow; the script
-does not publish packages, create tags, or commit changes.
-
-Regression check:
-
-```bash
-python tools/test_bump_version.py -v
-```
+Project-wide release version upgrades are documented in the
+[root development guide](../../DEV.md#upgrade-the-release-version).
 
 ## Generate `.pyi` Stubs (dev / abi3-py310)
 

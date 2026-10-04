@@ -32,9 +32,24 @@ END
         viewer = Viewer.play(animation, 100.0, 100.0)
     else:
         viewer = Viewer.render(scene, 100.0, 100.0)
+    # Let a static renderer become idle; IPC commands must wake it without polling.
+    time.sleep(0.2)
     viewer.update(scene)
-    viewer.set_camera_parameter_logging(False)
+    viewer.camera_parameter_logging(False)
+    viewer.show_fps()
+    viewer.show_camera_parameters()
+    viewer.show_fps(False)
+    viewer.show_camera_parameters(False)
     print("READY", flush=True)
+    assert viewer.is_open()
+    if mode.startswith("dynamic_"):
+        while viewer.is_open():
+            if mode != "dynamic_idle":
+                viewer.update(scene)
+            time.sleep(0.005)
+        assert not viewer.is_open()
+        print("DONE", flush=True)
+        return
     if mode == "interrupt":
         import _thread
 
@@ -49,8 +64,10 @@ END
         print("CHILD_FAILED", flush=True)
     else:
         assert mode not in {"interrupt", "failure"}
+    assert not viewer.is_open()
     for operation in (viewer.keep_alive, lambda: viewer.update(scene),
-                      lambda: viewer.set_camera_parameter_logging()):
+                      lambda: viewer.camera_parameter_logging(),
+                      viewer.show_fps, viewer.show_camera_parameters):
         try:
             operation()
         except RuntimeError as error:
@@ -143,20 +160,26 @@ class NativeViewerTests(unittest.TestCase):
             ready = False
             deadline = time.monotonic() + 30
             while child is None or not ready:
-                line = messages.get(timeout=max(0.01, deadline - time.monotonic()))
+                try:
+                    line = messages.get(timeout=min(0.2, max(0.01, deadline - time.monotonic())))
+                except queue.Empty:
+                    self.assertIsNone(process.poll(), "Producer exited before readiness:\n" + "".join(output))
+                    self.assertLess(time.monotonic(), deadline, "Readiness timeout:\n" + "".join(output))
+                    continue
                 if match := re.search(r"producer PID (\d+) -> viewer PID (\d+)", line):
                     self.assertEqual(int(match.group(1)), process.pid)
                     child = ChildObserver(int(match.group(2)))
-                ready = ready or "Press Enter to exit..." in line
+                ready = ready or (line.strip() == "READY" if mode.startswith("dynamic_")
+                                 else "Press Enter to exit..." in line)
             self.assertTrue(child.is_running())
             if mode in {"enter", "play"}:
                 process.stdin.write("\n")
                 process.stdin.flush()
             elif mode == "eof":
                 process.stdin.close()
-            elif mode == "window":
+            elif mode in {"window", "dynamic_window", "dynamic_idle"}:
                 child.close_window()
-            elif mode == "failure":
+            elif mode in {"failure", "dynamic_failure"}:
                 child.terminate()
             self.assertEqual(process.wait(timeout=10), 0, "".join(output))
             for reader in readers:
@@ -179,9 +202,9 @@ class NativeViewerTests(unittest.TestCase):
                 stream.close()
 
     def test_native_lifecycle(self):
-        modes = ["enter", "eof", "play", "interrupt", "failure"]
+        modes = ["enter", "eof", "play", "interrupt", "failure", "dynamic_failure"]
         if os.name == "nt":
-            modes.append("window")
+            modes.extend(["window", "dynamic_window", "dynamic_idle"])
         for mode in modes:
             with self.subTest(mode=mode):
                 self.exercise(mode)

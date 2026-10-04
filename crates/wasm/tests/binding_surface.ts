@@ -11,13 +11,18 @@ const playing: Promise<Viewer> = Viewer.play(animation, 800, 600);
 const mounted: Promise<Viewer> = Viewer.renderInto("canvas-id", scene);
 const handle: Viewer = await rendered;
 const updated: void = handle.update(scene);
-const logged: void = handle.setCameraParameterLogging(true);
+const logged: void = handle.cameraParameterLogging(true);
+const fps: void = handle.showFps(true);
+const cameraOverlay: void = handle.showCameraParameters(true);
+// @ts-expect-error Logging was renamed; no compatibility alias is exported.
+handle.setCameraParameterLogging(true);
 const screenshot: Promise<Uint8Array> = handle.takeScreenshot();
 const contract: string = bindingContractJson();
 // Internal notebook paths remain separate from the public typed API.
 const notebook: Promise<Viewer> = Viewer.renderNotebook("canvas-id", "scene-payload");
 const submitted: void = handle.dispatch("command-payload");
-const envelope: Promise<string> = handle.takeScreenshotNotebook();
+// @ts-expect-error Notebook return-value endpoints are not supported.
+handle.takeScreenshotNotebook();
 // @ts-expect-error Native lifecycle methods must not appear in browser declarations.
 handle.keepAlive();
 // @ts-expect-error Normal JS render does not accept notebook transport payloads.
@@ -26,4 +31,4 @@ Viewer.render("compressed-scene", 800, 600);
 handle.update("compressed-scene");
 // @ts-expect-error Animation frames must be typed scenes.
 animation.addFrame("compressed-scene");
-void [playing, mounted, updated, logged, screenshot, contract, notebook, submitted, envelope];
+void [playing, mounted, updated, logged, fps, cameraOverlay, screenshot, contract, notebook, submitted];

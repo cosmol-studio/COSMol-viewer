@@ -20,7 +20,7 @@ angular_speed = 0.4 * math.pi
 
 frame_interval = 0.005  # seconds (5 ms)
 
-while True:
+while viewer.is_open():
     elapsed = time.perf_counter() - start_time
     t = elapsed * angular_speed
 

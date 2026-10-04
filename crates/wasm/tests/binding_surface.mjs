@@ -12,7 +12,7 @@ binding.initSync({ module: readFileSync(join(pkg, "cosmol_viewer_wasm_bg.wasm"))
 test("generated browser API has the declared names and native-only restrictions", () => {
     const handle = binding.Viewer.new();
     assert.equal(binding.WebHandle, undefined);
-    for (const name of ["update", "dispatch", "setCameraParameterLogging", "takeScreenshot"]) {
+    for (const name of ["update", "dispatch", "cameraParameterLogging", "showFps", "showCameraParameters", "takeScreenshot"]) {
         assert.equal(typeof handle[name], "function", name);
     }
     const rows = JSON.parse(binding.bindingContractJson());
@@ -21,6 +21,9 @@ test("generated browser API has the declared names and native-only restrictions"
     assert.equal(wait.javascript.name, null);
     assert.ok(wait.javascript.unsupported_reason);
     assert.equal(typeof handle.keepAlive, "undefined");
+    assert.equal(typeof handle.takeScreenshotNotebook, "undefined");
+    const screenshot = rows.find(row => row.semantic_id === "Viewer.take_screenshot");
+    assert.equal(screenshot.javascript.notebook_endpoint, null);
     for (const row of rows) {
         if (row.javascript.name) {
             const [owner, method] = row.javascript.name.split(".");
@@ -49,12 +52,16 @@ test("async browser initialization reports a missing DOM canvas", async () => {
     assert.equal(scene.shapeCount(), 0);
     assert.equal(animation.frameCount(), 0);
     await assert.rejects(handle.takeScreenshot(), /before app initialization/);
-    await assert.rejects(handle.takeScreenshotNotebook(), /before app initialization/);
     assert.throws(() => handle.update(scene), /before app initialization/);
-    assert.throws(() => handle.setCameraParameterLogging(true), /before app initialization/);
+    assert.throws(() => handle.cameraParameterLogging(true), /before app initialization/);
+    assert.throws(() => handle.showFps(true), /before app initialization/);
+    assert.throws(() => handle.showCameraParameters(true), /before app initialization/);
+    assert.equal(typeof handle.setCameraParameterLogging, "undefined");
     assert.equal(scene.shapeCount(), 0);
     await assert.rejects(binding.Viewer.renderNotebook("missing-canvas", "invalid"), /decode failed/);
-    await assert.rejects(binding.Viewer.playNotebook("missing-canvas", "CMV99:invalid"), /unsupported animation payload/);
+    await assert.rejects(binding.Viewer.playNotebook("missing-canvas", "CMV99:R:AAAA"), /unsupported payload version/);
+    await assert.rejects(binding.Viewer.renderNotebook("missing-canvas", "CMV1:AAAA"), /unsupported payload version/);
+    assert.throws(() => handle.dispatch("CMV2:X:AAAA"), /unsupported payload encoding/);
     scene.free();
     animation.free();
     handle.free();

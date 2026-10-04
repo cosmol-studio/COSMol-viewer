@@ -21,6 +21,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     scene.set_scale(2.0);
 
     let viewer = Viewer::render(&scene, 800.0, 500.0)?;
+    viewer.show_fps(true);
 
     // === time-driven animation ===
     let start_time = Instant::now();

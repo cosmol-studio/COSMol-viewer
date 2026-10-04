@@ -31,8 +31,10 @@ The npm package is `@cosmol-studio/cosmol-viewer`. Install prereleases with
 `latest` tag. The package name does not rename the Rust crate or generated
 `cosmol_viewer_wasm.js` / `.wasm` files.
 
-`Viewer` owns browser renderer state directly. `Scene` and `Animation` are
-reusable handles over the existing core models, not compressed payload strings.
+`Viewer` owns the browser runner and a request/feedback transport endpoint.
+The runner exclusively owns the core `App`; viewer handles do not share or lock
+it. `Scene` and `Animation` are reusable handles over the existing core models,
+not compressed payload strings.
 
 ```js
 import init, { Viewer, Scene, Animation } from "@cosmol-studio/cosmol-viewer";
@@ -68,6 +70,13 @@ scene.free();
   Frames and the static scene capture snapshots, matching the core API.
 - Cloned binding handles share state; `scene.cloneScene()` explicitly makes an
   independent scene. Render/update snapshot state and prepare GPU data internally.
+- `update` and camera logging queue typed requests and return without blocking.
+  Native IPC and browser queues enter the same core `App` message handler.
+  Browser queues wake the renderer instead of polling continuously.
+- Screenshot requests are FIFO barriers: later updates wait until capture.
+  Async screenshot calls share a request-ID counter across cloned handles, so
+  concurrent replies cannot overwrite or consume each other's images. Closing
+  the viewer rejects pending screenshot waits.
 - Coordinates use `Float32Array`; RGB colors use `Uint8Array`; loop counts use
   `bigint`. Async failures reject, and synchronous failures throw.
 - Scene supports camera, lighting, backgrounds, depth cue, sphere/stick creation,
@@ -79,14 +88,32 @@ scene.free();
 Notebook HTML calls `Viewer.renderNotebook(canvasId, compressedScene)` or
 `Viewer.playNotebook(canvasId, compressedAnimation)`. These internal transport
 endpoints decode Python payloads and enter the same typed render/play paths.
-Notebook updates and camera logging are compressed one-way `ViewerCommand`
+Notebook updates, camera logging and viewport overlays are encoded one-way `ViewerCommand`
 messages submitted to `viewer.dispatch(payload)`.
 
-Normal JS callers use `update(scene)` / `setCameraParameterLogging(enabled)`;
-they do not serialize commands or scenes. `takeScreenshot()` returns PNG bytes;
-`takeScreenshotNotebook()` retains the compressed notebook RPC response format.
+Scenes, animations, and commands share the `CMV2:R:<base64>` (raw postcard) or
+`CMV2:G:<base64>` (gzip postcard) format. Postcard data below 1 KiB skips gzip;
+at or above 1 KiB gzip level 1 is always used. The choice depends only on the
+serialized size; there is no compression-ratio check or fallback.
+Old unprefixed and CMV1 formats are rejected: sender and receiver must match.
+The decoder defaults to at most 64 MiB of serialized data; Rust callers can use
+`decode_payload_with_limit` to set another bound. This is a serialized-byte limit,
+not a limit on the final object or GPU memory. Ordinary JS and native IPC do not
+use this notebook codec.
+
+Normal JS callers use `update(scene)`, `cameraParameterLogging(enabled)`,
+`showFps(enabled)` and `showCameraParameters(enabled)`;
+they do not serialize commands or scenes. `takeScreenshot()` returns PNG bytes
+to JavaScript only. Notebook transport is one-way: Colab/Jupyter return-value
+RPC and notebook screenshot retrieval are not supported.
 Internal notebook endpoints must remain exported for injected notebook scripts,
 but are not the primary typed API.
+
+Overlays are initially hidden, do not capture pointer input, and never request
+continuous repainting. FPS samples existing renderer repaint events (not animation
+frames or GPU timing). After one second without activity, one diagnostic repaint
+shows zero FPS. Diagnostic/screenshot-only paints do not count as activity or
+renew the idle timer; interaction or scene updates resume statistics.
 
 ## Contracts and platform boundaries
 

@@ -38,4 +38,5 @@ for frame_idx in range(num_frames):
 
 # One-time submission: interval of 0.02 seconds
 viewer = Viewer.play(animation, width=800.0, height=500.0)
+viewer.show_fps(True)
 viewer.keep_alive()

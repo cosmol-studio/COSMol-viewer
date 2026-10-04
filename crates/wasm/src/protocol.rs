@@ -5,5 +5,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize)]
 pub enum ViewerCommand {
     UpdateScene { scene: Scene },
-    SetCameraParameterLogging { enabled: bool },
+    CameraParameterLogging { enabled: bool },
+    ShowFps { enabled: bool },
+    ShowCameraParameters { enabled: bool },
 }

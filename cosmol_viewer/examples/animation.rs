@@ -2,7 +2,7 @@ use cosmol_viewer::shapes::Sphere;
 use cosmol_viewer::{Animation, Scene, Viewer};
 use std::f32::consts::PI;
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     cosmol_viewer_core::register_render();
     // Sphere ID
     let ids = ["a", "b", "c", "d", "e", "f"];
@@ -51,5 +51,9 @@ fn main() {
     }
 
     // Submit all frames at once; Viewer controls playback
-    let _ = Viewer::play(animation, 800.0, 500.0);
+    let viewer = Viewer::play(animation, 800.0, 500.0)?;
+    viewer.show_fps(true);
+    viewer.show_camera_parameters(true);
+    viewer.keep_alive()?;
+    Ok(())
 }

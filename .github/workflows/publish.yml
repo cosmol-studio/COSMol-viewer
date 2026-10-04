@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       publish:
-        description: "Publish to PyPI and npm"
+        description: "Publish RC versions to PyPI and npm (stable releases require a tag push)"
         type: boolean
         default: false
 
@@ -19,6 +19,8 @@ permissions:
 jobs:
   wasm:
     runs-on: ubuntu-latest
+    outputs:
+      manual_publish_allowed: ${{ steps.release_policy.outputs.manual_publish_allowed }}
     steps:
       - uses: actions/checkout@v6
       - uses: Swatinem/rust-cache@v2
@@ -36,6 +38,28 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+      - name: Check manual publishing policy
+        id: release_policy
+        env:
+          PUBLISH_REQUESTED: ${{ inputs.publish }}
+        run: |
+          python tools/test_publish_policy.py -v
+          python - <<'PY'
+          import os
+          import re
+          import tomllib
+
+          with open("Cargo.toml", "rb") as manifest:
+              rust_version = tomllib.load(manifest)["workspace"]["package"]["version"]
+          with open("crates/python/pyproject.toml", "rb") as manifest:
+              python_version = tomllib.load(manifest)["project"]["version"]
+          candidate = re.fullmatch(r"(\d+\.\d+\.\d+)-rc\.(\d+)", rust_version)
+          allowed = candidate is not None and python_version == f"{candidate[1]}rc{candidate[2]}"
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"manual_publish_allowed={str(allowed).lower()}\n")
+          if os.environ["GITHUB_EVENT_NAME"] == "workflow_dispatch" and os.environ["PUBLISH_REQUESTED"] == "true" and not allowed:
+              raise SystemExit("::error::Manual publishing requires matching RC versions in Rust and Python. Stable releases must be published by pushing a tag.")
+          PY
       - uses: actions/setup-node@v6
         with:
           node-version: "24"
@@ -280,7 +304,7 @@ jobs:
     name: Release
     runs-on: ubuntu-latest
     if: ${{ startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
-    needs: [linux, windows, macos, sdist]
+    needs: [wasm, linux, windows, macos, sdist]
     # needs: [linux, windows, macos, windows-arm, sdist]
     permissions:
       id-token: write
@@ -293,7 +317,7 @@ jobs:
         with:
           subject-path: "wheels-*/*"
       - name: Publish to PyPI
-        if: ${{ startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish) }}
+        if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || (github.event_name == 'workflow_dispatch' && inputs.publish && needs.wasm.outputs.manual_publish_allowed == 'true') }}
         uses: PyO3/maturin-action@v1
         env:
           MATURIN_PYPI_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
@@ -301,7 +325,7 @@ jobs:
           command: upload
           args: --non-interactive --skip-existing wheels-*/*
       - name: Publish to npm
-        if: ${{ startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish) }}
+        if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || (github.event_name == 'workflow_dispatch' && inputs.publish && needs.wasm.outputs.manual_publish_allowed == 'true') }}
         uses: actions/setup-node@v6
         with:
           node-version: "24"
@@ -312,7 +336,7 @@ jobs:
           name: wasm-pkg
           path: crates/wasm/pkg
       - name: Run npm publish
-        if: ${{ startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish) }}
+        if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || (github.event_name == 'workflow_dispatch' && inputs.publish && needs.wasm.outputs.manual_publish_allowed == 'true') }}
         working-directory: crates/wasm/pkg
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -176,6 +176,49 @@ impl SceneBounds {
     }
 }
 
+/// Average repaint frequency over half-second windows using egui's monotonic time.
+#[derive(Default)]
+struct FrameRate {
+    started_at: Option<f64>,
+    last_tick: Option<f64>,
+    last_activity: Option<f64>,
+    frames: u32,
+    fps: Option<f64>,
+}
+
+impl FrameRate {
+    /// Returns the remaining idle deadline, never extending it for diagnostic paints.
+    fn tick(&mut self, now: f64, activity: bool) -> Option<std::time::Duration> {
+        if activity && !self.last_tick.is_some_and(|last| now <= last) {
+            self.last_tick = Some(now);
+            if self.last_activity.is_none_or(|last| now - last >= 1.0) {
+                self.started_at = Some(now);
+                self.frames = 0;
+                self.fps = None;
+            } else if let Some(start) = self.started_at {
+                self.frames += 1;
+                let elapsed = now - start;
+                if elapsed >= 0.5 {
+                    self.fps = Some(self.frames as f64 / elapsed);
+                    self.frames = 0;
+                    self.started_at = Some(now);
+                }
+            }
+            self.last_activity = Some(now);
+        }
+        let last = self.last_activity?;
+        let remaining = 1.0 - (now - last);
+        if remaining <= 0.0 {
+            self.fps = Some(0.0);
+            self.last_activity = None;
+            self.started_at = None;
+            self.frames = 0;
+            return None;
+        }
+        Some(std::time::Duration::from_secs_f64(remaining))
+    }
+}
+
 pub struct Canvas<L: Logger> {
     shader: Arc<Mutex<Shader>>,
     camera_state: CameraState,
@@ -189,6 +232,11 @@ pub struct Canvas<L: Logger> {
     camera_parameter_logging: bool,
     last_logged_camera_state: CameraState,
     last_camera_log_time: Option<f64>,
+    show_fps: bool,
+    show_camera_parameters: bool,
+    frame_rate: FrameRate,
+    diagnostic_activity: bool,
+    last_overlay_rect: Option<egui::Rect>,
 }
 
 impl<L: Logger> Canvas<L> {
@@ -207,6 +255,11 @@ impl<L: Logger> Canvas<L> {
             camera_parameter_logging: false,
             last_logged_camera_state: camera_state,
             last_camera_log_time: None,
+            show_fps: false,
+            show_camera_parameters: false,
+            frame_rate: FrameRate::default(),
+            diagnostic_activity: true,
+            last_overlay_rect: None,
         })
     }
 
@@ -233,13 +286,32 @@ impl<L: Logger> Canvas<L> {
             camera_parameter_logging: false,
             last_logged_camera_state: camera_state,
             last_camera_log_time: None,
+            show_fps: false,
+            show_camera_parameters: false,
+            frame_rate: FrameRate::default(),
+            diagnostic_activity: true,
+            last_overlay_rect: None,
         })
     }
 
-    pub fn set_camera_parameter_logging(&mut self, enabled: bool) {
+    pub fn camera_parameter_logging(&mut self, enabled: bool) {
+        self.diagnostic_activity = true;
         self.camera_parameter_logging = enabled;
         self.last_logged_camera_state = self.camera_state;
         self.last_camera_log_time = None;
+    }
+
+    pub fn show_fps(&mut self, enabled: bool) {
+        self.diagnostic_activity = true;
+        if self.show_fps != enabled {
+            self.frame_rate = FrameRate::default();
+        }
+        self.show_fps = enabled;
+    }
+
+    pub fn show_camera_parameters(&mut self, enabled: bool) {
+        self.diagnostic_activity = true;
+        self.show_camera_parameters = enabled;
     }
 
     pub fn custom_painting(&mut self, ui: &mut egui::Ui) {
@@ -251,6 +323,7 @@ impl<L: Logger> Canvas<L> {
             egui::Sense::drag(),
         );
 
+        let mut animation_playing = false;
         let static_scene = match self.animation.as_ref() {
             Some(animation) => animation.static_scene.as_ref(),
             None => None,
@@ -262,7 +335,6 @@ impl<L: Logger> Canvas<L> {
                 return;
             }
 
-            ui.ctx().request_repaint();
             let now = ui.input(|i| i.time);
             if let None = self.animation_start_time {
                 self.animation_start_time = Some(ui.input(|i| i.time));
@@ -281,6 +353,10 @@ impl<L: Logger> Canvas<L> {
                 if elapsed >= max_time {
                     is_finished = true;
                 }
+            }
+            if !is_finished {
+                animation_playing = true;
+                ui.ctx().request_repaint();
             }
 
             let anim_time = if animation.loops == -1 {
@@ -375,9 +451,66 @@ impl<L: Logger> Canvas<L> {
             callback: Arc::new(cb),
         };
         ui.painter().add(callback);
+        self.paint_overlay(ui, rect, animation_playing || self.auto_rotate.enabled);
+    }
+
+    fn paint_overlay(&mut self, ui: &egui::Ui, rect: egui::Rect, playing: bool) {
+        if !self.show_fps && !self.show_camera_parameters {
+            return;
+        }
+        let mut text = String::new();
+        if self.show_fps {
+            let activity = playing
+                | std::mem::take(&mut self.diagnostic_activity)
+                | (self.last_overlay_rect != Some(rect))
+                | ui.input(|input| {
+                    input
+                        .events
+                        .iter()
+                        .any(|event| !matches!(event, egui::Event::Screenshot { .. }))
+                });
+            self.last_overlay_rect = Some(rect);
+            // Screenshots and this idle wake only observe the readout; they do
+            // not count as activity or keep renewing the idle deadline.
+            if let Some(delay) = self.frame_rate.tick(ui.input(|input| input.time), activity) {
+                ui.ctx().request_repaint_after(delay);
+            }
+            text = match self.frame_rate.fps {
+                Some(fps) => format!("FPS: {fps:.1}"),
+                None => "FPS: --".into(),
+            };
+        }
+        if self.show_camera_parameters {
+            if !text.is_empty() {
+                text.push('\n');
+            }
+            text.push_str(
+                &self
+                    .camera_state
+                    .format_orbit_parameters()
+                    .replace(", distance=", "\ndistance=")
+                    .replace(", target=", "\ntarget="),
+            );
+        }
+        // Use only painter shapes: the overlay must not capture pointer input.
+        let painter = ui.painter().with_clip_rect(rect);
+        let origin = rect.min + egui::vec2(12.0, 12.0);
+        let galley = painter.layout(
+            text,
+            egui::FontId::monospace(12.0),
+            egui::Color32::WHITE,
+            (rect.width() - 24.0).max(1.0),
+        );
+        painter.rect_filled(
+            egui::Rect::from_min_size(origin, galley.size()).expand(4.0),
+            4.0,
+            egui::Color32::from_black_alpha(180),
+        );
+        painter.galley(origin, galley, egui::Color32::WHITE);
     }
 
     pub fn update_scene(&mut self, scene: &Scene) {
+        self.diagnostic_activity = true;
         self.auto_rotate = scene.auto_rotate;
         self.shader.lock().update_scene(Some(scene), None);
     }
@@ -1801,9 +1934,70 @@ pub struct Light {
 
 #[cfg(test)]
 mod tests {
-    use super::{AlphaCoverage, CameraState, SceneBounds, SceneRenderPass};
+    use super::{AlphaCoverage, CameraState, FrameRate, SceneBounds, SceneRenderPass};
     use crate::scene::{DepthCue, Lighting};
     use glam::{Mat4, Vec3};
+
+    #[test]
+    fn repaint_fps_averages_existing_frames_and_ignores_duplicate_passes() {
+        let mut rate = FrameRate::default();
+        rate.tick(10.0, true);
+        assert!(rate.fps.is_none());
+        for frame in 1..=30 {
+            let now = 10.0 + frame as f64 / 60.0;
+            rate.tick(now, true);
+            rate.tick(now, true); // A second layout pass is not another rendered frame.
+        }
+        assert!((rate.fps.unwrap() - 60.0).abs() < 1e-6);
+        assert_eq!(rate.tick(11.5, false), None);
+        assert_eq!(rate.fps, Some(0.0));
+    }
+
+    #[test]
+    fn idle_fps_refresh_does_not_count_frames_or_rearm_itself() {
+        let mut rate = FrameRate::default();
+        assert_eq!(
+            rate.tick(0.0, true),
+            Some(std::time::Duration::from_secs(1))
+        );
+        assert_eq!(
+            rate.tick(0.5, false),
+            Some(std::time::Duration::from_millis(500))
+        );
+        assert_eq!(rate.frames, 0);
+        assert_eq!(rate.last_activity, Some(0.0));
+        assert_eq!(rate.tick(1.0, false), None);
+        assert_eq!(rate.fps, Some(0.0));
+        assert_eq!(rate.tick(2.0, false), None);
+        assert_eq!(rate.tick(3.0, false), None);
+        assert_eq!(rate.frames, 0);
+        assert_eq!(rate.fps, Some(0.0));
+        // A scene update at the old deadline is genuine activity, not an idle frame.
+        assert_eq!(
+            rate.tick(3.0, true),
+            Some(std::time::Duration::from_secs(1))
+        );
+        assert_eq!(rate.fps, None);
+    }
+
+    #[test]
+    fn new_activity_defers_an_old_idle_timer_and_resumes_fps_statistics() {
+        let mut rate = FrameRate::default();
+        rate.tick(0.0, true);
+        rate.tick(0.75, true);
+        assert_eq!(
+            rate.tick(1.0, false),
+            Some(std::time::Duration::from_millis(750))
+        );
+        assert_ne!(rate.fps, Some(0.0));
+        assert_eq!(rate.tick(1.75, false), None);
+        assert_eq!(rate.fps, Some(0.0));
+        rate.tick(2.0, true);
+        for frame in 1..=30 {
+            rate.tick(2.0 + frame as f64 / 60.0, true);
+        }
+        assert!((rate.fps.unwrap() - 60.0).abs() < 1e-6);
+    }
 
     #[test]
     fn alpha_coverage_uses_chimerax_threshold() {

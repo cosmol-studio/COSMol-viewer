@@ -24,6 +24,35 @@ The returned viewer must remain referenced while it is being updated.
 Interaction Controls
 --------------------
 
+Viewport Diagnostics
+~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: python
+
+   viewer.show_fps(True)
+   viewer.show_camera_parameters(True)
+   viewer.camera_parameter_logging(False)
+
+The overlays appear in the upper-left corner without intercepting dragging or
+zooming. They are initially hidden and independent of terminal/browser-console
+camera logging. Pass ``False`` to hide either overlay. These APIs also work in
+Jupyter and Colab; JavaScript uses ``showFps``, ``showCameraParameters`` and
+``cameraParameterLogging``.
+
+FPS measures renderer repaint frequency averaged over half-second windows,
+not animation frame rate or GPU timing. Neither overlay requests continuous
+repainting. With FPS enabled, one second without activity triggers a one-shot
+repaint to show zero FPS. That diagnostic repaint is not counted and does not
+renew the idle timer; interaction or scene updates resume statistics. Overlays
+are included in viewer screenshots, not ``Scene.to_png``.
+
+Static native viewers are event-driven: interaction, window changes and incoming
+commands request repainting, not an idle IPC timer. Animation playback and
+automatic rotation still repaint continuously while active.
+
+Camera Interaction
+~~~~~~~~~~~~~~~~~~
+
 Scene settings can keep drag rotation while disabling zoom, or automatically
 orbit the molecule around the current camera-relative horizontal axis:
 
@@ -45,6 +74,19 @@ viewer:
 
 ``update()`` is intended for live or streaming data where frames are not known
 in advance.
+
+For a native dynamic update loop, check the child-process lifecycle explicitly:
+
+.. code-block:: python
+
+   while viewer.is_open():
+       # Modify the scene for the next frame.
+       viewer.update(scene)
+
+``is_open()`` returns ``False`` when the child exits, including an abnormal exit,
+so the script can leave its loop and finish normally without ``keep_alive()``.
+It does not listen for Enter and is unavailable in Jupyter or Colab. It does
+not terminate the Python process: code after the loop can still run.
 
 Animation Playback
 ------------------
@@ -86,5 +128,9 @@ An animation can be serialized for later browser playback:
    Path("trajectory.cmv").write_text(animation.to_payload(), encoding="utf-8")
 
 The payload contains the animation settings and frames. Browser playback uses
-the existing WebAssembly viewer. The JavaScript documentation track is reserved
-for the future standalone scene-building API.
+``Viewer.playNotebook(canvas_id, payload)``. Scenes, animations, and notebook
+commands share the ``CMV2:R:<base64>`` (raw postcard) or ``CMV2:G:<base64>``
+(gzip postcard) format. Serialized data below 1 KiB skips gzip; at or above
+1 KiB it uses gzip level 1. Sender and receiver versions must match; old payload
+formats are not accepted. Browser decoding defaults to a 64 MiB serialized-data
+limit.

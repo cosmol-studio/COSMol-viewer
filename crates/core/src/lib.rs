@@ -2,17 +2,12 @@ mod shader;
 pub mod surface;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::egui::IconData;
-#[cfg(not(target_arch = "wasm32"))]
-use iceoryx2::{
-    node::{Node, NodeBuilder},
-    port::{publisher::Publisher, subscriber::Subscriber},
-    service::{ipc, port_factory::publish_subscribe::PortFactory},
-};
 use std::sync::Arc;
 #[cfg(not(target_arch = "wasm32"))]
 use std::{
-    cell::Cell,
+    cell::{Cell, RefCell},
     process::{Child, Command, Stdio},
+    rc::Rc,
     sync::atomic::{AtomicBool, Ordering},
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -21,8 +16,10 @@ use thiserror::Error;
 
 pub mod binding_contract;
 pub mod parser;
+pub mod transport;
+use transport::RendererTransport;
 #[cfg(not(target_arch = "wasm32"))]
-const VERSION: &str = env!("CARGO_PKG_VERSION");
+use transport::ViewerTransport;
 #[cfg(not(target_arch = "wasm32"))]
 static RENDER_REGISTERED: AtomicBool = AtomicBool::new(false);
 pub mod utils;
@@ -41,29 +38,13 @@ pub use crate::utils::{Logger, RustLogger, Shape};
 pub mod shapes;
 use crate::scene::Scene;
 
-#[cfg(not(target_arch = "wasm32"))]
-type FeedbackSender = Publisher<ipc::Service, [u8], ()>;
-
 pub mod scene;
 #[cfg(not(target_arch = "wasm32"))]
-fn feedback(tx: &FeedbackSender, message: Feedback) {
-    let bytes = postcard::to_allocvec(&(VERSION, message)).unwrap();
-    let mut sample = tx.loan_slice(bytes.len()).unwrap();
-    sample.payload_mut().copy_from_slice(&bytes);
-    assert_ne!(sample.send().unwrap(), 0, "feedback has no receiver");
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn decode_feedback(bytes: &[u8]) -> Feedback {
-    let (version, message): (&str, Feedback) = postcard::from_bytes(bytes).unwrap();
-    assert_eq!(version, VERSION, "feedback protocol mismatch");
-    message
-}
 use image::{ImageBuffer, Rgba};
 
 #[derive(serde::Serialize, serde::Deserialize)]
-#[cfg(not(target_arch = "wasm32"))]
-enum Request {
+#[doc(hidden)]
+pub enum Request {
     InitializeScene {
         request_id: u64,
         scene: Scene,
@@ -83,22 +64,23 @@ enum Request {
     TakeScreenshot {
         request_id: u64,
     },
-    SetCameraParameterLogging {
+    CameraParameterLogging {
+        request_id: u64,
+        enabled: bool,
+    },
+    ShowFps {
+        request_id: u64,
+        enabled: bool,
+    },
+    ShowCameraParameters {
         request_id: u64,
         enabled: bool,
     },
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-fn decode_request(bytes: &[u8]) -> Request {
-    let (version, request): (&str, Request) = postcard::from_bytes(bytes).unwrap();
-    assert_eq!(version, VERSION, "request protocol mismatch");
-    request
-}
-
 #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-#[cfg(not(target_arch = "wasm32"))]
-enum Feedback {
+#[doc(hidden)]
+pub enum Feedback {
     Ready {
         pid: u32,
     },
@@ -117,40 +99,6 @@ enum Feedback {
         rgba: Vec<u8>,
     },
 }
-#[cfg(not(target_arch = "wasm32"))]
-struct ReceiverState {
-    rx: Subscriber<ipc::Service, [u8], ()>,
-    tx: FeedbackSender,
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn create_ipc_services(
-    name: &str,
-) -> (
-    Node<ipc::Service>,
-    PortFactory<ipc::Service, [u8], ()>,
-    PortFactory<ipc::Service, [u8], ()>,
-) {
-    iceoryx2::prelude::set_log_level(iceoryx2::prelude::LogLevel::Error);
-    let node = NodeBuilder::new().create::<ipc::Service>().unwrap();
-    let scenes = node
-        .service_builder(&format!("{name}/scene-v2").as_str().try_into().unwrap())
-        .publish_subscribe::<[u8]>()
-        .subscriber_max_buffer_size(4)
-        .subscriber_max_borrowed_samples(2)
-        .enable_safe_overflow(false)
-        .open_or_create()
-        .unwrap();
-    let events = node
-        .service_builder(&format!("{name}/feedback-v2").as_str().try_into().unwrap())
-        .publish_subscribe::<[u8]>()
-        .subscriber_max_buffer_size(16)
-        .enable_safe_overflow(false)
-        .open_or_create()
-        .unwrap();
-    (node, scenes, events)
-}
-
 #[cfg(not(target_arch = "wasm32"))]
 pub fn register_render() {
     RENDER_REGISTERED.store(true, Ordering::Relaxed);
@@ -171,35 +119,28 @@ pub fn register_render() {
 /// Call this from a dedicated executable's main thread, not from the producer.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn run_render_child(name: &str) -> eframe::Result<()> {
-    let (_node, scenes, events) = create_ipc_services(name);
-    let rx = scenes.subscriber_builder().create().unwrap();
-    let tx = events
-        .publisher_builder()
-        .initial_max_slice_len(64)
-        .allocation_strategy(iceoryx2::prelude::AllocationStrategy::PowerOfTwo)
-        .create()
-        .unwrap();
-    feedback(
-        &tx,
-        Feedback::Ready {
+    let transport = RendererTransport::connect(name);
+    transport
+        .send_feedback(Feedback::Ready {
             pid: std::process::id(),
-        },
-    );
-    let sample = loop {
-        if let Some(sample) = rx.receive().unwrap() {
-            break sample;
+        })
+        .unwrap();
+    let request = loop {
+        if let Some(request) = transport.try_request().unwrap() {
+            break request;
         }
         thread::sleep(Duration::from_millis(2));
     };
-    let request = decode_request(sample.payload());
     let (width, height) = match &request {
         Request::InitializeScene { width, height, .. }
         | Request::InitializeAnimation { width, height, .. } => (*width, *height),
         Request::UpdateScene { .. } => panic!("expected initialization request"),
         Request::TakeScreenshot { .. } => panic!("expected initialization request"),
-        Request::SetCameraParameterLogging { .. } => panic!("expected initialization request"),
+        Request::CameraParameterLogging { .. } => panic!("expected initialization request"),
+        Request::ShowFps { .. } | Request::ShowCameraParameters { .. } => {
+            panic!("expected initialization request")
+        }
     };
-    drop(sample);
     eframe::run_native(
         "cosmol_viewer",
         eframe::NativeOptions {
@@ -213,22 +154,9 @@ pub fn run_render_child(name: &str) -> eframe::Result<()> {
             ..Default::default()
         },
         Box::new(move |cc| {
-            let (mut app, request_id) = match request {
-                Request::InitializeScene {
-                    request_id, scene, ..
-                } => (App::new(cc, &scene, RustLogger), request_id),
-                Request::InitializeAnimation {
-                    request_id,
-                    animation,
-                    ..
-                } => (App::new_play(cc, animation, RustLogger), request_id),
-                Request::UpdateScene { .. } => unreachable!(),
-                Request::TakeScreenshot { .. } => unreachable!(),
-                Request::SetCameraParameterLogging { .. } => unreachable!(),
-            };
-            feedback(&tx, Feedback::Initialized { request_id });
-            app.ipc = Some(ReceiverState { rx, tx });
-            Ok(Box::new(app))
+            Ok(Box::new(App::from_request(
+                cc, request, RustLogger, transport,
+            )))
         }),
     )
 }
@@ -240,13 +168,12 @@ pub const BUILD_ID: &str = concat!(
 );
 
 pub struct App<L: Logger> {
-    #[cfg(not(target_arch = "wasm32"))]
-    ipc: Option<ReceiverState>,
+    transport: Option<RendererTransport>,
     canvas: Canvas<L>,
     _gl: Option<Arc<eframe::glow::Context>>,
     pub ctx: egui::Context,
     screenshot_requested: Option<u64>,
-    screenshot_result: Option<(Arc<egui::ColorImage>, egui::TextureHandle)>,
+    screenshot_in_flight: bool,
     _logger: L,
 }
 
@@ -256,13 +183,12 @@ impl<L: Logger> App<L> {
         let gl = cc.gl.clone();
         let canvas = Canvas::new(gl.as_ref().unwrap().clone(), scene, logger).unwrap();
         App {
-            #[cfg(not(target_arch = "wasm32"))]
-            ipc: None,
+            transport: None,
             _gl: gl,
             canvas,
             ctx: cc.egui_ctx.clone(),
             screenshot_requested: None,
-            screenshot_result: None,
+            screenshot_in_flight: false,
             _logger: logger,
         }
     }
@@ -272,43 +198,46 @@ impl<L: Logger> App<L> {
         let gl = cc.gl.clone();
         let canvas = Canvas::new_play(gl.as_ref().unwrap().clone(), animation, logger).unwrap();
         App {
-            #[cfg(not(target_arch = "wasm32"))]
-            ipc: None,
+            transport: None,
             _gl: gl,
             canvas,
             ctx: cc.egui_ctx.clone(),
             screenshot_requested: None,
-            screenshot_result: None,
+            screenshot_in_flight: false,
             _logger: logger,
         }
     }
 
-    pub fn set_camera_parameter_logging(&mut self, enabled: bool) {
-        self.canvas.set_camera_parameter_logging(enabled);
+    /// Give eframe exclusive App ownership; clients communicate through messages.
+    #[doc(hidden)]
+    pub fn from_request(
+        cc: &eframe::CreationContext<'_>,
+        request: Request,
+        logger: L,
+        transport: RendererTransport,
+    ) -> Self {
+        let (mut app, request_id) = match request {
+            Request::InitializeScene {
+                request_id, scene, ..
+            } => (Self::new(cc, &scene, logger), request_id),
+            Request::InitializeAnimation {
+                request_id,
+                animation,
+                ..
+            } => (Self::new_play(cc, animation, logger), request_id),
+            _ => panic!("expected initialization request"),
+        };
+        transport
+            .send_feedback(Feedback::Initialized { request_id })
+            .unwrap();
+        app.attach_transport(transport);
+        app
     }
 
-    pub fn update_scene(&mut self, scene: &Scene) {
-        self.canvas.update_scene(scene);
-    }
-
-    pub fn take_screenshot(&mut self) {
-        self.screenshot_requested = Some(0);
-    }
-
-    pub fn poll_screenshot(&mut self) -> Option<ImageBuffer<Rgba<u8>, Vec<u8>>> {
-        if let Some((arc_image, _handle)) = self.screenshot_result.take() {
-            let image = arc_image.as_ref();
-            let width = image.size[0] as u32;
-            let height = image.size[1] as u32;
-            let raw_rgba = color_image_to_rgba_bytes(image);
-
-            let buffer: ImageBuffer<Rgba<u8>, _> =
-                ImageBuffer::from_raw(width, height, raw_rgba).expect("Invalid dimensions or data");
-
-            Some(buffer)
-        } else {
-            None
-        }
+    /// Attach the rendering endpoint; no viewer shares or locks the App.
+    pub fn attach_transport(&mut self, transport: RendererTransport) {
+        transport.attach_repaint(self.ctx.clone());
+        self.transport = Some(transport);
     }
 }
 
@@ -318,31 +247,60 @@ fn color_image_to_rgba_bytes(image: &egui::ColorImage) -> Vec<u8> {
 
 impl<L: Logger> eframe::App for App<L> {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
-        #[cfg(not(target_arch = "wasm32"))]
-        if let Some(state) = &self.ipc {
+        if let Some(transport) = &self.transport {
             for _ in 0..4 {
-                let Some(sample) = state.rx.receive().unwrap() else {
+                // A screenshot is a FIFO barrier. Do not overwrite its ID or
+                // apply later scene updates until its frame has been captured.
+                if self.screenshot_in_flight {
+                    break;
+                }
+                let Some(request) = transport.try_request().unwrap() else {
                     break;
                 };
-                match decode_request(sample.payload()) {
+                match request {
                     Request::UpdateScene { request_id, scene } => {
                         self.canvas.update_scene(&scene);
-                        feedback(&state.tx, Feedback::Applied { request_id });
+                        transport
+                            .send_feedback(Feedback::Applied { request_id })
+                            .unwrap();
                     }
                     Request::TakeScreenshot { request_id } => {
                         self.screenshot_requested = Some(request_id);
+                        self.screenshot_in_flight = true;
                     }
-                    Request::SetCameraParameterLogging {
+                    Request::CameraParameterLogging {
                         request_id,
                         enabled,
                     } => {
-                        self.canvas.set_camera_parameter_logging(enabled);
-                        feedback(&state.tx, Feedback::Applied { request_id });
+                        self.canvas.camera_parameter_logging(enabled);
+                        transport
+                            .send_feedback(Feedback::Applied { request_id })
+                            .unwrap();
+                    }
+                    Request::ShowFps {
+                        request_id,
+                        enabled,
+                    } => {
+                        self.canvas.show_fps(enabled);
+                        transport
+                            .send_feedback(Feedback::Applied { request_id })
+                            .unwrap();
+                    }
+                    Request::ShowCameraParameters {
+                        request_id,
+                        enabled,
+                    } => {
+                        self.canvas.show_camera_parameters(enabled);
+                        transport
+                            .send_feedback(Feedback::Applied { request_id })
+                            .unwrap();
                     }
                     _ => panic!("expected UpdateScene, received an initialization request"),
                 }
+                // Drain batches larger than the per-frame budget without relying
+                // on continuous browser polling.
+                ui.ctx().request_repaint();
             }
-            ui.ctx().request_repaint_after(Duration::from_millis(5));
         }
         #[cfg(not(target_arch = "wasm32"))]
         egui_extras::install_image_loaders(ui);
@@ -386,33 +344,27 @@ impl<L: Logger> eframe::App for App<L> {
                         .next_back()
                 });
 
-                if let Some((_request_id, image)) = screenshot {
-                    #[cfg(not(target_arch = "wasm32"))]
-                    if let Some(state) = &self.ipc {
-                        feedback(
-                            &state.tx,
-                            Feedback::ScreenshotTaken {
-                                request_id: _request_id,
+                if let Some((request_id, image)) = screenshot {
+                    self.screenshot_in_flight = false;
+                    if let Some(transport) = &self.transport {
+                        transport
+                            .send_feedback(Feedback::ScreenshotTaken {
+                                request_id,
                                 width: image.size[0] as u32,
                                 height: image.size[1] as u32,
                                 rgba: color_image_to_rgba_bytes(&image),
-                            },
-                        );
-                        return;
+                            })
+                            .unwrap();
+                        // Resume commands that were queued behind this capture.
+                        ui.ctx().request_repaint();
                     }
-                    self.screenshot_result = Some((
-                        image.clone(),
-                        ui.ctx()
-                            .load_texture("screenshot", image, Default::default()),
-                    ));
                 }
             });
     }
 
     fn on_exit(&mut self, _: Option<&eframe::glow::Context>) {
-        #[cfg(not(target_arch = "wasm32"))]
-        if let Some(state) = &self.ipc {
-            feedback(&state.tx, Feedback::Closed);
+        if let Some(transport) = &self.transport {
+            let _ = transport.send_feedback(Feedback::Closed);
         }
     }
 
@@ -427,11 +379,10 @@ impl<L: Logger> eframe::App for App<L> {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub struct NativeGuiViewer {
-    tx: Publisher<ipc::Service, [u8], ()>,
-    rx: Subscriber<ipc::Service, [u8], ()>,
-    request_id: Cell<u64>,
+    transport: ViewerTransport,
+    request_id: Rc<Cell<u64>>,
     closed: Cell<bool>,
-    child: ChildGuard,
+    child: RefCell<ChildGuard>,
 }
 
 #[derive(Error, Debug)]
@@ -511,11 +462,11 @@ fn wait_for_exit_or_input_with_wait<E: From<std::io::Error>>(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn wait_event(rx: &Subscriber<ipc::Service, [u8], ()>, child: &mut ChildGuard) -> Feedback {
+fn wait_event(transport: &ViewerTransport, child: &mut ChildGuard) -> Feedback {
     let start = Instant::now();
     loop {
-        if let Some(sample) = rx.receive().unwrap() {
-            return decode_feedback(sample.payload());
+        if let Some(feedback) = transport.try_feedback().unwrap() {
+            return feedback;
         }
         if let Some(status) = child.0.try_wait().unwrap() {
             // panic!(format!("viewer exited before feedback: {status}"));
@@ -551,18 +502,11 @@ impl NativeGuiViewer {
                 .unwrap()
                 .as_nanos()
         );
-        let (_node, scenes, events) = create_ipc_services(&name);
-        let tx = scenes
-            .publisher_builder()
-            .initial_max_slice_len(4096)
-            .allocation_strategy(iceoryx2::prelude::AllocationStrategy::PowerOfTwo)
-            .create()
-            .unwrap();
-        let rx = events.subscriber_builder().create().unwrap();
+        let transport = ViewerTransport::connect(&name);
         let mut command = Command::new(executable.as_ref());
         command.args(["--child", &name]).stdin(Stdio::null());
         let mut child = ChildGuard(command.spawn()?);
-        let pid = match wait_event(&rx, &mut child) {
+        let pid = match wait_event(&transport, &mut child) {
             Feedback::Ready { pid } => pid,
             other => panic!("expected Ready, received {other:?}"),
         };
@@ -577,11 +521,10 @@ impl NativeGuiViewer {
             pid
         );
         Ok(Self {
-            tx,
-            rx,
-            request_id: Cell::new(0),
+            transport,
+            request_id: Rc::new(Cell::new(0)),
             closed: Cell::new(false),
-            child,
+            child: RefCell::new(child),
         })
     }
 
@@ -614,28 +557,39 @@ impl NativeGuiViewer {
         width: f32,
         height: f32,
     ) -> Result<Self, RenderError> {
-        let bytes = postcard::to_allocvec(&(
-            VERSION,
-            Request::InitializeScene {
+        self.transport
+            .send_request(Request::InitializeScene {
                 request_id: 0,
                 scene: scene.clone(),
                 width,
                 height,
-            },
-        ))
-        .unwrap();
-        let mut sample = self.tx.loan_slice(bytes.len()).unwrap();
-        sample.payload_mut().copy_from_slice(&bytes);
-        assert_eq!(sample.send().unwrap(), 1);
+            })
+            .unwrap();
         assert_eq!(
-            wait_event(&self.rx, &mut self.child),
+            wait_event(&self.transport, self.child.get_mut()),
             Feedback::Initialized { request_id: 0 }
         );
         Ok(self)
     }
 
+    /// Nonblocking child-process status check for dynamic update loops.
+    /// Does not read console input or terminate the producer process.
     pub fn is_open(&self) -> bool {
-        !self.closed.get()
+        if self.closed.get() {
+            return false;
+        }
+        if self
+            .child
+            .borrow_mut()
+            .0
+            .try_wait()
+            .expect("Failed to check viewer process status")
+            .is_some()
+        {
+            self.closed.set(true);
+            return false;
+        }
+        true
     }
 
     /// Keeps the viewer alive until console input completes or its child exits.
@@ -678,7 +632,7 @@ impl NativeGuiViewer {
                 let _ = input_tx.send(result);
             })?;
 
-        wait(&mut self.child.0, &input_rx)
+        wait(&mut self.child.get_mut().0, &input_rx)
     }
 
     pub fn update(&self, scene: &Scene) {
@@ -689,25 +643,28 @@ impl NativeGuiViewer {
     }
 
     fn apply_request(&self, request: impl FnOnce(u64) -> Request) {
-        if self.closed.get() {
+        if !self.is_open() {
             return;
         }
-        while let Some(event) = self.rx.receive().unwrap() {
-            if decode_feedback(event.payload()) == Feedback::Closed {
+        while let Some(event) = self.transport.try_feedback().unwrap() {
+            if event == Feedback::Closed {
                 self.closed.set(true);
                 return;
             }
         }
         let request_id = self.request_id.get() + 1;
         self.request_id.set(request_id);
-        let bytes = postcard::to_allocvec(&(VERSION, request(request_id))).unwrap();
-        let mut sample = self.tx.loan_slice(bytes.len()).unwrap();
-        sample.payload_mut().copy_from_slice(&bytes);
-        sample.send().unwrap();
+        if let Err(error) = self.transport.send_request(request(request_id)) {
+            // The child can exit between the status check and sending.
+            if !self.is_open() {
+                return;
+            }
+            panic!("Failed to send viewer request: {error}");
+        }
         let start = Instant::now();
         loop {
-            if let Some(event) = self.rx.receive().unwrap() {
-                match decode_feedback(event.payload()) {
+            if let Some(event) = self.transport.try_feedback().unwrap() {
+                match event {
                     Feedback::Closed => {
                         self.closed.set(true);
                         return;
@@ -717,13 +674,34 @@ impl NativeGuiViewer {
                 }
                 break;
             }
+            if !self.is_open() {
+                return;
+            }
             assert!(start.elapsed() < TIMEOUT, "update acknowledgment timeout");
             thread::sleep(Duration::from_millis(2));
         }
     }
 
-    pub fn set_camera_parameter_logging(&self, enabled: bool) {
-        self.apply_request(|request_id| Request::SetCameraParameterLogging {
+    pub fn camera_parameter_logging(&self, enabled: bool) {
+        self.apply_request(|request_id| Request::CameraParameterLogging {
+            request_id,
+            enabled,
+        });
+    }
+
+    /// Show or hide a smoothed renderer repaint-rate overlay (not animation FPS).
+    /// One diagnostic repaint shows zero after one second idle; it does not
+    /// count as activity or renew the idle timer. No continuous repainting.
+    pub fn show_fps(&self, enabled: bool) {
+        self.apply_request(|request_id| Request::ShowFps {
+            request_id,
+            enabled,
+        });
+    }
+
+    /// Show or hide live camera parameters in the viewport, independently of logging.
+    pub fn show_camera_parameters(&self, enabled: bool) {
+        self.apply_request(|request_id| Request::ShowCameraParameters {
             request_id,
             enabled,
         });
@@ -733,48 +711,56 @@ impl NativeGuiViewer {
         if self.closed.get() {
             return Err(ImageError::Other("closed".to_string()));
         }
-        while let Some(event) = self.rx.receive().unwrap() {
-            if decode_feedback(event.payload()) == Feedback::Closed {
+        while let Some(event) = self.transport.try_feedback().unwrap() {
+            if event == Feedback::Closed {
                 self.closed.set(true);
                 return Err(ImageError::Closed);
             }
         }
         let request_id = self.request_id.get() + 1;
         self.request_id.set(request_id);
-        let bytes =
-            postcard::to_allocvec(&(VERSION, Request::TakeScreenshot { request_id })).unwrap();
-        let mut sample = self.tx.loan_slice(bytes.len()).unwrap();
-        sample.payload_mut().copy_from_slice(&bytes);
-        sample.send().unwrap();
+        self.transport
+            .send_request(Request::TakeScreenshot { request_id })
+            .unwrap();
 
+        let start = Instant::now();
         loop {
-            if let Some(event) = self.rx.receive().unwrap() {
-                match decode_feedback(event.payload()) {
+            if let Some(event) = self.transport.try_feedback().unwrap() {
+                match event {
                     Feedback::ScreenshotTaken {
-                        request_id: _,
+                        request_id: ack,
                         width,
                         height,
                         rgba,
                     } => {
+                        assert_eq!(ack, request_id);
                         let buffer: ImageBuffer<Rgba<u8>, _> =
                             ImageBuffer::from_raw(width, height, rgba)
                                 .expect("Invalid dimensions or data");
                         return Ok(buffer);
                     }
+                    Feedback::Closed => {
+                        self.closed.set(true);
+                        return Err(ImageError::Closed);
+                    }
                     _ => {}
                 }
             }
+            if start.elapsed() > TIMEOUT {
+                return Err(ImageError::Other("Screenshot feedback timeout".into()));
+            }
+            thread::sleep(Duration::from_millis(2));
         }
     }
 
+    /// Starts playback and returns once the renderer is initialized, not when it exits.
+    /// Configure or update the returned viewer, then call `keep_alive` to wait.
     pub fn play(animation: Animation, width: f32, height: f32) -> Result<Self, RenderError> {
         if animation.frames.is_empty() {
             return Err(RenderError::NoFramesProvided);
         }
 
-        let mut this = Self::new()?.initialize_animation(animation, width, height)?;
-        assert!(this.child.0.wait().unwrap().success());
-        Ok(this)
+        Self::new()?.initialize_animation(animation, width, height)
     }
 
     /// Starts animation playback and returns immediately after initialization.
@@ -797,23 +783,19 @@ impl NativeGuiViewer {
         width: f32,
         height: f32,
     ) -> Result<Self, RenderError> {
-        let bytes = postcard::to_allocvec(&(
-            VERSION,
-            Request::InitializeAnimation {
+        self.transport
+            .send_request(Request::InitializeAnimation {
                 request_id: 1,
                 animation,
                 width,
                 height,
-            },
-        ))
-        .unwrap();
-        let mut sample = self.tx.loan_slice(bytes.len()).unwrap();
-        sample.payload_mut().copy_from_slice(&bytes);
-        assert_eq!(sample.send().unwrap(), 1);
+            })
+            .unwrap();
         assert_eq!(
-            wait_event(&self.rx, &mut self.child),
+            wait_event(&self.transport, self.child.get_mut()),
             Feedback::Initialized { request_id: 1 }
         );
+        self.request_id.set(1);
         Ok(self)
     }
 

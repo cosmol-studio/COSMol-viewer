@@ -17,4 +17,6 @@ scene.save_image("protein_ligand.png", width=1200, height=900)
 
 viewer = Viewer.render(scene, width=800, height=500)
 
+viewer.show_fps(True);
+viewer.show_camera_parameters(True);
 viewer.keep_alive()

@@ -11,8 +11,13 @@ fn registered_dispatch_variants_match_the_actual_wire_commands() {
             },
         ),
         (
-            "Viewer.set_camera_parameter_logging",
-            ViewerCommand::SetCameraParameterLogging { enabled: true },
+            "Viewer.camera_parameter_logging",
+            ViewerCommand::CameraParameterLogging { enabled: true },
+        ),
+        ("Viewer.show_fps", ViewerCommand::ShowFps { enabled: true }),
+        (
+            "Viewer.show_camera_parameters",
+            ViewerCommand::ShowCameraParameters { enabled: true },
         ),
     ] {
         let row = BINDING_CONTRACT

@@ -624,7 +624,7 @@ dependencies = [
 
 [[package]]
 name = "cosmol_viewer"
-version = "0.5.0-rc.2"
+version = "0.5.0-rc.3"
 dependencies = [
  "cosmol_viewer_core",
  "cosmolkit",
@@ -632,7 +632,7 @@ dependencies = [
 
 [[package]]
 name = "cosmol_viewer_core"
-version = "0.5.0-rc.2"
+version = "0.5.0-rc.3"
 dependencies = [
  "base64",
  "bytemuck",
@@ -665,7 +665,7 @@ dependencies = [
 
 [[package]]
 name = "cosmol_viewer_derive"
-version = "0.5.0-rc.2"
+version = "0.5.0-rc.3"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -674,7 +674,7 @@ dependencies = [
 
 [[package]]
 name = "cosmol_viewer_python"
-version = "0.5.0-rc.2"
+version = "0.5.0-rc.3"
 dependencies = [
  "base64",
  "cosmol_viewer_core",
@@ -691,7 +691,7 @@ dependencies = [
 
 [[package]]
 name = "cosmol_viewer_wasm"
-version = "0.5.0-rc.2"
+version = "0.5.0-rc.3"
 dependencies = [
  "base64",
  "cosmol_viewer_core",
@@ -1216,6 +1216,7 @@ dependencies = [
  "bytemuck",
  "ecolor",
  "emath",
+ "epaint_default_fonts",
  "font-types 0.11.3",
  "harfrust 0.7.0",
  "log",
@@ -1229,6 +1230,12 @@ dependencies = [
  "unicode-segmentation",
  "vello_cpu",
 ]
+
+[[package]]
+name = "epaint_default_fonts"
+version = "0.35.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "13ee4e1f553a3584c301f3a56ff1a775f1384781396cea301c8d952e9b93f560"
 
 [[package]]
 name = "equator"

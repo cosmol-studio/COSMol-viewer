@@ -21,7 +21,7 @@ use cosmol_viewer_core::{
     scene::{Scene as _Scene, default_light_color},
 };
 use cosmol_viewer_wasm::NotebookViewer;
-use cosmol_viewer_wasm::utils::compress_animation;
+use cosmol_viewer_wasm::utils::encode_payload;
 #[cfg(feature = "stubgen")]
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyfunction, gen_stub_pymethods};
 #[cfg(not(feature = "stubgen"))]
@@ -147,7 +147,7 @@ the serialized copy; this method does not modify the animation object.
 Returns
 -------
 str
-    A versioned, compressed, base64-encoded animation payload.
+    A CMV2 Base64-encoded postcard payload, optionally gzip-compressed.
 
 Raises
 ------
@@ -169,7 +169,7 @@ RuntimeError
             frame.prepare_for_wasm();
         }
 
-        compress_animation(&animation)
+        encode_payload(&animation)
             .map_err(|err| PyRuntimeError::new_err(format!("Failed to serialize animation: {err}")))
     }
 
@@ -1575,6 +1575,30 @@ KeyboardInterrupt
     }
 
     #[doc = r#"
+Check whether the native viewer is still open without blocking.
+
+Use ``while viewer.is_open():`` for dynamic update loops. Returns ``False``
+after the child process exits or the viewer is finalized. This does not read
+console input; use ``keep_alive()`` for the final blocking wait with Enter.
+
+Raises
+------
+RuntimeError
+    If called in Jupyter or Colab, where child-process status is unavailable.
+"#]
+    pub fn is_open(&self) -> PyResult<bool> {
+        match &self.backend {
+            ViewerBackend::PlainScript(viewer) | ViewerBackend::IPythonTerminal(viewer) => {
+                Ok(viewer.is_open())
+            }
+            ViewerBackend::Closed => Ok(false),
+            ViewerBackend::Colab(_) | ViewerBackend::Jupyter(_) => Err(PyRuntimeError::new_err(
+                "is_open() is only available for native viewers, not Jupyter or Colab",
+            )),
+        }
+    }
+
+    #[doc = r#"
 Update the viewer with a new scene.
 
 Parameters
@@ -1629,14 +1653,73 @@ enabled : bool, optional
     Whether to print camera parameters on camera movement. Defaults to ``True``.
 "#]
     #[pyo3(signature = (enabled=true))]
-    pub fn set_camera_parameter_logging(&mut self, enabled: bool, py: Python) -> PyResult<()> {
+    pub fn camera_parameter_logging(&mut self, enabled: bool, py: Python) -> PyResult<()> {
         match &self.backend {
             ViewerBackend::PlainScript(viewer) | ViewerBackend::IPythonTerminal(viewer) => {
-                viewer.set_camera_parameter_logging(enabled);
+                viewer.camera_parameter_logging(enabled);
                 Ok(())
             }
             ViewerBackend::Colab(state) | ViewerBackend::Jupyter(state) => {
-                state.viewer.set_camera_parameter_logging(py, enabled)
+                state.viewer.camera_parameter_logging(py, enabled)
+            }
+            ViewerBackend::Closed => {
+                Err(PyRuntimeError::new_err("Viewer has already been finalized"))
+            }
+        }
+    }
+
+    #[doc = r#"
+Show or hide the renderer FPS overlay in the upper-left corner.
+
+The value is the repaint rate averaged over half-second windows, not the
+animation frame rate or GPU timing. Samples existing repaint events only;
+does not request continuous repainting. After one second without activity,
+a one-shot repaint shows zero FPS; this diagnostic repaint is not counted
+and does not renew the idle timer. Supported in native windows, Jupyter and Colab.
+
+Parameters
+----------
+enabled : bool, optional
+    Whether to show FPS. Defaults to ``True``; initially hidden.
+"#]
+    #[pyo3(signature = (enabled=true))]
+    pub fn show_fps(&self, enabled: bool, py: Python) -> PyResult<()> {
+        match &self.backend {
+            ViewerBackend::PlainScript(viewer) | ViewerBackend::IPythonTerminal(viewer) => {
+                viewer.show_fps(enabled);
+                Ok(())
+            }
+            ViewerBackend::Colab(state) | ViewerBackend::Jupyter(state) => {
+                state.viewer.show_fps(py, enabled)
+            }
+            ViewerBackend::Closed => {
+                Err(PyRuntimeError::new_err("Viewer has already been finalized"))
+            }
+        }
+    }
+
+    #[doc = r#"
+Show or hide live camera parameters in the upper-left corner.
+
+Displays azimuth, elevation, roll (degrees), distance, target and field of view.
+Updates with camera interaction and does not intercept dragging or zooming.
+Independent of ``camera_parameter_logging()``; enabling this does not log
+to the terminal or browser console. Supported in native windows, Jupyter and Colab.
+
+Parameters
+----------
+enabled : bool, optional
+    Whether to show camera parameters. Defaults to ``True``; initially hidden.
+"#]
+    #[pyo3(signature = (enabled=true))]
+    pub fn show_camera_parameters(&self, enabled: bool, py: Python) -> PyResult<()> {
+        match &self.backend {
+            ViewerBackend::PlainScript(viewer) | ViewerBackend::IPythonTerminal(viewer) => {
+                viewer.show_camera_parameters(enabled);
+                Ok(())
+            }
+            ViewerBackend::Colab(state) | ViewerBackend::Jupyter(state) => {
+                state.viewer.show_camera_parameters(py, enabled)
             }
             ViewerBackend::Closed => {
                 Err(PyRuntimeError::new_err("Viewer has already been finalized"))

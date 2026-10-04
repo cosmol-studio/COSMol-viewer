@@ -15,6 +15,15 @@ fn native_lifecycle_is_registered_but_not_exported_to_browsers() {
     assert_eq!(wait.javascript.name, None);
     assert!(wait.javascript.platforms.is_empty());
     assert!(!wait.javascript.unsupported_reason.unwrap().is_empty());
+
+    let status = BINDING_CONTRACT
+        .iter()
+        .find(|row| row.semantic_id == "Viewer.is_open")
+        .unwrap();
+    assert_eq!(status.receiver, BindingReceiver::Shared);
+    assert_eq!(status.python.name, Some("Viewer.is_open"));
+    assert_eq!(status.python.platforms, &[RuntimePlatform::Native]);
+    assert_eq!(status.javascript.name, None);
 }
 
 #[test]
@@ -48,10 +57,9 @@ fn registry_has_unique_ids_and_explicit_projection_availability() {
 fn notebook_commands_use_the_registered_shared_dispatch_endpoint() {
     for (id, command) in [
         ("Viewer.update", "UpdateScene"),
-        (
-            "Viewer.set_camera_parameter_logging",
-            "SetCameraParameterLogging",
-        ),
+        ("Viewer.camera_parameter_logging", "CameraParameterLogging"),
+        ("Viewer.show_fps", "ShowFps"),
+        ("Viewer.show_camera_parameters", "ShowCameraParameters"),
     ] {
         let row = BINDING_CONTRACT
             .iter()
@@ -61,4 +69,16 @@ fn notebook_commands_use_the_registered_shared_dispatch_endpoint() {
         assert_eq!(row.javascript.notebook_endpoint, Some("Viewer.dispatch"));
         assert_eq!(row.javascript.command, Some(command));
     }
+}
+
+#[test]
+fn browser_screenshot_has_no_notebook_return_endpoint() {
+    let screenshot = BINDING_CONTRACT
+        .iter()
+        .find(|row| row.semantic_id == "Viewer.take_screenshot")
+        .unwrap();
+    assert_eq!(screenshot.javascript.name, Some("Viewer.takeScreenshot"));
+    assert_eq!(screenshot.javascript.platforms, &[RuntimePlatform::Browser]);
+    assert_eq!(screenshot.javascript.notebook_endpoint, None);
+    assert_eq!(screenshot.javascript.command, None);
 }

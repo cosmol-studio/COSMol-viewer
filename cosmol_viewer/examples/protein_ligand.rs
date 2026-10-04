@@ -15,6 +15,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let viewer = Viewer::render(&scene, 800.0, 500.0)?;
 
+    viewer.show_fps(true);
+    viewer.show_camera_parameters(true);
     viewer.keep_alive()?;
 
     Ok(())
