@@ -23,7 +23,7 @@ use cosmol_viewer_core::{
 use cosmol_viewer_wasm::NotebookViewer;
 use cosmol_viewer_wasm::utils::compress_animation;
 #[cfg(feature = "stubgen")]
-use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
+use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyfunction, gen_stub_pymethods};
 #[cfg(not(feature = "stubgen"))]
 use pyo3_stub_gen_derive::remove_gen_stub;
 
@@ -140,7 +140,7 @@ interpolate : bool
 Serialize the animation into a versioned payload for direct browser playback.
 
 The returned UTF-8 string can be written to a ``.cmv`` file and passed to
-``WebHandle.initiate_viewer_and_play(canvas, payload)`` in the WebAssembly
+``Viewer.playNotebook(canvas_id, payload)`` in the WebAssembly
 frontend. Static scenes and frames are prepared for WebAssembly rendering in
 the serialized copy; this method does not modify the animation object.
 
@@ -1649,6 +1649,13 @@ fn print_to_notebook(msg: &CStr, py: Python) {
     let _ = py.run(msg, None, None);
 }
 
+/// Return the JSON API contract, including language names and platform restrictions.
+#[cfg_attr(feature = "stubgen", gen_stub_pyfunction)]
+#[pyfunction]
+pub fn binding_contract_json() -> String {
+    cosmol_viewer_core::binding_contract::to_json()
+}
+
 #[pymodule]
 fn cosmol_viewer(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Scene>()?;
@@ -1658,6 +1665,7 @@ fn cosmol_viewer(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyStick>()?;
     m.add_class::<PyMolecule>()?;
     m.add_class::<PyProtein>()?;
+    m.add_function(wrap_pyfunction!(binding_contract_json, m)?)?;
     Ok(())
 }
 

@@ -6,7 +6,7 @@ description.workspace = true
 repository.workspace = true
 homepage.workspace = true
 publish = false
-include = ["Cargo.toml", "src/**", "pkg/cosmol_viewer_wasm.js", "pkg/cosmol_viewer_wasm_bg.wasm"]
+include = ["Cargo.toml", "src/**", "tools/**", "tests/**", "pkg/cosmol_viewer_wasm.js", "pkg/cosmol_viewer_wasm_bg.wasm"]
 
 [dependencies]
 cosmol_viewer_core.workspace = true
@@ -25,7 +25,7 @@ pyo3 = { workspace = true, optional = true }
 uuid = { version = "1.23.0", features = ["v4"], optional = true }
 log = { version = "0.4.29", optional = true }
 wasm-bindgen-futures = { version = "0.4.67", optional = true }
-web-sys = { version = "0.3.94", features = ["HtmlCanvasElement", "console","Window"], optional = true }
+web-sys = { version = "0.3.94", features = ["HtmlCanvasElement", "HtmlElement", "Document", "Element", "Node", "console","Window"], optional = true }
 wasm-bindgen = { version = "0.2.117", optional = true }
 gloo-timers = { version = "0.4.0", features = ["futures-core", "futures"], optional = true }
 

@@ -52,7 +52,7 @@ class ReleaseBumpTests(unittest.TestCase):
         self.assertEqual(set(updated), set(bump.FILES))
 
     def test_release_crates_inherit_the_workspace_version(self):
-        for member in ("cosmol_viewer", "crates/core", "crates/python", "crates/wasm"):
+        for member in ("cosmol_viewer", "crates/core", "crates/derive", "crates/python", "crates/wasm"):
             with self.subTest(member=member):
                 manifest = tomllib.loads((ROOT / member / "Cargo.toml").read_text(encoding="utf-8"))
                 self.assertEqual(manifest["package"]["version"], {"workspace": True})

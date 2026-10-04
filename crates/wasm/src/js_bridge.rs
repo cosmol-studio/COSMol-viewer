@@ -56,10 +56,9 @@ impl NotebookViewer {
             console.error("WebGL2 not supported or failed to initialize");
             return;
         }}
-        const app = new mod.WebHandle();
         const scene_compressed = {SCENE};
         // console.log(scene_compressed);
-        await app.start_with_scene(canvas, scene_compressed);
+        const app = await mod.Viewer.renderNotebook(canvas.id, scene_compressed);
 
         window[ns + "_instances"] = window[ns + "_instances"] || {{}};
         window[ns + "_instances"]["{id}"] = app;
@@ -132,9 +131,8 @@ impl NotebookViewer {
             console.error("WebGL2 not supported or failed to initialize");
             return;
         }}
-        const app = new mod.WebHandle();
         const animation_compressed = {ANIMATION};
-        await app.initiate_viewer_and_play(canvas, animation_compressed);
+        const app = await mod.Viewer.playNotebook(canvas.id, animation_compressed);
 
         window[ns + "_instances"] = window[ns + "_instances"] || {{}};
         window[ns + "_instances"]["{id}"] = app;
@@ -406,12 +404,12 @@ def create_bridge():
     }
 
     pub fn take_screenshot_colab(&self, py: Python) -> PyResult<Vec<u8>> {
-        let img_buf: Vec<u8> = self.call_colab_with_return(py, "take_screenshot", None::<u8>)?;
+        let img_buf: Vec<u8> = self.call_colab_with_return(py, "takeScreenshotNotebook", None::<u8>)?;
         Ok(img_buf)
     }
 
     pub fn take_screenshot_jupyter(&self, py: Python) -> PyResult<Vec<u8>> {
-        let img_buf: Vec<u8> = self.call_jupyter_with_return(py, "take_screenshot", None::<u8>)?;
+        let img_buf: Vec<u8> = self.call_jupyter_with_return(py, "takeScreenshotNotebook", None::<u8>)?;
         Ok(img_buf)
     }
 }

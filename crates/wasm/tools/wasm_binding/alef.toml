@@ -1,0 +1,18 @@
+[workspace]
+languages = ["wasm"]
+alef_version = "0.103.12"
+
+[[crates]]
+name = "cosmol_viewer_wasm"
+sources = ["crates/wasm/src/bindings.rs", "crates/wasm/src/scene.rs", "crates/wasm/src/notebook.rs"]
+version_from = "Cargo.toml"
+languages = ["wasm"]
+features = ["wasm"]
+
+[crates.output]
+wasm = "target/alef/wasm"
+
+[crates.wasm]
+package_name = "@cosmol-studio/cosmol-viewer"
+targets = ["web"]
+type_prefix = ""

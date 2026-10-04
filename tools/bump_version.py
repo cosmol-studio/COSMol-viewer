@@ -14,6 +14,7 @@ FILES = ("Cargo.toml", "crates/python/pyproject.toml")
 INTERNAL_DEPENDENCIES = {
     "cosmol_viewer": "cosmol_viewer",
     "cosmol_viewer_core": "crates/core",
+    "cosmol_viewer_derive": "crates/derive",
 }
 LOCK_REFRESH = ["cargo", "update", "--workspace"]
 

@@ -3,17 +3,17 @@
 From the repository root, preview and then apply a release bump:
 
 ```bash
-python tools/bump_version.py 0.5.0rc1 --dry-run
-python tools/bump_version.py 0.5.0rc1
+python tools/bump_version.py 0.5.0rc2 --dry-run
+python tools/bump_version.py 0.5.0rc2
 ```
 
 The script accepts `X.Y.Z`, Python-style `X.Y.ZrcN`, and Rust-style
-`X.Y.Z-rc.N`. For this release, Python uses `0.5.0rc1` and Rust uses
-`0.5.0-rc.1`.
+`X.Y.Z-rc.N`. For this release, Python uses `0.5.0rc2` and Rust uses
+`0.5.0-rc.2`.
 
-It updates the workspace package version, the two versioned internal workspace
+It updates the workspace package version, the three versioned internal workspace
 dependencies, and `crates/python/pyproject.toml`. The Rust facade, core,
-Python binding, and WASM binding inherit the workspace version. It then runs
+Python binding, WASM binding, and derive helper inherit the workspace version. It then runs
 `cargo update --workspace` to refresh their lockfile entries without requesting
 a blanket third-party dependency upgrade.
 
@@ -22,8 +22,7 @@ All manifest edits are prepared before writing. If the Cargo command fails,
 the script reports failure and leaves the version edits available for inspection
 and retry.
 
-COSMolKit dependency versions, the unpublished derive helper, experiments,
-historical changelog entries, and the documentation site's published-package
+COSMolKit dependency versions, historical changelog entries, and the documentation site's published-package
 pin are not release fields managed by this script. Generated WASM assets and
 native binaries must be rebuilt through the normal build workflow; the script
 does not publish packages, create tags, or commit changes.
@@ -79,11 +78,22 @@ renderer path during development.
 Regression checks:
 
 ```bash
+python crates/wasm/tools/wasm_binding/build.py --check
+python crates/python/tests/test_binding_surface.py
 python crates/python/tests/test_viewer_backend.py
 python crates/python/tests/test_native_viewer.py --gui
 ```
 
-The second command opens native test windows and checks child process cleanup.
+Install Alef 0.103.12 and wasm-pack before the first command. It regenerates the
+browser package, runs actual WASM exports in Node, and checks generated TypeScript
+types. Add `--browser-check` for the real WebGL rendering smoke test (requires
+Playwright and Chromium). See `crates/wasm/tools/wasm_binding/README.md` for setup
+and the typed `Viewer` / `Scene` / `Animation` JavaScript API.
+
+The Notebook command test mocks notebook display and verifies captured payloads
+against the real WASM receiver's pre-initialization errors. It does not test WebGL
+rendering or successful frame updates. The last command opens native test windows
+and checks child process cleanup.
 
 ## Build Python Documentation
 

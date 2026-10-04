@@ -1,12 +1,15 @@
 [package]
 name = "cosmol_viewer_derive"
+version.workspace = true
 edition.workspace = true
-publish = false
+license.workspace = true
+repository.workspace = true
+description = "Binding contract and binding helper macros for COSMol-viewer"
 
 [lib]
 proc-macro = true
 
 [dependencies]
 quote = "1.0.45"
-syn = "3.0.3"
+syn = { version = "3.0.3", features = ["full"] }
 proc-macro2 = "1.0.106"

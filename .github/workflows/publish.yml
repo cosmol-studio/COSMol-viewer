@@ -6,6 +6,11 @@ on:
       - "*"
   pull_request:
   workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish to PyPI and npm"
+        type: boolean
+        default: false
 
 permissions:
   id-token: write # Required for OIDC
@@ -28,15 +33,40 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y python3-dev
       - uses: cargo-bins/cargo-binstall@main
-      - name: Build wasm module
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+      - name: Install browser smoke test dependencies
+        run: |
+          npm install --prefix target/browser-check --no-save playwright@1.58.2
+          target/browser-check/node_modules/.bin/playwright install --with-deps chromium
+      - name: Build and check Alef browser bindings
         run: |
           cargo binstall -y wasm-pack --force
-          wasm-pack build ./crates/wasm --target web --out-dir ./pkg --release
-        if: ${{ startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
+          cargo binstall -y alef --version 0.103.12 --force
+          python -m unittest discover -s crates/wasm/tools/wasm_binding -p 'test_*.py' -v
+          python crates/wasm/tools/wasm_binding/build.py --check --browser-check
+      - name: Check Rust binding contracts
+        run: |
+          cargo test -p cosmol_viewer_derive
+          cargo test -p cosmol_viewer_core --test binding_contract
+          cargo test -p cosmol_viewer_core --doc binding_contract
+          cargo test -p cosmol_viewer_wasm --no-default-features --test binding_contract
+          cargo test -p cosmol_viewer_wasm --no-default-features --test scene
       - name: build pyi
         working-directory: crates/python
         run: |
           cargo run --bin stub_gen --no-default-features --features stubgen
+      - name: Check Python API and Notebook command transport
+        run: |
+          python -m pip install maturin
+          maturin build --manifest-path crates/python/Cargo.toml --out target/contract-wheels
+          python -m pip install target/contract-wheels/*.whl
+          python crates/python/tests/test_binding_surface.py
+          python crates/python/tests/test_viewer_backend.py
       - name: Upload wasm pkg
         uses: actions/upload-artifact@v4
         with:
@@ -86,8 +116,12 @@ jobs:
           working-directory: crates/python
           sccache: true
           manylinux: auto
-          # The hook runs before sccache is installed; bypass it for this command only.
-          before-script-linux: RUSTC_WRAPPER= python3 build_native_viewer.py --release --target ${{ matrix.platform.rust_target }} --features x11,wayland
+          # Install inside the build container before the hook invokes Cargo.
+          before-script-linux: |
+            uv tool install "sccache>=0.11.0"
+            sccache --version
+            RUSTC_WRAPPER=sccache python3 build_native_viewer.py --release --target ${{ matrix.platform.rust_target }} --features x11,wayland
+            sccache --show-stats
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
@@ -97,6 +131,12 @@ jobs:
   windows:
     needs: wasm
     runs-on: ${{ matrix.platform.runner }}
+    env:
+      RUSTC_WRAPPER: sccache
+      SCCACHE_GHA_ENABLED: "true"
+      CARGO_INCREMENTAL: "0"
+      SCCACHE_LOG: debug
+      SCCACHE_ERROR_LOG: ${{ github.workspace }}/sccache.log
     strategy:
       matrix:
         platform:
@@ -115,6 +155,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.platform.rust_target }}
+      - name: Setup sccache
+        id: sccache
+        uses: mozilla-actions/sccache-action@v0.0.11
+        with:
+          version: "v0.16.0"
       - name: Build native renderer
         run: python crates/python/build_native_viewer.py --release --target ${{ matrix.platform.rust_target }}
       - name: Download wasm pkg
@@ -133,43 +178,26 @@ jobs:
           target: ${{ matrix.platform.target }}
           args: --release --out dist --find-interpreter
           working-directory: crates/python
-          sccache: true
+          # Use the job's wrapper; avoid installing another sccache instance.
+          sccache: false
+      - name: Show sccache stats
+        if: ${{ always() && steps.sccache.outcome == 'success' }}
+        run: sccache --show-stats
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
           name: wheels-windows-${{ matrix.platform.target }}
           path: crates/python/dist
 
-  # windows-arm:
-  #   needs: wasm
-  #   runs-on: windows-11-arm
-  #   steps:
-  #     - uses: actions/checkout@v6
-  #     - uses: actions/setup-python@v6
-  #       with:
-  #         python-version: 3.x
-  #         architecture: arm64
-  #     - name: Download wasm pkg
-  #       uses: actions/download-artifact@v4
-  #       with:
-  #         name: wasm-pkg
-  #         path: crates/wasm/pkg
-  #     - name: Build wheels
-  #       uses: PyO3/maturin-action@v1
-  #       with:
-  #         target: aarch64
-  #         args: --release --out dist --find-interpreter
-  #         working-directory: crates/python
-  #         sccache: true
-  #     - name: Upload wheels
-  #       uses: actions/upload-artifact@v4
-  #       with:
-  #         name: wheels-windows-arm64
-  #         path: crates/python/dist
-
   macos:
     needs: wasm
     runs-on: ${{ matrix.platform.runner }}
+    env:
+      RUSTC_WRAPPER: sccache
+      SCCACHE_GHA_ENABLED: "true"
+      CARGO_INCREMENTAL: "0"
+      SCCACHE_LOG: debug
+      SCCACHE_ERROR_LOG: ${{ github.workspace }}/sccache.log
     strategy:
       matrix:
         platform:
@@ -187,6 +215,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.platform.rust_target }}
+      - name: Setup sccache
+        id: sccache
+        uses: mozilla-actions/sccache-action@v0.0.11
+        with:
+          version: "v0.16.0"
       - name: Build native renderer
         run: python crates/python/build_native_viewer.py --release --target ${{ matrix.platform.rust_target }}
       - name: Download wasm pkg
@@ -205,7 +238,11 @@ jobs:
           target: ${{ matrix.platform.target }}
           args: --release --out dist --find-interpreter
           working-directory: crates/python
-          sccache: true
+          # Use the job's wrapper; avoid installing another sccache instance.
+          sccache: false
+      - name: Show sccache stats
+        if: ${{ always() && steps.sccache.outcome == 'success' }}
+        run: sccache --show-stats
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
@@ -256,7 +293,7 @@ jobs:
         with:
           subject-path: "wheels-*/*"
       - name: Publish to PyPI
-        if: ${{ startsWith(github.ref, 'refs/tags/') }}
+        if: ${{ startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish) }}
         uses: PyO3/maturin-action@v1
         env:
           MATURIN_PYPI_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
@@ -264,7 +301,7 @@ jobs:
           command: upload
           args: --non-interactive --skip-existing wheels-*/*
       - name: Publish to npm
-        if: ${{ startsWith(github.ref, 'refs/tags/') }}
+        if: ${{ startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish) }}
         uses: actions/setup-node@v6
         with:
           node-version: "24"
@@ -275,9 +312,10 @@ jobs:
           name: wasm-pkg
           path: crates/wasm/pkg
       - name: Run npm publish
-        if: ${{ startsWith(github.ref, 'refs/tags/') }}
+        if: ${{ startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish) }}
+        working-directory: crates/wasm/pkg
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          cd crates/wasm/pkg
-          npm publish --access public
+          npm_tag="$(node -p "require('./package.json').version.includes('-') ? 'rc' : 'latest'")"
+          npm publish --access public --tag "$npm_tag"

@@ -18,7 +18,6 @@
 // behavior claim and must stay adjacent to the Rust code that implements it.
 
 use crate::parser::utils::{Residue, RibbonResidueInfo, SecondaryStructure};
-use cosmolkit::ResidueCode;
 use glam::Vec3;
 
 type HBondMatrix = Vec<Vec<bool>>;
@@ -152,7 +151,14 @@ impl SecondaryStructureCalculator {
                 ca: residue.ca,
                 o: residue.o,
                 h: residue.h,
-                is_proline: residue.residue_type == ResidueCode::PRO,
+                is_proline: {
+                    let info = cosmolkit::residue_info(usize::from(residue.residue_type.as_u16()));
+                    // CK 0.5.0-rc.9 encodes modified parents using lowercase
+                    // one-letter codes. Use its table, not literal residue identity.
+                    // Replace with parent_standard_code() == Some(PRO) when CK
+                    // publishes that API; fasta_code() loses modified identities.
+                    info.is_amino_acid() && info.one_letter_code.eq_ignore_ascii_case(&'P')
+                },
             })
             .collect();
 
@@ -191,7 +197,7 @@ impl SecondaryStructureCalculator {
         // BEGIN CHIMERAX CPP FUNCTION: crates/core/src/parser/CompSS.cpp :: find_hbonds
         // ChimeraX✔️✔️ CompSS.cpp:220 records the residue count.
         // ChimeraX✔️✔️ CompSS.cpp:221 initializes a proline donor-suppression vector.
-        // ChimeraX❗✔️ CompSS.cpp:223-232 marks proline by chemistry; Rust uses parsed amino-acid identity.
+        // ChimeraX❗✔️ CompSS.cpp:223-232 marks proline by chemistry; Rust uses CK's tabulated proline family.
         // ChimeraX✔️✔️ CompSS.cpp:233 iterates each residue as an acceptor candidate.
         // ChimeraX✔️✔️ CompSS.cpp:234 loads acceptor coordinates for the current residue.
         // ChimeraX✔️❗ CompSS.cpp:235 searches N atoms within 10 A; Rust scans all later residues and filters by distance.
@@ -777,4 +783,107 @@ fn ranges_overlap(a: (usize, usize), b: (usize, usize)) -> bool {
 
 fn ordered_pair(a: usize, b: usize) -> (usize, usize) {
     if a <= b { (a, b) } else { (b, a) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cosmolkit::ResidueCode;
+
+    fn residue(code: ResidueCode) -> Residue {
+        Residue {
+            residue_type: code,
+            sns: 0,
+            c: Vec3::ZERO,
+            n: Vec3::new(-1.0, 0.0, 0.0),
+            ca: Vec3::new(-1.0, 1.0, 0.0),
+            o: Vec3::X,
+            h: None,
+            ss: None,
+        }
+    }
+
+    fn donor(code: ResidueCode) -> Residue {
+        Residue {
+            n: Vec3::new(3.0, 0.0, 0.0),
+            ca: Vec3::new(3.0, 1.0, 0.0),
+            h: Some(Vec3::new(2.0, 0.0, 0.0)),
+            ..residue(code)
+        }
+    }
+
+    #[test]
+    fn prepare_coords_uses_ck_proline_family_without_changing_identity() {
+        let calculator = SecondaryStructureCalculator::new();
+        for (code, expected) in [
+            (ResidueCode::PRO, true),
+            (ResidueCode::HYP, true),
+            (ResidueCode::DPR, true),
+            (ResidueCode::MET, false),
+            (ResidueCode::MSE, false),
+            (ResidueCode::SER, false),
+            (ResidueCode::SEP, false),
+            (ResidueCode::UNK, false),
+            (ResidueCode::UNKNOWN, false),
+            (ResidueCode::HOH, false),
+        ] {
+            let residues = [residue(code)];
+            let coords = calculator.prepare_coords(&residues);
+            assert_eq!(coords[0].is_proline, expected, "{code:?}");
+            assert_eq!(residues[0].residue_type, code);
+        }
+    }
+
+    #[test]
+    fn find_hbonds_suppresses_proline_family_donors_in_both_directions() {
+        let calculator = SecondaryStructureCalculator::new();
+        for (code, expected_bond) in [
+            (ResidueCode::PRO, false),
+            (ResidueCode::HYP, false),
+            (ResidueCode::DPR, false),
+            (ResidueCode::MET, true),
+            (ResidueCode::MSE, true),
+            (ResidueCode::SER, true),
+            (ResidueCode::SEP, true),
+        ] {
+            let mut residues = [
+                residue(ResidueCode::ALA),
+                residue(ResidueCode::ALA),
+                donor(code),
+            ];
+            for reverse in [false, true] {
+                if reverse {
+                    residues.reverse();
+                }
+                let coords = calculator.prepare_coords(&residues);
+                let (acceptor, donor) = if reverse { (2, 0) } else { (0, 2) };
+                // The fixed geometry supports a bond, so any rejection must be
+                // caused by donor-family suppression rather than the energy test.
+                assert!(hbonded_to(
+                    coords[acceptor],
+                    coords[donor],
+                    calculator.hbond_cutoff
+                ));
+                let hbonds = calculator.find_hbonds(&coords);
+                assert_eq!(
+                    hbonds[acceptor][donor], expected_bond,
+                    "{code:?}, reverse={reverse}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn find_hbonds_preserves_proline_family_acceptors() {
+        let calculator = SecondaryStructureCalculator::new();
+        for code in [ResidueCode::PRO, ResidueCode::HYP, ResidueCode::DPR] {
+            let residues = [
+                residue(code),
+                residue(ResidueCode::ALA),
+                donor(ResidueCode::ALA),
+            ];
+            let coords = calculator.prepare_coords(&residues);
+            assert!(calculator.find_hbonds(&coords)[0][2], "{code:?}");
+        }
+    }
 }

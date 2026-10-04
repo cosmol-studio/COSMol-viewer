@@ -3,6 +3,17 @@ use proc_macro2::Span;
 use quote::quote;
 use syn::{Ident, Result, Token, parse::Parse, parse::ParseStream, parse_macro_input};
 
+mod binding;
+
+/// Declare cross-language API metadata and compiler-checked Rust signatures.
+#[proc_macro]
+pub fn binding_contract(input: TokenStream) -> TokenStream {
+    match binding::expand(input.into()) {
+        Ok(tokens) => tokens.into(),
+        Err(error) => error.to_compile_error().into(),
+    }
+}
+
 struct ColorMethodsInput {
     py_name: Ident,
     _comma: Token![,],

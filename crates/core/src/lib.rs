@@ -19,6 +19,7 @@ use std::{
 };
 use thiserror::Error;
 
+pub mod binding_contract;
 pub mod parser;
 #[cfg(not(target_arch = "wasm32"))]
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -319,12 +320,6 @@ impl<L: Logger> eframe::App for App<L> {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(state) = &self.ipc {
-            // if let Some((arc_image, _handle)) = self.screenshot_result.take() {
-            //     let image = arc_image.as_ref();
-            //     let width = image.size[0] as u32;
-            //     let height = image.size[1] as u32;
-            //     let raw_rgba = color_image_to_rgba_bytes(image);
-            // }
             for _ in 0..4 {
                 let Some(sample) = state.rx.receive().unwrap() else {
                     break;

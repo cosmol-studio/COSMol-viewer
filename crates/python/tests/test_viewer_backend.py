@@ -76,7 +76,7 @@ END
 
     assert Viewer.get_environment() == {"colab": "Colab", "jupyter": "Jupyter"}[mode]
     viewer = Viewer.render(scene, 100.0, 100.0)
-    assert any("start_with_scene" in item.data for item in displays)
+    assert any("Viewer.renderNotebook(canvas.id" in item.data for item in displays)
     display_count = len(displays)
     output = io.StringIO()
     with contextlib.redirect_stdout(output):
@@ -101,7 +101,7 @@ END
     assert sum("app.dispatch(" in item.data for item in displays) == 4
 
     playing = Viewer.play(animation, 100.0, 100.0)
-    assert any("initiate_viewer_and_play" in item.data for item in displays)
+    assert any("Viewer.playNotebook(canvas.id" in item.data for item in displays)
     try:
         playing.keep_alive()
     except RuntimeError as error:
@@ -120,7 +120,13 @@ END
         if (match := re.search(r"await app\.dispatch\((.+)\);", item.data))
     ]
     assert len(payloads) == 5
-    verify_wasm_receiver(payloads)
+    startups = {}
+    for variable in ("scene_compressed", "animation_compressed"):
+        startups[variable] = [json.loads(match.group(1)) for item in displays
+                             if (match := re.search(rf"const {variable} = (.+);", item.data))]
+    assert len(startups["scene_compressed"]) == 1
+    assert len(startups["animation_compressed"]) == 1
+    verify_wasm_receiver(payloads, startups)
 
     def fail_display(item):
         raise ValueError("display failure")
@@ -134,10 +140,9 @@ END
         raise AssertionError("Notebook update swallowed the bridge error")
 
 
-def verify_wasm_receiver(payloads):
+def verify_wasm_receiver(payloads, startups):
     node = shutil.which("node")
-    if node is None:
-        return
+    assert node is not None, "Node is required to check actual generated WASM commands"
     pkg = Path(__file__).resolve().parents[2] / "wasm" / "pkg"
     script = """
 import assert from 'node:assert/strict';
@@ -145,19 +150,36 @@ import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 const mod = await import(pathToFileURL(process.argv[1]).href);
 await mod.default({ module_or_path: readFileSync(process.argv[2]) });
-const app = new mod.WebHandle();
-for (const payload of process.argv.slice(3)) {
+const app = mod.Viewer.new();
+const contract = JSON.parse(mod.bindingContractJson());
+assert.deepEqual(contract, JSON.parse(process.argv[3]));
+const wait = contract.find(entry => entry.semantic_id === 'Viewer.keep_alive');
+assert.deepEqual(wait.python.platforms, ['native']);
+assert.equal(wait.javascript.name, null);
+assert.ok(wait.javascript.unsupported_reason);
+assert.equal(typeof app.keepAlive, 'undefined');
+for (const payload of process.argv.slice(5)) {
     assert.throws(
         () => app.dispatch(payload),
         error => String(error).includes('before app initialization'),
     );
+}
+const startups = JSON.parse(process.argv[4]);
+for (const payload of startups.scene_compressed) {
+    await assert.rejects(mod.Viewer.renderNotebook('missing-canvas', payload),
+        error => String(error).includes('Canvas not found'));
+}
+for (const payload of startups.animation_compressed) {
+    await assert.rejects(mod.Viewer.playNotebook('missing-canvas', payload),
+        error => String(error).includes('Canvas not found'));
 }
 app.free();
 """
     result = subprocess.run(
         [node, "--input-type=module", "-e", script,
          str(pkg / "cosmol_viewer_wasm.js"),
-         str(pkg / "cosmol_viewer_wasm_bg.wasm"), *payloads],
+         str(pkg / "cosmol_viewer_wasm_bg.wasm"),
+         __import__("cosmol_viewer").binding_contract_json(), json.dumps(startups), *payloads],
         capture_output=True,
         text=True,
         encoding="utf-8",

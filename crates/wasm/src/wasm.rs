@@ -1,55 +1,28 @@
-use crate::protocol::ViewerCommand;
-use crate::utils::compress_data;
-#[cfg(target_arch = "wasm32")]
-use crate::utils::decompress_animation;
-use crate::utils::decompress_data;
-use cosmol_viewer_core::scene::Scene;
-#[cfg(target_arch = "wasm32")]
-use eframe::WebRunner;
-use {
-    cosmol_viewer_core::{App, utils::Logger},
-    std::sync::{Arc, Mutex},
-    wasm_bindgen::{JsValue, prelude::wasm_bindgen},
-    web_sys::HtmlCanvasElement,
-};
+//! Browser-specific canvas and eframe integration. No transport decoding lives here.
 
+use cosmol_viewer_core::utils::Logger;
+use wasm_bindgen::JsValue;
 #[derive(Clone, Copy)]
-pub struct WasmLogger;
-
+pub(crate) struct WasmLogger;
 impl Logger for WasmLogger {
     fn log(&self, message: impl std::fmt::Display) {
         web_sys::console::log_1(&JsValue::from_str(&message.to_string()));
     }
-
     fn warn(&self, message: impl std::fmt::Display) {
         web_sys::console::warn_1(&JsValue::from_str(&message.to_string()));
     }
-
     fn error(&self, message: impl std::fmt::Display) {
-        let msg = message.to_string();
-
-        // Send to console
-        web_sys::console::error_1(&JsValue::from_str(&msg));
-
-        // Show browser alert
+        let message = message.to_string();
+        web_sys::console::error_1(&JsValue::from_str(&message));
         if let Some(window) = web_sys::window() {
-            window.alert_with_message(&msg).ok();
+            window.alert_with_message(&message).ok();
         }
     }
 }
-
-#[wasm_bindgen]
-pub struct WebHandle {
-    #[cfg(target_arch = "wasm32")]
-    runner: WebRunner,
-    app: Arc<Mutex<Option<App<WasmLogger>>>>,
-    wasm_logger: WasmLogger,
-}
-
-// WebHandle and WebRunner still share the app for JavaScript updates and screenshots.
 #[cfg(target_arch = "wasm32")]
-struct WebApp(Arc<Mutex<Option<App<WasmLogger>>>>);
-
+pub(crate) struct WebApp(
+    pub std::sync::Arc<std::sync::Mutex<Option<cosmol_viewer_core::App<WasmLogger>>>>,
+);
 #[cfg(target_arch = "wasm32")]
 impl eframe::App for WebApp {
     fn ui(&mut self, ui: &mut eframe::egui::Ui, frame: &mut eframe::Frame) {
@@ -57,146 +30,64 @@ impl eframe::App for WebApp {
             app.ui(ui, frame);
         }
     }
-
     fn clear_color(&self, visuals: &eframe::egui::Visuals) -> [f32; 4] {
         self.0
             .lock()
             .unwrap()
             .as_ref()
             .map(|app| app.clear_color(visuals))
-            .unwrap_or([0.0, 0.0, 0.0, 0.0])
+            .unwrap_or([0.0; 4])
     }
 }
-
-#[wasm_bindgen]
-impl WebHandle {
-    #[wasm_bindgen(constructor)]
-    #[expect(clippy::new_without_default)]
-    pub fn new() -> Self {
-        #[cfg(target_arch = "wasm32")]
-        eframe::WebLogger::init(log::LevelFilter::Debug).ok();
-        Self {
-            #[cfg(target_arch = "wasm32")]
-            runner: WebRunner::new(),
-            app: Arc::new(Mutex::new(None)),
-            wasm_logger: WasmLogger,
-        }
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn canvas(id: &str) -> Result<web_sys::HtmlCanvasElement, String> {
+    use wasm_bindgen::JsCast;
+    web_sys::window()
+        .and_then(|window| window.document())
+        .and_then(|document| document.get_element_by_id(id))
+        .ok_or_else(|| format!("Canvas not found: {id}"))?
+        .dyn_into()
+        .map_err(|_| format!("Element is not a canvas: {id}"))
+}
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn create_canvas(width: f32, height: f32) -> Result<web_sys::HtmlCanvasElement, String> {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use wasm_bindgen::JsCast;
+    static NEXT_CANVAS: AtomicU32 = AtomicU32::new(0);
+    if !width.is_finite()
+        || !height.is_finite()
+        || width < 1.0
+        || height < 1.0
+        || width > u32::MAX as f32
+        || height > u32::MAX as f32
+    {
+        return Err("Canvas dimensions must be finite, positive pixel sizes".into());
     }
-
-    #[wasm_bindgen]
-    pub async fn start_with_scene(
-        &mut self,
-        _canvas: HtmlCanvasElement,
-        _scene_json: String,
-    ) -> Result<(), JsValue> {
-        #[cfg(target_arch = "wasm32")]
-        {
-            let scene: Scene =
-                decompress_data(&_scene_json).map_err(|e| JsValue::from_str(&e.to_string()))?;
-            let app = Arc::clone(&self.app);
-
-            let _ = self
-                .runner
-                .start(
-                    _canvas,
-                    eframe::WebOptions {
-                        ..Default::default()
-                    },
-                    Box::new(move |cc| {
-                        let mut guard = app.lock().unwrap();
-                        *guard = Some(App::new(cc, &scene, WasmLogger));
-                        Ok(Box::new(WebApp(app.clone())))
-                    }),
-                )
-                .await;
+    let document = web_sys::window()
+        .and_then(|window| window.document())
+        .ok_or("Browser document is unavailable")?;
+    let body = document.body().ok_or("Document body is unavailable")?;
+    let canvas: web_sys::HtmlCanvasElement = document
+        .create_element("canvas")
+        .map_err(|error| format!("Cannot create canvas: {error:?}"))?
+        .dyn_into()
+        .map_err(|_| "Cannot create an HTML canvas".to_string())?;
+    let id = loop {
+        let id = format!(
+            "cosmol-viewer-canvas-{}",
+            NEXT_CANVAS.fetch_add(1, Ordering::Relaxed)
+        );
+        if document.get_element_by_id(&id).is_none() {
+            break id;
         }
-        Ok(())
-    }
-
-    #[wasm_bindgen]
-    pub fn dispatch(&mut self, payload: String) -> Result<(), JsValue> {
-        let command: ViewerCommand =
-            decompress_data(&payload).map_err(|e| JsValue::from_str(&e.to_string()))?;
-
-        let mut app_guard = self.app.lock().unwrap();
-        if let Some(app) = &mut *app_guard {
-            match command {
-                ViewerCommand::UpdateScene { scene } => app.update_scene(&scene),
-                ViewerCommand::SetCameraParameterLogging { enabled } => {
-                    app.set_camera_parameter_logging(enabled);
-                }
-            }
-            app.ctx.request_repaint();
-        } else {
-            return Err(JsValue::from_str(
-                "Viewer command received before app initialization",
-            ));
-        }
-        Ok(())
-    }
-
-    #[wasm_bindgen]
-    pub async fn initiate_viewer_and_play(
-        &mut self,
-        _canvas: HtmlCanvasElement,
-        _animation_compressed: String,
-    ) -> Result<(), JsValue> {
-        #[cfg(target_arch = "wasm32")]
-        {
-            use cosmol_viewer_core::scene::Animation;
-
-            let payload = _animation_compressed.to_string();
-            let kb = payload.as_bytes().len() as f64 / 1024.0;
-            web_sys::console::log_1(&format!("Transmission size: {kb:.2} KB").into());
-
-            let animation: Animation = decompress_animation(&_animation_compressed)
-                .map_err(|e| JsValue::from_str(&e.to_string()))?;
-
-            let app = Arc::clone(&self.app);
-            let _ = self
-                .runner
-                .start(
-                    _canvas,
-                    eframe::WebOptions::default(),
-                    Box::new(move |cc| {
-                        let mut guard = app.lock().unwrap();
-                        *guard = Some(App::new_play(cc, animation, WasmLogger));
-                        Ok(Box::new(WebApp(app.clone())))
-                    }),
-                )
-                .await;
-        }
-        Ok(())
-    }
-
-    #[wasm_bindgen]
-    pub async fn take_screenshot(&self) -> String {
-        loop {
-            let mut app_guard = self.app.lock().unwrap();
-            if let Some(app) = &mut *app_guard {
-                println!("Taking screenshot");
-                app.take_screenshot();
-                app.ctx.request_repaint();
-                break;
-            }
-            drop(app_guard);
-            std::thread::sleep(std::time::Duration::from_millis(1000));
-        }
-        std::thread::sleep(std::time::Duration::from_millis(100));
-        loop {
-            let mut app_guard = self.app.lock().unwrap();
-            if let Some(app) = &mut *app_guard {
-                if let Some(image) = app.poll_screenshot() {
-                    let mut buf = Vec::new();
-                    self.wasm_logger.log(format!("image:{:?}", buf));
-                    image
-                        .write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png)
-                        .unwrap();
-                    return compress_data(&buf).unwrap();
-                }
-            }
-            drop(app_guard);
-            std::thread::sleep(std::time::Duration::from_millis(100));
-        }
-    }
+    };
+    canvas.set_id(&id);
+    canvas.set_width(width as u32);
+    canvas.set_height(height as u32);
+    canvas
+        .set_attribute("style", &format!("width:{width}px;height:{height}px;"))
+        .map_err(|error| format!("Cannot size canvas: {error:?}"))?;
+    body.append_child(&canvas)
+        .map_err(|error| format!("Cannot mount canvas: {error:?}"))?;
+    Ok(canvas)
 }
