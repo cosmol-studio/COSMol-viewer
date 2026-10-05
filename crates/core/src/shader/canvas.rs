@@ -1825,8 +1825,14 @@ impl CameraState {
         // Up vector also comes from quaternion
         let up = self.rotation * Vec3::Y;
 
-        let view = Mat4::look_at_rh(view_pos, view_pos + dir, up);
-        let projection = Mat4::perspective_rh(self.fov.to_radians(), aspect, 0.1, 2000.0);
+        let view = glam::camera::rh::view::look_at_mat4(view_pos, view_pos + dir, up);
+        // Preserve the old perspective_rh convention: right-handed, Y-up, Z in [0, 1].
+        let projection = glam::camera::rh::proj::directx::perspective(
+            self.fov.to_radians(),
+            aspect,
+            0.1,
+            2000.0,
+        );
 
         (view, projection, view_pos)
     }
@@ -2051,6 +2057,42 @@ mod tests {
         );
 
         assert!(camera.rotation.dot(reconstructed.rotation).abs() > 0.999_99);
+    }
+
+    #[test]
+    fn camera_matrices_preserve_right_handed_view_space() {
+        for camera in [
+            CameraState::default(),
+            CameraState::from_orbit_angles(135.0, -25.0, 12.0, 32.0, [1.0, 2.0, 3.0], 18.0),
+        ] {
+            let (view, _, eye) = camera.matrices(1.6);
+            assert!(view.transform_point3(eye).abs_diff_eq(Vec3::ZERO, 1e-4));
+            assert!(
+                view.transform_point3(camera.target)
+                    .abs_diff_eq(Vec3::new(0.0, 0.0, -camera.distance), 1e-4)
+            );
+            assert!(
+                view.transform_vector3(camera.rotation * Vec3::Y)
+                    .abs_diff_eq(Vec3::Y, 1e-4)
+            );
+        }
+    }
+
+    #[test]
+    fn camera_projection_preserves_zero_to_one_depth_and_aspect() {
+        let camera = CameraState::default();
+        let aspect = 1.6;
+        let (_, projection, _) = camera.matrices(aspect);
+        let near = projection.project_point3(Vec3::new(0.0, 0.0, -0.1));
+        let far = projection.project_point3(Vec3::new(0.0, 0.0, -2000.0));
+        assert!(near.abs_diff_eq(Vec3::ZERO, 1e-5));
+        assert!(far.abs_diff_eq(Vec3::Z, 1e-5));
+
+        let half_height = (camera.fov.to_radians() * 0.5).tan();
+        let top_right =
+            projection.project_point3(Vec3::new(aspect * half_height, half_height, -1.0));
+        assert!((top_right.x - 1.0).abs() < 1e-5);
+        assert!((top_right.y - 1.0).abs() < 1e-5);
     }
 
     #[test]

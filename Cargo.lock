@@ -549,26 +549,24 @@ dependencies = [
 
 [[package]]
 name = "compile-time"
-version = "0.3.8"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "33a054bcef24c012b062eb2ab9c9abeb70a8cd723f216ff0dcf25394eb02decd"
+checksum = "72196c3ad358618b77e0c8395b977786e89482d97761d28f4a6c719c28c2e1af"
 dependencies = [
  "compile-time-macros",
- "semver",
  "time",
 ]
 
 [[package]]
 name = "compile-time-macros"
-version = "0.3.8"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "431f53b5d65f3240c053885f0cef52e04df61b39c35f35ad8362e77899bf2894"
+checksum = "5c5319cbb7d6ce9f683e79149506f5786db2b785c8d2818987bbd38a751fc478"
 dependencies = [
  "macro-string",
  "proc-macro2",
  "quote",
  "rustc_version",
- "semver",
  "syn 3.0.6",
  "time",
 ]
@@ -1578,9 +1576,9 @@ dependencies = [
 
 [[package]]
 name = "glam"
-version = "0.33.12"
+version = "0.34.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37bfe73dc8ec21f54d181e5a60554327ec3f1c600c455a75ccbfc65d2106a6c4"
+checksum = "eece6af6447501f08d55ff4f6aed8a2753e4224e51899bccf3d5ae3d2de564b1"
 dependencies = [
  "bytemuck",
  "serde_core",

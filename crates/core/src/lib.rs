@@ -44,10 +44,11 @@ use image::{ImageBuffer, Rgba};
 
 #[derive(serde::Serialize, serde::Deserialize)]
 #[doc(hidden)]
-pub enum Request {
+// Native senders can borrow scenes during serialization; receivers own them.
+pub enum Request<SceneData = Scene> {
     InitializeScene {
         request_id: u64,
-        scene: Scene,
+        scene: SceneData,
         width: f32,
         height: f32,
     },
@@ -59,7 +60,7 @@ pub enum Request {
     },
     UpdateScene {
         request_id: u64,
-        scene: Scene,
+        scene: SceneData,
     },
     TakeScreenshot {
         request_id: u64,
@@ -560,7 +561,7 @@ impl NativeGuiViewer {
         self.transport
             .send_request(Request::InitializeScene {
                 request_id: 0,
-                scene: scene.clone(),
+                scene,
                 width,
                 height,
             })
@@ -636,13 +637,10 @@ impl NativeGuiViewer {
     }
 
     pub fn update(&self, scene: &Scene) {
-        self.apply_request(|request_id| Request::UpdateScene {
-            request_id,
-            scene: scene.clone(),
-        });
+        self.apply_request(|request_id| Request::UpdateScene { request_id, scene });
     }
 
-    fn apply_request(&self, request: impl FnOnce(u64) -> Request) {
+    fn apply_request<'a>(&self, request: impl FnOnce(u64) -> Request<&'a Scene>) {
         if !self.is_open() {
             return;
         }
@@ -720,7 +718,7 @@ impl NativeGuiViewer {
         let request_id = self.request_id.get() + 1;
         self.request_id.set(request_id);
         self.transport
-            .send_request(Request::TakeScreenshot { request_id })
+            .send_request(Request::<Scene>::TakeScreenshot { request_id })
             .unwrap();
 
         let start = Instant::now();
@@ -784,7 +782,7 @@ impl NativeGuiViewer {
         height: f32,
     ) -> Result<Self, RenderError> {
         self.transport
-            .send_request(Request::InitializeAnimation {
+            .send_request(Request::<Scene>::InitializeAnimation {
                 request_id: 1,
                 animation,
                 width,

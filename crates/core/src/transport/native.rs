@@ -100,7 +100,7 @@ impl ViewerTransport {
         }
     }
 
-    pub fn send_request(&self, request: Request) -> Result<()> {
+    pub fn send_request(&self, request: Request<impl Serialize>) -> Result<()> {
         // Publish first so a woken renderer always sees the queued request.
         send(&self.tx, request)?;
         self.repaint
@@ -210,6 +210,52 @@ mod tests {
     use super::*;
 
     #[test]
+    fn borrowed_scene_requests_keep_owned_wire_format() {
+        let scene = crate::scene::Scene {
+            scale: 2.5,
+            viewport: Some([800, 500]),
+            scene_center: [1.0, 2.0, 3.0],
+            ..Default::default()
+        };
+        let requests = [
+            (
+                Request::UpdateScene {
+                    request_id: 7,
+                    scene: &scene,
+                },
+                Request::UpdateScene {
+                    request_id: 7,
+                    scene: scene.clone(),
+                },
+            ),
+            (
+                Request::InitializeScene {
+                    request_id: 0,
+                    scene: &scene,
+                    width: 800.0,
+                    height: 500.0,
+                },
+                Request::InitializeScene {
+                    request_id: 0,
+                    scene: scene.clone(),
+                    width: 800.0,
+                    height: 500.0,
+                },
+            ),
+        ];
+        for (borrowed, owned) in requests {
+            let bytes = postcard::to_allocvec(&(VERSION, borrowed)).unwrap();
+            assert_eq!(bytes, postcard::to_allocvec(&(VERSION, &owned)).unwrap());
+            let (version, decoded): (&str, Request) = postcard::from_bytes(&bytes).unwrap();
+            assert_eq!(version, VERSION);
+            assert_eq!(
+                serde_json::to_value(decoded).unwrap(),
+                serde_json::to_value(owned).unwrap()
+            );
+        }
+    }
+
+    #[test]
     fn native_repaint_is_event_driven_and_handles_pre_attachment_requests() {
         let name = format!(
             "cosmol-repaint-test-{}-{}",
@@ -230,7 +276,7 @@ mod tests {
             let _ = wake_tx.send(());
         });
         viewer
-            .send_request(Request::ShowFps {
+            .send_request(Request::<crate::scene::Scene>::ShowFps {
                 request_id: 1,
                 enabled: true,
             })
@@ -254,7 +300,7 @@ mod tests {
             "An idle IPC listener must not request repainting"
         );
         viewer
-            .send_request(Request::ShowCameraParameters {
+            .send_request(Request::<crate::scene::Scene>::ShowCameraParameters {
                 request_id: 2,
                 enabled: true,
             })
@@ -283,15 +329,20 @@ mod tests {
         let renderer = RendererTransport::connect(&name);
         assert!(renderer.try_request().unwrap().is_none());
         assert!(viewer.try_feedback().unwrap().is_none());
+        let mut scene = crate::scene::Scene {
+            scale: 2.5,
+            ..Default::default()
+        };
         viewer
             .send_request(Request::UpdateScene {
                 request_id: 7,
-                scene: crate::scene::Scene::default(),
+                scene: &scene,
             })
             .unwrap();
+        scene.scale = 9.0;
         assert!(matches!(
             renderer.try_request().unwrap(),
-            Some(Request::UpdateScene { request_id: 7, .. })
+            Some(Request::UpdateScene { request_id: 7, scene }) if scene.scale == 2.5
         ));
         renderer
             .send_feedback(Feedback::Applied { request_id: 7 })
