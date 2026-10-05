@@ -15,13 +15,13 @@ Component-specific instructions:
 Preview and then apply a release bump:
 
 ```bash
-python tools/bump_version.py 0.5.0rc3 --dry-run
-python tools/bump_version.py 0.5.0rc3
+python tools/bump_version.py 0.5.0rc4 --dry-run
+python tools/bump_version.py 0.5.0rc4
 ```
 
 The script accepts `X.Y.Z`, Python-style `X.Y.ZrcN`, and Rust-style
-`X.Y.Z-rc.N`. For example, Python uses `0.5.0rc3` while Rust uses
-`0.5.0-rc.3` for the same prerelease.
+`X.Y.Z-rc.N`. For example, Python uses `0.5.0rc4` while Rust uses
+`0.5.0-rc.4` for the same prerelease.
 
 It updates the workspace package version, the three versioned internal workspace
 dependencies, and `crates/python/pyproject.toml`. The Rust facade, core,
