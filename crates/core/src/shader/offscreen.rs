@@ -1,32 +1,21 @@
-#[cfg(target_os = "linux")]
-use std::sync::OnceLock;
-use std::{ffi::CString, num::NonZeroU32, thread};
-#[cfg(target_os = "windows")]
-use std::{ffi::OsStr, num::NonZeroIsize, os::windows::ffi::OsStrExt};
-
 use eframe::glow::{self, HasContext as _};
-use egui_winit::winit::{
-    event_loop::EventLoop,
-    raw_window_handle::{
-        HasWindowHandle as _, RawDisplayHandle, RawWindowHandle, WindowsDisplayHandle,
-    },
-    window::{Window, WindowAttributes},
-};
 use glam::Vec4;
-use glutin::{
-    config::{Config, ConfigTemplateBuilder, GlConfig},
-    context::{ContextApi, ContextAttributesBuilder, GlProfile, Version},
-    display::{Display, DisplayApiPreference, GetGlDisplay as _, GlDisplay as _},
-    prelude::*,
-    surface::{PbufferSurface, Surface, SurfaceAttributesBuilder},
-};
-use glutin_winit::{ApiPreference, DisplayBuilder};
 use image::{ImageBuffer, Rgba};
+use surfman::{
+    Connection, ContextAttributeFlags, ContextAttributes, GLApi, GLVersion, SurfaceAccess,
+    SurfaceType,
+};
 
 use crate::{Scene, shader::CameraState};
 
 use super::canvas::Shader;
 
+surfman::declare_surfman!();
+
+/// Renders images synchronously on the calling thread, without a viewer window.
+///
+/// This creates a separate GL context. Callers that already have a GL context
+/// current on this thread must make their own context current again afterwards.
 pub struct ImageRenderer;
 
 #[derive(Clone, Copy, Debug)]
@@ -37,394 +26,22 @@ pub enum ImageBackground {
 
 struct OffscreenGl {
     gl: glow::Context,
-    _backend: OffscreenBackend,
+    _context: OffscreenContext,
 }
 
-enum OffscreenBackend {
-    Glutin {
-        _context: glutin::context::PossiblyCurrentContext,
-        _surface: Surface<PbufferSurface>,
-        _window: Option<Window>,
-        #[cfg(target_os = "windows")]
-        _win32_window: Option<HiddenWin32Window>,
-    },
-    #[cfg(target_os = "linux")]
-    RawEgl(RawEglContext),
+// Surfman requires explicit destruction, including when initialization returns early.
+// Keep the context and its device together so every error path releases both.
+struct OffscreenContext {
+    device: surfman::Device,
+    context: surfman::Context,
 }
 
-#[cfg(target_os = "linux")]
-struct RawEglContext {
-    egl: glutin_egl_sys::egl::Egl,
-    display: glutin_egl_sys::egl::types::EGLDisplay,
-    context: glutin_egl_sys::egl::types::EGLContext,
-    surface: glutin_egl_sys::egl::types::EGLSurface,
-}
-
-#[cfg(target_os = "linux")]
-fn raw_egl_library() -> Result<&'static libloading::Library, String> {
-    static EGL_LIBRARY: OnceLock<Result<libloading::Library, String>> = OnceLock::new();
-
-    match EGL_LIBRARY.get_or_init(|| {
-        unsafe {
-            libloading::Library::new("libEGL.so.1")
-                .or_else(|_| libloading::Library::new("libEGL.so"))
-        }
-        .map_err(|err| format!("could not load libEGL: {err}"))
-    }) {
-        Ok(library) => Ok(library),
-        Err(err) => Err(err.clone()),
-    }
-}
-
-#[cfg(target_os = "windows")]
-struct HiddenWin32Window {
-    hwnd: windows_sys::Win32::Foundation::HWND,
-    hinstance: windows_sys::Win32::Foundation::HINSTANCE,
-    class_name: Vec<u16>,
-}
-
-#[cfg(target_os = "windows")]
-unsafe impl Send for HiddenWin32Window {}
-
-#[cfg(target_os = "windows")]
-impl HiddenWin32Window {
-    fn new(class_name: &str) -> Result<Self, String> {
-        use windows_sys::Win32::{
-            Foundation::HWND,
-            System::LibraryLoader::GetModuleHandleW,
-            UI::WindowsAndMessaging::{
-                CS_OWNDC, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, RegisterClassW,
-                WNDCLASSW, WS_DISABLED, WS_OVERLAPPED,
-            },
-        };
-
-        let class_name = wide_null(class_name);
-        let title = wide_null("cosmol_viewer_offscreen_context");
-        let hinstance = unsafe { GetModuleHandleW(std::ptr::null()) };
-        if hinstance.is_null() {
-            return Err(format!(
-                "GetModuleHandleW failed: {}",
-                std::io::Error::last_os_error()
-            ));
-        }
-
-        let wc = WNDCLASSW {
-            style: CS_OWNDC,
-            lpfnWndProc: Some(DefWindowProcW),
-            hInstance: hinstance,
-            lpszClassName: class_name.as_ptr(),
-            ..Default::default()
-        };
-        let atom = unsafe { RegisterClassW(&wc) };
-        if atom == 0 {
-            let error = std::io::Error::last_os_error();
-            const ERROR_CLASS_ALREADY_EXISTS: i32 = 1410;
-            if error.raw_os_error() != Some(ERROR_CLASS_ALREADY_EXISTS) {
-                return Err(format!("RegisterClassW failed: {error}"));
-            }
-        }
-
-        let hwnd = unsafe {
-            CreateWindowExW(
-                0,
-                class_name.as_ptr(),
-                title.as_ptr(),
-                WS_OVERLAPPED | WS_DISABLED,
-                CW_USEDEFAULT,
-                CW_USEDEFAULT,
-                1,
-                1,
-                std::ptr::null_mut::<std::ffi::c_void>() as HWND,
-                std::ptr::null_mut(),
-                hinstance,
-                std::ptr::null(),
-            )
-        };
-        if hwnd.is_null() {
-            return Err(format!(
-                "CreateWindowExW failed: {}",
-                std::io::Error::last_os_error()
-            ));
-        }
-
-        Ok(Self {
-            hwnd,
-            hinstance,
-            class_name,
-        })
-    }
-
-    fn raw_window_handle(&self) -> Result<RawWindowHandle, String> {
-        use egui_winit::winit::raw_window_handle::Win32WindowHandle;
-
-        let hwnd = NonZeroIsize::new(self.hwnd as isize)
-            .ok_or_else(|| "hidden Win32 window has null HWND".to_owned())?;
-        let hinstance = NonZeroIsize::new(self.hinstance as isize);
-        let mut handle = Win32WindowHandle::new(hwnd);
-        handle.hinstance = hinstance;
-        Ok(RawWindowHandle::Win32(handle))
-    }
-}
-
-#[cfg(target_os = "windows")]
-impl Drop for HiddenWin32Window {
+impl Drop for OffscreenContext {
     fn drop(&mut self) {
-        use windows_sys::Win32::UI::WindowsAndMessaging::{DestroyWindow, UnregisterClassW};
-
-        unsafe {
-            let _ = DestroyWindow(self.hwnd);
-            let _ = UnregisterClassW(self.class_name.as_ptr(), self.hinstance);
+        if let Err(err) = self.device.destroy_context(&mut self.context) {
+            eprintln!("[WARN] Failed to destroy offscreen GL context: {err:?}");
         }
     }
-}
-
-#[cfg(target_os = "windows")]
-fn wide_null(value: &str) -> Vec<u16> {
-    OsStr::new(value).encode_wide().chain(Some(0)).collect()
-}
-
-#[cfg(target_os = "windows")]
-fn unique_wgl_class_name() -> String {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    static COUNTER: AtomicUsize = AtomicUsize::new(0);
-    let id = COUNTER.fetch_add(1, Ordering::Relaxed);
-    format!("cosmol_viewer_offscreen_wgl_{}_{}", std::process::id(), id)
-}
-
-#[cfg(target_os = "linux")]
-impl RawEglContext {
-    const PLATFORM_SURFACELESS_MESA: u32 = 0x31DD;
-
-    fn new(width: NonZeroU32, height: NonZeroU32) -> Result<(Self, glow::Context), String> {
-        use glutin_egl_sys::egl;
-        use std::ffi::c_void;
-
-        offscreen_trace("loading libEGL");
-        // EGL function pointers can outlive an individual context. Keep the
-        // loader resident for the process lifetime; unloading Mesa's libEGL
-        // immediately after eglTerminate can crash software-rendering workers.
-        let library = raw_egl_library()?;
-        let egl = egl::Egl::load_with(|symbol| unsafe {
-            library
-                .get::<*const c_void>(symbol.as_bytes())
-                .map(|address| *address)
-                .unwrap_or(std::ptr::null())
-        });
-
-        offscreen_trace("requesting surfaceless EGL display");
-        let display = unsafe {
-            if egl.GetPlatformDisplay.is_loaded() {
-                egl.GetPlatformDisplay(
-                    Self::PLATFORM_SURFACELESS_MESA,
-                    std::ptr::null_mut(),
-                    [egl::NONE as isize].as_ptr(),
-                )
-            } else if egl.GetPlatformDisplayEXT.is_loaded() {
-                egl.GetPlatformDisplayEXT(
-                    Self::PLATFORM_SURFACELESS_MESA,
-                    std::ptr::null_mut(),
-                    [egl::NONE as i32].as_ptr(),
-                )
-            } else {
-                return Err("libEGL exposes no platform-display function".to_owned());
-            }
-        };
-        if display == egl::NO_DISPLAY {
-            return Err(format!(
-                "eglGetPlatformDisplay(EGL_PLATFORM_SURFACELESS_MESA) failed: {}",
-                egl_error(&egl)
-            ));
-        }
-
-        let mut major = 0;
-        let mut minor = 0;
-        offscreen_trace("initializing surfaceless EGL display");
-        if unsafe { egl.Initialize(display, &mut major, &mut minor) } == egl::FALSE {
-            return Err(format!(
-                "eglInitialize(surfaceless) failed: {}",
-                egl_error(&egl)
-            ));
-        }
-
-        offscreen_trace("creating EGL context and pbuffer");
-        let current = unsafe {
-            Self::create_current_context(&egl, display, width, height, false).or_else(
-                |desktop_error| {
-                    Self::create_current_context(&egl, display, width, height, true).map_err(
-                        |gles_error| {
-                            format!("desktop OpenGL: {desktop_error}; OpenGL ES: {gles_error}")
-                        },
-                    )
-                },
-            )
-        };
-        let (context, surface) = match current {
-            Ok(current) => current,
-            Err(err) => {
-                unsafe {
-                    egl.Terminate(display);
-                }
-                return Err(err);
-            }
-        };
-
-        let gl = unsafe {
-            glow::Context::from_loader_function(|symbol| {
-                let symbol = CString::new(symbol).expect("GL symbol contained NUL");
-                egl.GetProcAddress(symbol.as_ptr()).cast()
-            })
-        };
-        offscreen_trace("created EGL context and loaded GL functions");
-
-        Ok((
-            Self {
-                egl,
-                display,
-                context,
-                surface,
-            },
-            gl,
-        ))
-    }
-
-    #[allow(unsafe_op_in_unsafe_fn)]
-    unsafe fn create_current_context(
-        egl: &glutin_egl_sys::egl::Egl,
-        display: glutin_egl_sys::egl::types::EGLDisplay,
-        width: NonZeroU32,
-        height: NonZeroU32,
-        use_gles: bool,
-    ) -> Result<
-        (
-            glutin_egl_sys::egl::types::EGLContext,
-            glutin_egl_sys::egl::types::EGLSurface,
-        ),
-        String,
-    > {
-        use glutin_egl_sys::egl;
-
-        let api = if use_gles {
-            egl::OPENGL_ES_API
-        } else {
-            egl::OPENGL_API
-        };
-        let renderable = if use_gles {
-            egl::OPENGL_ES3_BIT
-        } else {
-            egl::OPENGL_BIT
-        };
-        if egl.BindAPI(api) == egl::FALSE {
-            return Err(format!("eglBindAPI failed: {}", egl_error(egl)));
-        }
-
-        let config_attributes = [
-            egl::SURFACE_TYPE as i32,
-            egl::PBUFFER_BIT as i32,
-            egl::RENDERABLE_TYPE as i32,
-            renderable as i32,
-            egl::RED_SIZE as i32,
-            8,
-            egl::GREEN_SIZE as i32,
-            8,
-            egl::BLUE_SIZE as i32,
-            8,
-            egl::ALPHA_SIZE as i32,
-            8,
-            egl::DEPTH_SIZE as i32,
-            24,
-            egl::NONE as i32,
-        ];
-        let mut config = std::ptr::null();
-        let mut config_count = 0;
-        if egl.ChooseConfig(
-            display,
-            config_attributes.as_ptr(),
-            &mut config,
-            1,
-            &mut config_count,
-        ) == egl::FALSE
-        {
-            return Err(format!("eglChooseConfig failed: {}", egl_error(egl)));
-        }
-        if config_count == 0 || config.is_null() {
-            return Err("eglChooseConfig returned no matching pbuffer config".to_owned());
-        }
-
-        let surface_attributes = [
-            egl::WIDTH as i32,
-            width.get() as i32,
-            egl::HEIGHT as i32,
-            height.get() as i32,
-            egl::NONE as i32,
-        ];
-        let surface = egl.CreatePbufferSurface(display, config, surface_attributes.as_ptr());
-        if surface == egl::NO_SURFACE {
-            return Err(format!(
-                "eglCreatePbufferSurface failed: {}",
-                egl_error(egl)
-            ));
-        }
-
-        let context_attributes = if use_gles {
-            vec![egl::CONTEXT_CLIENT_VERSION as i32, 3, egl::NONE as i32]
-        } else {
-            vec![
-                egl::CONTEXT_MAJOR_VERSION as i32,
-                3,
-                egl::CONTEXT_MINOR_VERSION as i32,
-                3,
-                egl::CONTEXT_OPENGL_PROFILE_MASK as i32,
-                egl::CONTEXT_OPENGL_CORE_PROFILE_BIT as i32,
-                egl::NONE as i32,
-            ]
-        };
-        let context = egl.CreateContext(
-            display,
-            config,
-            egl::NO_CONTEXT,
-            context_attributes.as_ptr(),
-        );
-        if context == egl::NO_CONTEXT {
-            let err = egl_error(egl);
-            egl.DestroySurface(display, surface);
-            return Err(format!("eglCreateContext failed: {err}"));
-        }
-        if egl.MakeCurrent(display, surface, surface, context) == egl::FALSE {
-            let err = egl_error(egl);
-            egl.DestroyContext(display, context);
-            egl.DestroySurface(display, surface);
-            return Err(format!("eglMakeCurrent failed: {err}"));
-        }
-
-        Ok((context, surface))
-    }
-}
-
-#[cfg(target_os = "linux")]
-impl Drop for RawEglContext {
-    fn drop(&mut self) {
-        use glutin_egl_sys::egl;
-
-        unsafe {
-            offscreen_trace("releasing EGL context");
-            self.egl.MakeCurrent(
-                self.display,
-                egl::NO_SURFACE,
-                egl::NO_SURFACE,
-                egl::NO_CONTEXT,
-            );
-            self.egl.DestroyContext(self.display, self.context);
-            self.egl.DestroySurface(self.display, self.surface);
-            self.egl.Terminate(self.display);
-            offscreen_trace("released EGL context");
-        }
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn egl_error(egl: &glutin_egl_sys::egl::Egl) -> String {
-    format!("EGL error 0x{:04x}", unsafe { egl.GetError() })
 }
 
 impl ImageRenderer {
@@ -442,20 +59,15 @@ impl ImageRenderer {
         height: u32,
         background: ImageBackground,
     ) -> Result<ImageBuffer<Rgba<u8>, Vec<u8>>, String> {
-        let scene = scene.clone();
-        thread::Builder::new()
-            .name("cosmol_viewer_offscreen_render".to_owned())
-            .spawn(move || {
-                offscreen_trace("creating offscreen GL backend");
-                let mut gl = OffscreenGl::new()?;
-                offscreen_trace("created offscreen GL backend");
-                let image = gl.render(&scene, width, height, background)?;
-                offscreen_trace("completed offscreen render");
-                Ok(image)
-            })
-            .map_err(|err| format!("failed to start offscreen render thread: {err}"))?
-            .join()
-            .map_err(|_| "offscreen render thread panicked".to_owned())?
+        if width == 0 || height == 0 {
+            return Err("width and height must be non-zero".to_owned());
+        }
+        offscreen_trace("creating offscreen GL backend");
+        let mut gl = OffscreenGl::new()?;
+        offscreen_trace("created offscreen GL backend");
+        let image = gl.render(scene, width, height, background)?;
+        offscreen_trace("completed offscreen render");
+        Ok(image)
     }
 
     pub fn save_png(
@@ -502,244 +114,64 @@ impl ImageRenderer {
 
 impl OffscreenGl {
     fn new() -> Result<Self, String> {
-        let width = NonZeroU32::new(1).expect("1 is non-zero");
-        let height = NonZeroU32::new(1).expect("1 is non-zero");
-
-        #[cfg(target_os = "linux")]
-        if linux_is_displayless() {
-            return Self::new_headless_egl(width, height);
+        let connection = Connection::new()
+            .map_err(|err| format!("failed to open offscreen GL connection: {err:?}"))?;
+        let adapter = if software_gl_requested() {
+            connection.create_software_adapter()
+        } else {
+            connection.create_adapter()
         }
-
-        #[cfg(target_os = "windows")]
-        match Self::new_headless_wgl(width, height) {
-            Ok(gl) => return Ok(gl),
-            Err(err) => {
-                eprintln!(
-                    "[WARN] Headless WGL offscreen initialization failed; falling back to winit bootstrap: {err}"
-                );
-            }
-        }
-
-        Self::new_with_winit(width, height)
-    }
-
-    fn new_with_winit(width: NonZeroU32, height: NonZeroU32) -> Result<Self, String> {
-        let event_loop = offscreen_event_loop_builder().build().map_err(|err| {
-            format!("{err}. Offscreen rendering could not create its GL bootstrap event loop.")
-        })?;
-        let template = offscreen_config_template_builder(width, height);
-
-        let (window, gl_config) = DisplayBuilder::new()
-            .with_preference(ApiPreference::FallbackEgl)
-            .with_window_attributes(bootstrap_window_attributes())
-            .build(&event_loop, template, |configs| {
-                configs
-                    .max_by_key(|config| config.num_samples())
-                    .expect("no GL configs found")
-            })
-            .map_err(|err| err.to_string())?;
-
-        let raw_window_handle = window
-            .as_ref()
-            .and_then(|window| window.window_handle().ok())
-            .map(|handle| handle.as_raw());
-
-        Self::new_from_config(width, height, gl_config, raw_window_handle, window)
-    }
-
-    #[cfg(target_os = "windows")]
-    fn new_headless_wgl(width: NonZeroU32, height: NonZeroU32) -> Result<Self, String> {
-        let window = HiddenWin32Window::new(&unique_wgl_class_name())?;
-        let raw_window_handle = window.raw_window_handle()?;
-        let raw_display = RawDisplayHandle::Windows(WindowsDisplayHandle::new());
-        let gl_display = unsafe {
-            Display::new(
-                raw_display,
-                DisplayApiPreference::Wgl(Some(raw_window_handle)),
+        .map_err(|err| format!("failed to select offscreen GL adapter: {err:?}"))?;
+        let device = connection
+            .create_device(&adapter)
+            .map_err(|err| format!("failed to create offscreen GL device: {err:?}"))?;
+        let attributes = ContextAttributes {
+            version: match device.gl_api() {
+                GLApi::GL => GLVersion::new(3, 3),
+                GLApi::GLES => GLVersion::new(3, 0),
+            },
+            flags: ContextAttributeFlags::ALPHA | ContextAttributeFlags::DEPTH,
+        };
+        let descriptor = device
+            .create_context_descriptor(&attributes)
+            .map_err(|err| format!("failed to describe offscreen GL context: {err:?}"))?;
+        let context = device
+            .create_context(&descriptor, None)
+            .map_err(|err| format!("failed to create offscreen GL context: {err:?}"))?;
+        let mut context = OffscreenContext { device, context };
+        // Rendering uses our own FBOs; the small generic surface only bootstraps GL.
+        let surface = context
+            .device
+            .create_surface(
+                &context.context,
+                SurfaceAccess::GPUOnly,
+                SurfaceType::Generic {
+                    size: (1, 1).into(),
+                },
             )
-            .map_err(|err| err.to_string())?
-        };
-        let template = offscreen_config_template_builder(width, height).build();
-        let gl_config = unsafe {
-            gl_display
-                .find_configs(template)
-                .map_err(|err| err.to_string())?
-                .max_by_key(|config| config.num_samples())
-                .ok_or_else(|| "WGL display returned no GL configs".to_owned())?
-        };
-
-        Self::new_from_config_with_win32_window(
-            width,
-            height,
-            gl_config,
-            Some(raw_window_handle),
-            window,
-        )
-        .map_err(|err| format!("WGL display: {err}"))
-    }
-
-    #[cfg(target_os = "linux")]
-    fn new_headless_egl(width: NonZeroU32, height: NonZeroU32) -> Result<Self, String> {
-        use egui_winit::winit::raw_window_handle::{RawDisplayHandle, XlibDisplayHandle};
-        use glutin::{
-            api::egl::{device::Device, display::Display as EglDisplay},
-            display::{Display, DisplayApiPreference},
-        };
-
-        let mut errors = Vec::new();
-
-        match RawEglContext::new(width, height) {
-            Ok((context, gl)) => {
-                return Ok(Self {
-                    gl,
-                    _backend: OffscreenBackend::RawEgl(context),
-                });
-            }
-            Err(err) => errors.push(format!("EGL surfaceless display: {err}")),
+            .map_err(|err| format!("failed to create offscreen GL surface: {err:?}"))?;
+        if let Err((err, mut surface)) = context
+            .device
+            .bind_surface_to_context(&mut context.context, surface)
+        {
+            let _ = context
+                .device
+                .destroy_surface(&mut context.context, &mut surface);
+            return Err(format!("failed to bind offscreen GL surface: {err:?}"));
         }
-
-        match Device::query_devices() {
-            Ok(devices) => {
-                for device in devices {
-                    let egl_display = match unsafe { EglDisplay::with_device(&device, None) } {
-                        Ok(display) => display,
-                        Err(err) => {
-                            errors.push(format!("EGL device display: {err}"));
-                            continue;
-                        }
-                    };
-                    let gl_display = Display::Egl(egl_display);
-                    match Self::new_from_headless_display(
-                        width,
-                        height,
-                        gl_display,
-                        "EGL device display",
-                    ) {
-                        Ok(gl) => return Ok(gl),
-                        Err(err) => errors.push(err),
-                    }
-                }
-            }
-            Err(err) => errors.push(format!("{err}. Headless EGL device enumeration failed.")),
-        }
-
-        let raw_display = RawDisplayHandle::Xlib(XlibDisplayHandle::new(None, 0));
-        match unsafe { Display::new(raw_display, DisplayApiPreference::Egl) } {
-            Ok(gl_display) => {
-                match Self::new_from_headless_display(
-                    width,
-                    height,
-                    gl_display,
-                    "EGL default display",
-                ) {
-                    Ok(gl) => return Ok(gl),
-                    Err(err) => errors.push(err),
-                }
-            }
-            Err(err) => errors.push(format!("EGL default display: {err}")),
-        }
-
-        Err(format!(
-            "Headless EGL could not create an offscreen display{}",
-            if errors.is_empty() {
-                ".".to_owned()
-            } else {
-                format!(": {}", errors.join("; "))
-            }
-        ))
-    }
-
-    #[cfg(target_os = "linux")]
-    fn new_from_headless_display(
-        width: NonZeroU32,
-        height: NonZeroU32,
-        gl_display: glutin::display::Display,
-        label: &str,
-    ) -> Result<Self, String> {
-        let template = offscreen_config_template_builder(width, height).build();
-        let gl_config = match unsafe { gl_display.find_configs(template) } {
-            Ok(configs) => configs.max_by_key(|config| config.num_samples()),
-            Err(err) => return Err(format!("{label}: {err}")),
-        };
-
-        match gl_config {
-            Some(gl_config) => Self::new_from_config(width, height, gl_config, None, None)
-                .map_err(|err| format!("{label}: {err}")),
-            None => Err(format!("{label}: no GL configs found")),
-        }
-    }
-
-    fn new_from_config(
-        width: NonZeroU32,
-        height: NonZeroU32,
-        gl_config: Config,
-        raw_window_handle: Option<RawWindowHandle>,
-        window: Option<Window>,
-    ) -> Result<Self, String> {
-        let gl_display = gl_config.display();
-
-        let context_attributes = ContextAttributesBuilder::new()
-            .with_profile(GlProfile::Core)
-            .with_context_api(ContextApi::OpenGl(Some(Version::new(3, 3))))
-            .build(raw_window_handle);
-
-        let fallback_context_attributes = ContextAttributesBuilder::new()
-            .with_context_api(ContextApi::Gles(None))
-            .build(raw_window_handle);
-
-        let not_current = unsafe {
-            gl_display
-                .create_context(&gl_config, &context_attributes)
-                .or_else(|_| gl_display.create_context(&gl_config, &fallback_context_attributes))
-                .map_err(|err| err.to_string())?
-        };
-
-        let surface_attributes = SurfaceAttributesBuilder::<PbufferSurface>::new()
-            .with_single_buffer(true)
-            .build(width, height);
-        let surface = unsafe {
-            gl_display
-                .create_pbuffer_surface(&gl_config, &surface_attributes)
-                .map_err(|err| err.to_string())?
-        };
-        let context = not_current
-            .make_current(&surface)
-            .map_err(|err| err.to_string())?;
-
+        context
+            .device
+            .make_context_current(&context.context)
+            .map_err(|err| format!("failed to activate offscreen GL context: {err:?}"))?;
         let gl = unsafe {
             glow::Context::from_loader_function(|symbol| {
-                let symbol = CString::new(symbol).expect("GL symbol contained NUL");
-                gl_display.get_proc_address(&symbol)
+                context.device.get_proc_address(&context.context, symbol)
             })
         };
-
         Ok(Self {
             gl,
-            _backend: OffscreenBackend::Glutin {
-                _context: context,
-                _surface: surface,
-                _window: window,
-                #[cfg(target_os = "windows")]
-                _win32_window: None,
-            },
+            _context: context,
         })
-    }
-
-    #[cfg(target_os = "windows")]
-    fn new_from_config_with_win32_window(
-        width: NonZeroU32,
-        height: NonZeroU32,
-        gl_config: Config,
-        raw_window_handle: Option<RawWindowHandle>,
-        win32_window: HiddenWin32Window,
-    ) -> Result<Self, String> {
-        let mut gl = Self::new_from_config(width, height, gl_config, raw_window_handle, None)?;
-        match &mut gl._backend {
-            OffscreenBackend::Glutin { _win32_window, .. } => {
-                *_win32_window = Some(win32_window);
-            }
-        }
-        Ok(gl)
     }
 
     fn render(
@@ -1061,55 +493,6 @@ fn software_gl_renderer(gl: &glow::Context) -> bool {
         || renderer.contains("softpipe")
         || renderer.contains("swrast")
         || renderer.contains("software rasterizer")
-}
-
-fn offscreen_config_template_builder(
-    width: NonZeroU32,
-    height: NonZeroU32,
-) -> ConfigTemplateBuilder {
-    ConfigTemplateBuilder::new()
-        .with_depth_size(24)
-        .with_alpha_size(8)
-        .with_pbuffer_sizes(width, height)
-}
-
-fn offscreen_event_loop_builder() -> egui_winit::winit::event_loop::EventLoopBuilder<()> {
-    let mut builder = EventLoop::builder();
-    #[cfg(target_family = "windows")]
-    {
-        use egui_winit::winit::platform::windows::EventLoopBuilderExtWindows;
-        builder.with_any_thread(true);
-    }
-    #[cfg(feature = "wayland")]
-    {
-        use egui_winit::winit::platform::wayland::EventLoopBuilderExtWayland;
-        builder.with_any_thread(true);
-    }
-    #[cfg(feature = "x11")]
-    {
-        use egui_winit::winit::platform::x11::EventLoopBuilderExtX11;
-        builder.with_any_thread(true);
-    }
-    builder
-}
-
-#[cfg(target_os = "linux")]
-fn linux_is_displayless() -> bool {
-    std::env::var_os("WAYLAND_DISPLAY").is_none()
-        && std::env::var_os("WAYLAND_SOCKET").is_none()
-        && std::env::var_os("DISPLAY").is_none()
-}
-
-fn bootstrap_window_attributes() -> Option<WindowAttributes> {
-    if cfg!(target_os = "windows") {
-        Some(
-            WindowAttributes::default()
-                .with_visible(false)
-                .with_title("cosmol_viewer_offscreen_context"),
-        )
-    } else {
-        None
-    }
 }
 
 fn flip_rgba_rows(pixels: &mut [u8], width: usize, height: usize) {

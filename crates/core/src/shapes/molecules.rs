@@ -900,8 +900,8 @@ fn sdf_data_field<'a>(molecule: &'a CosmolkitMolecule, name: &str) -> Option<&'a
         .sdf_data_fields()
         .iter()
         .rev()
-        .find(|(field_name, _)| field_name.eq_ignore_ascii_case(name))
-        .map(|(_, value)| value.as_str())
+        .find(|(field_name, _)| field_name.as_bytes().eq_ignore_ascii_case(name.as_bytes()))
+        .map(|(_, value)| std::str::from_utf8(value.as_bytes()).unwrap_or(""))
 }
 
 fn parse_dummy_atom_weights(
@@ -998,6 +998,8 @@ impl TryFrom<CosmolkitMolecule> for Molecule {
 
 #[cfg(test)]
 mod tests {
+    use cosmolkit::PropertyText;
+
     use super::*;
 
     #[test]
@@ -1342,7 +1344,10 @@ $$$$
         .expect("COSMolKit should parse dummy point SDF");
         assert_eq!(
             record.data_fields(),
-            vec![("DUMMY_WEIGHTS".to_string(), "0.25\n0.75".to_string())]
+            &[(
+                PropertyText::from("DUMMY_WEIGHTS"),
+                PropertyText::from("0.25\n0.75"),
+            )]
         );
 
         let molecule = Molecule::from_sdf(sdf).expect("dummy point SDF should convert");
@@ -1400,8 +1405,14 @@ $$$$
         assert_eq!(
             record.data_fields(),
             vec![
-                ("DUMMY_ATOM_INDICES".to_string(), "3\n4".to_string()),
-                ("DUMMY_WEIGHTS".to_string(), "0.25\n0.75".to_string()),
+                (
+                    cosmolkit::PropertyText::from("DUMMY_ATOM_INDICES"),
+                    cosmolkit::PropertyText::from("3\n4"),
+                ),
+                (
+                    cosmolkit::PropertyText::from("DUMMY_WEIGHTS"),
+                    cosmolkit::PropertyText::from("0.25\n0.75"),
+                ),
             ]
         );
         let molecule = Molecule::from_sdf(sdf).expect("indexed dummy point SDF should convert");
