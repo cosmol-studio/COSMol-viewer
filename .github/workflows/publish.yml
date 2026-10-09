@@ -150,7 +150,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
-          args: --release --locked --out dist --find-interpreter --features x11,wayland
+          args: --release --locked --out dist --find-interpreter
           working-directory: crates/python
           sccache: true
           manylinux: auto
@@ -160,7 +160,7 @@ jobs:
             # Install the wrapper before any Cargo command can invoke it.
             uv tool install "sccache>=0.11.0"
             sccache --version
-            RUSTC_WRAPPER=sccache python3 build_native_viewer.py --release --target ${{ matrix.platform.rust_target }} --features x11,wayland
+            RUSTC_WRAPPER=sccache python3 build_native_viewer.py --release --target ${{ matrix.platform.rust_target }}
             sccache --show-stats
       - name: Upload wheels
         uses: actions/upload-artifact@v4

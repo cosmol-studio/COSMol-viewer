@@ -227,7 +227,7 @@ impl Molecule {
             sdf,
             &SdfReadParams {
                 sanitize: false,
-                remove_hydrogens: false,
+                remove_hs: false,
                 coordinate_mode: SdfCoordinateMode::Require3D,
                 ..Default::default()
             },
@@ -249,10 +249,12 @@ impl Molecule {
 
         let molecule = if molecule.conformers_3d().is_empty() && molecule.coordinates_2d().is_none()
         {
-            // molecule
-            //     .with_2d_coordinates()
-            //     .map_err(|e| ParseSdfError::ParsingError(e.to_string()))?
-            unimplemented!()
+            // molecule.with_2d_coordinates().map_err(|e| {
+            //     ParseSdfError::ParsingError(format!(
+            //         "COSMolKit failed to generate 2D coordinates: {e}"
+            //     ))
+            // })?
+            unreachable!()
         } else {
             molecule
         };
@@ -1079,6 +1081,8 @@ $$$$
     fn from_cosmolkit_molecule_generates_coords_and_kekulizes() {
         let cosmolkit_molecule =
             CosmolkitMolecule::from_smiles("c1ccccc1").expect("SMILES should parse");
+        assert!(cosmolkit_molecule.conformers_3d().is_empty());
+        assert!(cosmolkit_molecule.coordinates_2d().is_none());
         let molecule = Molecule::from_cosmolkit(&cosmolkit_molecule)
             .expect("COSMolKit molecule should convert");
 
@@ -1105,6 +1109,78 @@ $$$$
 
         assert_eq!(single_count, 3);
         assert_eq!(double_count, 3);
+        assert!(
+            molecule
+                .atom_posits
+                .iter()
+                .all(|p| p.is_finite() && p.z == 0.0)
+        );
+        // Generating display coordinates must not mutate the source CK value.
+        assert!(cosmolkit_molecule.conformers_3d().is_empty());
+        assert!(cosmolkit_molecule.coordinates_2d().is_none());
+        assert!(cosmolkit_molecule.bonds().iter().all(|b| b.is_aromatic()));
+    }
+
+    #[test]
+    fn from_cosmolkit_generates_coordinates_for_empty_single_and_disconnected_molecules() {
+        for smiles in ["", "C", "CCO", "[Na+].[Cl-]"] {
+            let source = CosmolkitMolecule::from_smiles(smiles).unwrap();
+            let molecule = Molecule::from_cosmolkit(&source)
+                .unwrap_or_else(|err| panic!("failed to convert {smiles:?}: {err}"));
+            assert_eq!(molecule.atom_posits.len(), source.atoms().len());
+            assert!(
+                molecule
+                    .atom_posits
+                    .iter()
+                    .all(|p| p.is_finite() && p.z == 0.0)
+            );
+            if molecule.atom_posits.len() > 1 {
+                assert!(
+                    molecule.atom_posits[1..]
+                        .iter()
+                        .any(|p| p.distance(molecule.atom_posits[0]) > 0.1)
+                );
+            }
+            assert!(source.conformers_3d().is_empty());
+            assert!(source.coordinates_2d().is_none());
+        }
+    }
+
+    #[test]
+    fn from_cosmolkit_preserves_existing_2d_coordinates_and_prefers_3d() {
+        let source = CosmolkitMolecule::from_smiles("CO").unwrap();
+        let coordinates_2d = vec![[10.0, 20.0], [30.0, 40.0]];
+        let coordinates_3d = vec![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]];
+        for include_3d in [false, true] {
+            let coordinates = ck::CoordinateBlock {
+                conformers_2d: vec![ck::Conformer2D::new(0, coordinates_2d.clone())],
+                conformers_3d: if include_3d {
+                    vec![ck::Conformer3D::new(0, coordinates_3d.clone(), true)]
+                } else {
+                    Vec::new()
+                },
+                ..Default::default()
+            };
+            let source = CosmolkitMolecule::from_parts(
+                source.topology().clone(),
+                coordinates,
+                source.properties().clone(),
+            )
+            .unwrap();
+            let molecule = Molecule::from_cosmolkit(&source).unwrap();
+            let expected = if include_3d {
+                vec![Vec3::new(1.0, 2.0, 3.0), Vec3::new(4.0, 5.0, 6.0)]
+            } else {
+                vec![Vec3::new(10.0, 20.0, 0.0), Vec3::new(30.0, 40.0, 0.0)]
+            };
+            assert_eq!(molecule.atom_posits, expected);
+            assert_eq!(source.coordinates_2d().unwrap(), coordinates_2d);
+            if include_3d {
+                assert_eq!(source.conformers_3d()[0].coordinates(), coordinates_3d);
+            } else {
+                assert!(source.conformers_3d().is_empty());
+            }
+        }
     }
 
     #[test]

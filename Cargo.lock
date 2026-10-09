@@ -581,6 +581,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "console"
+version = "0.16.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e96a4956774c13c126a8b5af4daa79384f4d826534c95a02d76afb39e2ab64e3"
+dependencies = [
+ "encode_unicode",
+ "libc",
+ "unicode-width",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "core-foundation"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -706,12 +718,16 @@ dependencies = [
 
 [[package]]
 name = "cosmolkit"
-version = "0.5.0-rc.15"
+version = "0.5.0-rc.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd32e925bfde62b6056726bc2dd96f739e182b8c21f32692934fc7bdd3830ff9"
+checksum = "e129a2568f82db93110f9ff13d1f4ae026f5f786053ed3178535d872206aa495"
 dependencies = [
+ "cosmolkit-alignment",
+ "cosmolkit-batch",
  "cosmolkit-bio",
+ "cosmolkit-conformer",
  "cosmolkit-core",
+ "cosmolkit-forcefields",
  "cosmolkit-io",
  "cosmolkit-macros",
  "cosmolkit-model",
@@ -720,10 +736,36 @@ dependencies = [
 ]
 
 [[package]]
-name = "cosmolkit-bio"
-version = "0.5.0-rc.15"
+name = "cosmolkit-alignment"
+version = "0.5.0-rc.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ca1878d0e9d8fc93842b27ae0289bdd80411fe350723c255d939a7af687a98e9"
+checksum = "438af6b5124f826a6b71415f3adea872cd0ee6ec22bc36867e8fd664a8cfb940"
+dependencies = [
+ "cosmolkit-core",
+ "cosmolkit-model",
+ "cosmolkit-search",
+ "cosmolkit-types",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "cosmolkit-batch"
+version = "0.5.0-rc.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8190e915250c454ea8c1d1d0fc7fb8fccc1ad1974512bb76ec0e1c24655b9b91"
+dependencies = [
+ "cosmolkit-io",
+ "cosmolkit-model",
+ "indicatif",
+ "rayon",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "cosmolkit-bio"
+version = "0.5.0-rc.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32f1e3c01cccd74c9fed77fabbdca54c39059de27dfebdfb99c76c5e2893594e"
 dependencies = [
  "cosmolkit-model",
  "cosmolkit-types",
@@ -731,10 +773,27 @@ dependencies = [
 ]
 
 [[package]]
-name = "cosmolkit-core"
-version = "0.5.0-rc.15"
+name = "cosmolkit-conformer"
+version = "0.5.0-rc.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "720504c2670b86ab6d4fe22b9f1564f9b36b082e5208a4f8f1e1d8389f18505a"
+checksum = "cc0a3ecb7b66794c784ef923f05d9fa3a1e022d988085c6ad94c5d015a15a5b5"
+dependencies = [
+ "cosmolkit-alignment",
+ "cosmolkit-core",
+ "cosmolkit-forcefields",
+ "cosmolkit-model",
+ "cosmolkit-search",
+ "libc",
+ "serde_json",
+ "thiserror 2.0.21",
+ "web-time",
+]
+
+[[package]]
+name = "cosmolkit-core"
+version = "0.5.0-rc.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a2136f2da805f977992447fe2a2d5a4e863dcd8a8e9a8d209f3b3796f6771869"
 dependencies = [
  "cosmolkit-model",
  "cosmolkit-ringdecomposer",
@@ -744,41 +803,35 @@ dependencies = [
 
 [[package]]
 name = "cosmolkit-cx"
-version = "0.5.0-rc.15"
+version = "0.5.0-rc.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3ee0664b5bccba7032856204a6310b8bf7fb13b9565d56f52995d8c8439b42c8"
+checksum = "60ab56ddb5bbae64e7eaa0412aaa5d050ed6d723f44b149f6d13ef47e9b19c85"
 dependencies = [
  "cosmolkit-core",
  "cosmolkit-model",
 ]
 
 [[package]]
-name = "cosmolkit-depict"
-version = "0.5.0-rc.15"
+name = "cosmolkit-forcefields"
+version = "0.5.0-rc.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "33c66f614c5ce1ba41b10fd3f940accfa3a0527384447afa606edd79dab9ff85"
+checksum = "d6e2ee6397e316cb20a2b7698d102b6e2d12131d2acc6978c3e1e7834d4e03b2"
 dependencies = [
  "cosmolkit-core",
  "cosmolkit-model",
  "cosmolkit-search",
- "glam",
- "resvg",
  "thiserror 2.0.21",
- "tiny-skia",
- "usvg",
 ]
 
 [[package]]
 name = "cosmolkit-io"
-version = "0.5.0-rc.15"
+version = "0.5.0-rc.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "785fa86120a80b968a61f90f46418b7e0bd9a34218d8be42e4b756a7cb922b15"
+checksum = "eac2d7f67ad7a45cb46c754e5d890ef30bf15a9a303e3c870ffd27cb3e1d3ec2"
 dependencies = [
  "cosmolkit-bio",
  "cosmolkit-core",
- "cosmolkit-depict",
  "cosmolkit-model",
- "cosmolkit-search",
  "cosmolkit-types",
  "musli",
  "postcard",
@@ -788,9 +841,9 @@ dependencies = [
 
 [[package]]
 name = "cosmolkit-macros"
-version = "0.5.0-rc.15"
+version = "0.5.0-rc.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "49755aeedd3313ed8b68b96b6f7acf3e43704257f60ccd20153f9bbc103043e5"
+checksum = "24f4ad385add41cae8b3fe9d9373fea3f4f0c024ddb8225c89f4c88fa8f86f8b"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -799,9 +852,9 @@ dependencies = [
 
 [[package]]
 name = "cosmolkit-model"
-version = "0.5.0-rc.15"
+version = "0.5.0-rc.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3b0b0e773082440b6be9c8173c94f83449da7c7b49f0079d709343e6e199016b"
+checksum = "d1197a34c7fd7fd35ec293cf80a87f9493d10ebd9e38a30c0e0ad9db0238526d"
 dependencies = [
  "cosmolkit-types",
  "serde_json",
@@ -810,22 +863,23 @@ dependencies = [
 
 [[package]]
 name = "cosmolkit-ringdecomposer"
-version = "0.5.0-rc.15"
+version = "0.5.0-rc.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dead33b29f8980310a97fe28e3f000ca89cad115ebd71bb69b1e8c838b00e805"
+checksum = "2e79ea1b79f50aa2a192d6f26179de6cd8b2de3ac698dc9fd490ed0dc40cf06f"
 dependencies = [
  "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "cosmolkit-search"
-version = "0.5.0-rc.15"
+version = "0.5.0-rc.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aff0dce7b73170ba49e87fa6a4fd36259844382078ed388b0a52b768b02e7f50"
+checksum = "9503077212a3876c577e55650d1efc3ad18d9272ab73bded17cfdeb8d7b48b08"
 dependencies = [
  "cosmolkit-core",
  "cosmolkit-cx",
  "cosmolkit-model",
+ "cosmolkit-smiles",
  "cosmolkit-types",
  "serde_json",
  "thiserror 2.0.21",
@@ -833,9 +887,9 @@ dependencies = [
 
 [[package]]
 name = "cosmolkit-smiles"
-version = "0.5.0-rc.15"
+version = "0.5.0-rc.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "720badb451e30fff59d86e5c52b469f8b23c35144a94b0cd7dec9943aedd0371"
+checksum = "10e5c0b778ba655516afc1aa608184bef1cef962c667007f56c08e6706004e66"
 dependencies = [
  "cosmolkit-core",
  "cosmolkit-cx",
@@ -846,9 +900,9 @@ dependencies = [
 
 [[package]]
 name = "cosmolkit-stereo"
-version = "0.5.0-rc.15"
+version = "0.5.0-rc.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "086580a78f1ca0ee16f0c362d3d1a94793c8da7250e7faf76c0409a7ca6713fa"
+checksum = "75e81d4b0f0bbe52a9ffdd2aaf6464097f5cd0ebe1fb331a22472f6895262277"
 dependencies = [
  "cosmolkit-core",
  "cosmolkit-model",
@@ -858,9 +912,9 @@ dependencies = [
 
 [[package]]
 name = "cosmolkit-types"
-version = "0.5.0-rc.15"
+version = "0.5.0-rc.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c5fd2bf70cb70360e93e584ea58b84cf1ddd80401e58a4ef4287c6d6c2de3ee"
+checksum = "705de45b52a994cd2b90f4369322507ca8f221a649e82c3d6ccae2963f9f273f"
 dependencies = [
  "serde",
  "thiserror 2.0.21",
@@ -1161,6 +1215,12 @@ name = "embedded-io"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "edd0f118536f44f5ccd48bcb8b111bdc3de888b58c74639dfb034a357d0f206d"
+
+[[package]]
+name = "encode_unicode"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "34aa73646ffb006b8f5147f3dc182bd4bcb190227ce861fc4a4844bf8e3cb2c0"
 
 [[package]]
 name = "enum-iterator"
@@ -2278,6 +2338,19 @@ checksum = "cc4e190f5d26ca7051642629da2c52fc03bde85a03197c99408dcd291734c855"
 dependencies = [
  "equivalent",
  "hashbrown 0.17.1",
+]
+
+[[package]]
+name = "indicatif"
+version = "0.18.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9433806cd6b4ec1aba79c021c7e4c58fb4c3b9977c085062e611ac929998fb0c"
+dependencies = [
+ "console",
+ "portable-atomic",
+ "unicode-width",
+ "unit-prefix",
+ "web-time",
 ]
 
 [[package]]
@@ -3656,7 +3729,7 @@ dependencies = [
  "serde",
  "serde_json",
  "time",
- "toml 1.1.7+spec-1.1.0",
+ "toml 1.1.8+spec-1.1.0",
 ]
 
 [[package]]
@@ -4675,9 +4748,9 @@ dependencies = [
 
 [[package]]
 name = "toml"
-version = "1.1.7+spec-1.1.0"
+version = "1.1.8+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7874cd34dd99040fc24e30923aa64a60a81ff3ddfe2b8129ccc84ba24949deed"
+checksum = "20489e00e4d8741d6be680764cc12e270655e375a20d1011e844a9c3379e678d"
 dependencies = [
  "indexmap",
  "serde_core",
@@ -4708,9 +4781,9 @@ dependencies = [
 
 [[package]]
 name = "toml_edit"
-version = "0.25.16+spec-1.1.0"
+version = "0.25.17+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "88f38f3af8bf71841c67a990f4e2b52143b2d0a1a994c72513ff4c14977fc722"
+checksum = "e3641d5bbb5349a79e1020a242d251efbc546ad8048d133958323ce9c40a9c9c"
 dependencies = [
  "indexmap",
  "toml_datetime 1.1.2+spec-1.1.0",
@@ -4720,9 +4793,9 @@ dependencies = [
 
 [[package]]
 name = "toml_parser"
-version = "1.1.4+spec-1.1.0"
+version = "1.1.5+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bed810ee007d8e7f9cf20b4774e7198142fa27186e0f805871da7f3c39eaf333"
+checksum = "baa693a8032d7e1cada7d0041e96126df243179ff061456783ac7f12bda4744c"
 dependencies = [
  "winnow 1.0.4",
 ]
@@ -4925,6 +4998,12 @@ dependencies = [
  "phf_codegen",
  "rand 0.8.8",
 ]
+
+[[package]]
+name = "unit-prefix"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "81e544489bf3d8ef66c953931f56617f423cd4b5494be343d9b9d3dda037b9a3"
 
 [[package]]
 name = "url"

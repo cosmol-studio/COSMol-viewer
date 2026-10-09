@@ -6,11 +6,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let base = cosmolkit::Molecule::from_smiles("CC(=O)Nc1ccc(O)cc1")?.sanitize()?;
 
-    let mut params = cosmolkit::EmbedParameters::etkdg_v3();
+    let mut params = cosmolkit::EmbedParams::etkdg_v3();
     params.random_seed = 0xF00D;
     params.num_threads = 1;
 
-    let cosmolkit_mol = base.with_3d_conformer_with_params(params)?;
+    let cosmolkit_mol = base.with_3d_conformer_with_params(&params)?;
     let mol = Molecule::from_cosmolkit(&cosmolkit_mol)?
         .centered()
         .enable_outline(0.04);

@@ -7,7 +7,7 @@ import shutil
 import subprocess
 
 
-def build_native_viewer(profile="dev", target=None, features=None):
+def build_native_viewer(profile="dev", target=None):
     root = Path(__file__).resolve().parent
     # maturin's sdist places pyproject.toml and these hooks at the workspace root.
     manifest = root.parent / "core" / "Cargo.toml"
@@ -20,8 +20,6 @@ def build_native_viewer(profile="dev", target=None, features=None):
     ]
     if target:
         command += ["--target", target]
-    if features:
-        command += ["--features", features]
     process = subprocess.Popen(command, cwd=root, stdout=subprocess.PIPE, text=True, encoding="utf-8")
     executable = None
     for line in process.stdout:
@@ -50,6 +48,5 @@ if __name__ == "__main__":
     parser.add_argument("--profile", default="dev")
     parser.add_argument("--release", action="store_true")
     parser.add_argument("--target")
-    parser.add_argument("--features")
     options = parser.parse_args()
-    build_native_viewer("release" if options.release else options.profile, options.target, options.features)
+    build_native_viewer("release" if options.release else options.profile, options.target)
