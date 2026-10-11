@@ -1,4 +1,8 @@
-use cosmol_viewer_core::{ImageBackground, ImageRenderer, scene::Scene, shapes::Molecule};
+use cosmol_viewer_core::{
+    ImageBackground, ImageRenderer,
+    scene::Scene,
+    shapes::{Molecule, Sphere},
+};
 
 #[test]
 fn rejects_zero_dimensions_before_initializing_gl() {
@@ -55,4 +59,126 @@ fn renders_repeatedly_with_background_alpha_and_png_encoding() {
     let decoded = image::load_from_memory(&png).unwrap();
     assert_eq!((decoded.width(), decoded.height()), (193, 127));
     assert_eq!(serde_json::to_value(&scene).unwrap(), original_scene);
+}
+
+fn translucent_scene() -> Scene {
+    let mut scene = Scene::new();
+    scene.set_depth_cue(false);
+    scene.add_shape(
+        Sphere::new([0.0, 0.0, 0.0], 0.9)
+            .color("#AABBE3")
+            .opacity(0.45),
+    );
+    scene.add_shape(Sphere::new([0.3, 0.0, -0.65], 0.55).color("#7292C7"));
+    scene
+}
+
+#[test]
+#[ignore = "requires an available OpenGL backend"]
+fn transparent_export_composites_like_direct_opaque_rendering() {
+    let scene = translucent_scene();
+    let transparent = ImageRenderer::render_with_background(
+        &scene,
+        193,
+        127,
+        ImageBackground::Color([0.0, 0.0, 0.0, 0.0]),
+    )
+    .unwrap();
+    assert!(
+        transparent
+            .pixels()
+            .any(|pixel| pixel[3] > 0 && pixel[3] < 255)
+    );
+    assert!(transparent.pixels().any(|pixel| pixel[3] == 255));
+    for background in [
+        [1.0, 1.0, 1.0, 1.0],
+        [0.0, 0.0, 0.0, 1.0],
+        [0.2, 0.6, 0.8, 1.0],
+    ] {
+        let direct = ImageRenderer::render_with_background(
+            &scene,
+            193,
+            127,
+            ImageBackground::Color(background),
+        )
+        .unwrap();
+        let mut max_error = 0.0_f32;
+        let mut total_error = 0.0;
+        for (transparent, opaque) in transparent.pixels().zip(direct.pixels()) {
+            assert_eq!(opaque[3], 255);
+            let alpha = f32::from(transparent[3]) / 255.0;
+            for channel in 0..3 {
+                let composited = f32::from(transparent[channel]) * alpha
+                    + background[channel] * 255.0 * (1.0 - alpha);
+                let error = (composited - f32::from(opaque[channel])).abs();
+                max_error = max_error.max(error);
+                total_error += error;
+            }
+        }
+        let mean_error = total_error / (193.0 * 127.0 * 3.0);
+        assert!(
+            max_error <= 3.0 && mean_error < 0.5,
+            "background={background:?}: max={max_error}, mean={mean_error}"
+        );
+    }
+    let bytes = ImageRenderer::render_png_bytes_with_background(
+        &scene,
+        193,
+        127,
+        ImageBackground::Color([0.0, 0.0, 0.0, 0.0]),
+    )
+    .unwrap();
+    assert_eq!(
+        image::load_from_memory(&bytes).unwrap().to_rgba8(),
+        transparent
+    );
+
+    // Scene-selected transparency must use the same output conversion.
+    let mut scene = scene;
+    scene.set_transparent_background(true);
+    assert_eq!(
+        ImageRenderer::render(&scene, 193, 127).unwrap(),
+        transparent
+    );
+}
+
+#[test]
+#[ignore = "requires an available OpenGL backend"]
+fn translucent_colored_background_is_premultiplied_before_blending() {
+    let scene = translucent_scene();
+    let background = [0.8, 0.4, 0.2, 0.5];
+    let transparent = ImageRenderer::render_with_background(
+        &scene,
+        193,
+        127,
+        ImageBackground::Color([0.0, 0.0, 0.0, 0.0]),
+    )
+    .unwrap();
+    let colored =
+        ImageRenderer::render_with_background(&scene, 193, 127, ImageBackground::Color(background))
+            .unwrap();
+    for (foreground, result) in transparent.pixels().zip(colored.pixels()) {
+        let foreground_alpha = f32::from(foreground[3]) / 255.0;
+        let result_alpha = f32::from(result[3]) / 255.0;
+        let expected_alpha = foreground_alpha + background[3] * (1.0 - foreground_alpha);
+        assert!((result_alpha - expected_alpha).abs() <= 2.0 / 255.0);
+        for channel in 0..3 {
+            let expected_premultiplied = f32::from(foreground[channel]) * foreground_alpha
+                + background[channel] * 255.0 * background[3] * (1.0 - foreground_alpha);
+            let actual_premultiplied = f32::from(result[channel]) * result_alpha;
+            assert!(
+                (actual_premultiplied - expected_premultiplied).abs() <= 3.0,
+                "foreground={foreground:?}, result={result:?}, channel={channel}"
+            );
+        }
+    }
+    // The caller's straight-alpha background color is recovered at empty pixels.
+    for (actual, expected) in colored
+        .get_pixel(0, 0)
+        .0
+        .into_iter()
+        .zip([204_i16, 102, 51, 128])
+    {
+        assert!((i16::from(actual) - expected).abs() <= 2);
+    }
 }

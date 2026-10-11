@@ -2,6 +2,8 @@ use cosmol_viewer::{Scene, Viewer, shapes::Molecule};
 use std::time::Instant;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    cosmol_viewer_core::register_render();
+
     let t_main = Instant::now();
 
     let mol = Molecule::from_sdf(include_str!("../examples/6fi1_ligand.sdf"))?.centered();

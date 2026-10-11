@@ -16,6 +16,7 @@ surfman::declare_surfman!();
 ///
 /// This creates a separate GL context. Callers that already have a GL context
 /// current on this thread must make their own context current again afterwards.
+/// Returned images use straight (unassociated) alpha, as required by PNG.
 pub struct ImageRenderer;
 
 #[derive(Clone, Copy, Debug)]
@@ -65,7 +66,10 @@ impl ImageRenderer {
         offscreen_trace("creating offscreen GL backend");
         let mut gl = OffscreenGl::new()?;
         offscreen_trace("created offscreen GL backend");
-        let image = gl.render(scene, width, height, background)?;
+        let mut image = gl.render(scene, width, height, background)?;
+        // GL blending and MSAA resolve produce premultiplied RGB. Convert only
+        // at this public image boundary, shared by raw images and both PNG APIs.
+        unpremultiply_rgba(image.as_mut());
         offscreen_trace("completed offscreen render");
         Ok(image)
     }
@@ -191,7 +195,10 @@ impl OffscreenGl {
             Shader::new(gl, scene).ok_or_else(|| "failed to initialize shader".to_owned())?;
         offscreen_trace("created scene shader");
         if let ImageBackground::Color(background_color) = background {
-            shader.set_background_color(Vec4::from_array(background_color));
+            let color = Vec4::from_array(background_color);
+            // The background pass writes without blending, so it must seed the
+            // same premultiplied representation used by subsequent GL blending.
+            shader.set_background_color((color.truncate() * color.w).extend(color.w));
         }
         let camera_state = scene.camera_state.unwrap_or_else(CameraState::default);
         let aspect_ratio = width as f32 / height as f32;
@@ -503,5 +510,39 @@ fn flip_rgba_rows(pixels: &mut [u8], width: usize, height: usize) {
         for x in 0..stride {
             pixels.swap(top + x, bottom + x);
         }
+    }
+}
+
+fn unpremultiply_rgba(pixels: &mut [u8]) {
+    for pixel in pixels.chunks_exact_mut(4) {
+        let alpha = u32::from(pixel[3]);
+        match alpha {
+            0 => pixel[..3].fill(0),
+            255 => {}
+            _ => {
+                for channel in &mut pixel[..3] {
+                    *channel = ((u32::from(*channel) * 255 + alpha / 2) / alpha).min(255) as u8;
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unpremultiply_rgba;
+
+    #[test]
+    fn straight_alpha_preserves_opaque_pixels_and_clears_invisible_rgb() {
+        let mut pixels = [20, 100, 240, 255, 70, 80, 90, 0];
+        unpremultiply_rgba(&mut pixels);
+        assert_eq!(pixels, [20, 100, 240, 255, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn straight_alpha_restores_rgb_with_rounding_and_saturation() {
+        let mut pixels = [64, 32, 16, 128, 1, 0, 1, 1, 129, 40, 0, 128];
+        unpremultiply_rgba(&mut pixels);
+        assert_eq!(pixels, [128, 64, 32, 128, 255, 0, 255, 1, 255, 80, 0, 128]);
     }
 }
