@@ -10,7 +10,7 @@ import tomllib
 
 
 ROOT = Path(__file__).resolve().parents[1]
-FILES = ("Cargo.toml", "crates/python/pyproject.toml")
+FILES = ("Cargo.toml", "python/pyproject.toml")
 INTERNAL_DEPENDENCIES = {
     "cosmol_viewer": "cosmol_viewer",
     "cosmol_viewer_core": "crates/core",
@@ -20,15 +20,18 @@ LOCK_REFRESH = ["cargo", "update", "--workspace"]
 
 
 def release_versions(version):
-    """Accept X.Y.Z, X.Y.ZrcN, or X.Y.Z-rc.N; return Cargo and Python forms."""
+    """Accept stable, RC, or dev versions in Cargo/Python notation."""
     number = r"(?:0|[1-9][0-9]*)"
     match = re.fullmatch(
-        rf"(?P<base>{number}\.{number}\.{number})(?:(?:rc|-rc\.)(?P<rc>{number}))?",
+        rf"(?P<base>{number}\.{number}\.{number})"
+        rf"(?:(?:rc|-rc\.)(?P<rc>{number})|(?:\.dev|-dev\.)(?P<dev>{number}))?",
         version,
     )
     if match is None:
-        raise ValueError("expected X.Y.Z, X.Y.ZrcN, or X.Y.Z-rc.N")
-    base, rc = match.group("base", "rc")
+        raise ValueError("expected X.Y.Z, X.Y.ZrcN, X.Y.Z-rc.N, X.Y.Z.devN, or X.Y.Z-dev.N")
+    base, rc, dev = match.group("base", "rc", "dev")
+    if dev is not None:
+        return f"{base}-dev.{dev}", f"{base}.dev{dev}"
     if rc is None:
         return base, base
     return f"{base}-rc.{rc}", f"{base}rc{rc}"
@@ -85,8 +88,8 @@ def prepare_updates(original, version):
     for name in INTERNAL_DEPENDENCIES:
         text = update_field(text, "workspace.dependencies", name, rust_version, dependency=True)
     updated["Cargo.toml"] = text
-    updated["crates/python/pyproject.toml"] = update_field(
-        original["crates/python/pyproject.toml"], "project", "version", python_version
+    updated["python/pyproject.toml"] = update_field(
+        original["python/pyproject.toml"], "project", "version", python_version
     )
     return updated
 
@@ -101,7 +104,7 @@ def read_release_files(root):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("version", help="for example: 0.5.0rc1 or 0.5.0-rc.1")
+    parser.add_argument("version", help="stable, RC, or dev; e.g. 0.6.0-dev.1 or 0.6.0.dev1")
     parser.add_argument("--dry-run", action="store_true", help="show edits without writing or invoking Cargo")
     args = parser.parse_args(argv)
     try:

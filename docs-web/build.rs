@@ -62,8 +62,8 @@ fn pages() -> Vec<&'static str> {
 }
 
 fn main() {
-    println!("cargo:rerun-if-changed=../crates/python/docs/source");
-    println!("cargo:rerun-if-changed=../crates/python/docs/_build/html");
+    println!("cargo:rerun-if-changed=../python/docs/source");
+    println!("cargo:rerun-if-changed=../python/docs/_build/html");
     println!("cargo:rerun-if-changed=scripts/extract_sphinx_metadata.py");
     println!("cargo:rerun-if-changed=scripts/html_metadata.py");
     println!("cargo:rerun-if-changed=routes.toml");
@@ -78,8 +78,8 @@ fn main() {
     let manifest_dir =
         PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("manifest directory"));
     let repository_root = manifest_dir.parent().expect("repository root");
-    let docs_source = repository_root.join("crates/python/docs/source");
-    let docs_output = repository_root.join("crates/python/docs/_build/html");
+    let docs_source = repository_root.join("python/docs/source");
+    let docs_output = repository_root.join("python/docs/_build/html");
 
     if !docs_output.join("index.html").is_file() {
         build_sphinx(&repository_root, &docs_source, &docs_output);

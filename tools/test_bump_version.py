@@ -30,13 +30,27 @@ class ReleaseBumpTests(unittest.TestCase):
         self.assertEqual(manifest["workspace"]["package"]["version"], "0.5.0-rc.1")
         for name in bump.INTERNAL_DEPENDENCIES:
             self.assertEqual(manifest["workspace"]["dependencies"][name]["version"], "0.5.0-rc.1")
-        self.assertEqual(tomllib.loads(python["crates/python/pyproject.toml"])["project"]["version"], "0.5.0rc1")
+        self.assertEqual(tomllib.loads(python["python/pyproject.toml"])["project"]["version"], "0.5.0rc1")
 
     def test_stable_release_and_idempotence(self):
         updated = bump.prepare_updates(self.original, "0.5.0")
         self.assertEqual(tomllib.loads(updated["Cargo.toml"])["workspace"]["package"]["version"], "0.5.0")
-        self.assertEqual(tomllib.loads(updated["crates/python/pyproject.toml"])["project"]["version"], "0.5.0")
+        self.assertEqual(tomllib.loads(updated["python/pyproject.toml"])["project"]["version"], "0.5.0")
         self.assertEqual(bump.prepare_updates(updated, "0.5.0"), updated)
+
+    def test_python_and_rust_dev_forms_are_equivalent_and_idempotent(self):
+        for number in (0, 1, 12):
+            with self.subTest(number=number):
+                rust_version = f"0.6.0-dev.{number}"
+                python_version = f"0.6.0.dev{number}"
+                updated = bump.prepare_updates(self.original, rust_version)
+                self.assertEqual(updated, bump.prepare_updates(self.original, python_version))
+                manifest = tomllib.loads(updated["Cargo.toml"])
+                self.assertEqual(manifest["workspace"]["package"]["version"], rust_version)
+                for name in bump.INTERNAL_DEPENDENCIES:
+                    self.assertEqual(manifest["workspace"]["dependencies"][name]["version"], rust_version)
+                self.assertEqual(tomllib.loads(updated["python/pyproject.toml"])["project"]["version"], python_version)
+                self.assertEqual(bump.prepare_updates(updated, python_version), updated)
 
     def test_external_dependencies_and_other_fields_are_unchanged(self):
         updated = bump.prepare_updates(self.original, "0.5.1rc10")
@@ -46,13 +60,13 @@ class ReleaseBumpTests(unittest.TestCase):
         for name in bump.INTERNAL_DEPENDENCIES:
             expected["workspace"]["dependencies"][name]["version"] = "0.5.1-rc.10"
         self.assertEqual(actual, expected)
-        expected = tomllib.loads(self.original["crates/python/pyproject.toml"])
+        expected = tomllib.loads(self.original["python/pyproject.toml"])
         expected["project"]["version"] = "0.5.1rc10"
-        self.assertEqual(tomllib.loads(updated["crates/python/pyproject.toml"]), expected)
+        self.assertEqual(tomllib.loads(updated["python/pyproject.toml"]), expected)
         self.assertEqual(set(updated), set(bump.FILES))
 
     def test_release_crates_inherit_the_workspace_version(self):
-        for member in ("cosmol_viewer", "crates/core", "crates/derive", "crates/python", "crates/wasm"):
+        for member in ("cosmol_viewer", "crates/core", "crates/derive", "python", "wasm"):
             with self.subTest(member=member):
                 manifest = tomllib.loads((ROOT / member / "Cargo.toml").read_text(encoding="utf-8"))
                 self.assertEqual(manifest["package"]["version"], {"workspace": True})
@@ -87,8 +101,8 @@ class ReleaseBumpTests(unittest.TestCase):
             with self.subTest(broken=broken):
                 original = self.original.copy()
                 if broken == "missing":
-                    version = tomllib.loads(original["crates/python/pyproject.toml"])["project"]["version"]
-                    original["crates/python/pyproject.toml"] = original["crates/python/pyproject.toml"].replace(f'version = "{version}"', "", 1)
+                    version = tomllib.loads(original["python/pyproject.toml"])["project"]["version"]
+                    original["python/pyproject.toml"] = original["python/pyproject.toml"].replace(f'version = "{version}"', "", 1)
                 else:
                     original["Cargo.toml"] = original["Cargo.toml"].replace('path = "crates/core"', 'path = "unexpected"')
                 with self.assertRaises(ValueError):
@@ -96,17 +110,20 @@ class ReleaseBumpTests(unittest.TestCase):
         self.assertEqual(self.original, bump.read_release_files(ROOT))
 
     def test_invalid_versions_are_rejected(self):
-        for version in ("0.5", "0.5.0rc", "0.5.0rc01", "0.5.0-rc.01", "00.5.0", "0.5.0-beta.1", "0.5.0+build", "０.5.0", "0.5.0rc1\n"):
+        for version in ("0.5", "0.5.0rc", "0.5.0rc01", "0.5.0-rc.01", "00.5.0", "0.5.0-beta.1", "0.5.0+build", "０.5.0", "0.5.0rc1\n",
+                        "0.6.0dev1", "0.6.0.dev", "0.6.0-dev.", "0.6.0.dev01", "0.6.0-dev.01", "0.6.0rc1.dev1", "0.6.0-dev.1\n"):
             with self.subTest(version=version), self.assertRaises(ValueError):
                 bump.release_versions(version)
 
     def test_cli_dry_run_and_invalid_input_never_write(self):
         path = ROOT / "tools/bump_version.py"
-        result = subprocess.run([sys.executable, str(path), "0.99.0rc1", "--dry-run"], capture_output=True, text=True, encoding="utf-8")
+        result = subprocess.run([sys.executable, str(path), "0.99.0-dev.1", "--dry-run"], capture_output=True, text=True, encoding="utf-8")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("--- Cargo.toml", result.stdout)
-        self.assertIn("--- crates/python/pyproject.toml", result.stdout)
+        self.assertIn("--- python/pyproject.toml", result.stdout)
         self.assertIn("Would then run cargo update --workspace.", result.stdout)
+        self.assertIn('version = "0.99.0-dev.1"', result.stdout)
+        self.assertIn('version = "0.99.0.dev1"', result.stdout)
         result = subprocess.run([sys.executable, str(path), "0.5"], capture_output=True, text=True)
         self.assertEqual(result.returncode, 2)
         self.assertEqual(self.original, bump.read_release_files(ROOT))

@@ -64,7 +64,7 @@ jobs:
           version = os.environ["RELEASE_VERSION"]
           workspace = tomllib.loads(Path("Cargo.toml").read_text(encoding="utf-8"))
           python_project = tomllib.loads(
-              Path("crates/python/pyproject.toml").read_text(encoding="utf-8")
+              Path("python/pyproject.toml").read_text(encoding="utf-8")
           )
 
           workspace_version = workspace["workspace"]["package"]["version"]

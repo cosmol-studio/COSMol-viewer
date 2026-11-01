@@ -51,7 +51,7 @@ jobs:
 
           with open("Cargo.toml", "rb") as manifest:
               rust_version = tomllib.load(manifest)["workspace"]["package"]["version"]
-          with open("crates/python/pyproject.toml", "rb") as manifest:
+          with open("python/pyproject.toml", "rb") as manifest:
               python_version = tomllib.load(manifest)["project"]["version"]
           candidate = re.fullmatch(r"(\d+\.\d+\.\d+)-rc\.(\d+)", rust_version)
           allowed = candidate is not None and python_version == f"{candidate[1]}rc{candidate[2]}"
@@ -67,12 +67,10 @@ jobs:
         run: |
           npm install --prefix target/browser-check --no-save playwright@1.58.2
           target/browser-check/node_modules/.bin/playwright install --with-deps chromium
-      - name: Build and check Alef browser bindings
+      - name: Build and check official browser bindings
         run: |
           cargo binstall -y wasm-pack --force
-          cargo binstall -y alef --version 0.103.12 --force
-          python -m unittest discover -s crates/wasm/tools/wasm_binding -p 'test_*.py' -v
-          python crates/wasm/tools/wasm_binding/build.py --check --browser-check
+          python wasm/build.py --release --check --browser-check
       - name: Check Rust binding contracts
         run: |
           cargo test -p cosmol_viewer_derive
@@ -80,27 +78,26 @@ jobs:
           cargo test -p cosmol_viewer_core --doc binding_contract
           cargo test -p cosmol_viewer_wasm --no-default-features --test binding_contract
           cargo test -p cosmol_viewer_wasm --no-default-features --test scene
-      - name: build pyi
-        working-directory: crates/python
+      - name: Build and check official Python projections
         run: |
-          cargo run --bin stub_gen --no-default-features --features stubgen
+          python -m pip install "maturin==1.15.0" "basedpyright==1.40.2" cosmolkit
+          python python/build.py --install-extractor --check
       - name: Check Python API and Notebook command transport
         run: |
-          python -m pip install maturin
-          maturin build --manifest-path crates/python/Cargo.toml --out target/contract-wheels
+          maturin build --generate-stubs --manifest-path python/Cargo.toml --out target/contract-wheels
           python -m pip install target/contract-wheels/*.whl
-          python crates/python/tests/test_binding_surface.py
-          python crates/python/tests/test_viewer_backend.py
+          python python/tests/test_binding_surface.py
+          python python/tests/test_viewer_backend.py
       - name: Upload wasm pkg
         uses: actions/upload-artifact@v4
         with:
           name: wasm-pkg
-          path: ./crates/wasm/pkg
+          path: ./wasm/pkg
       - name: Upload cosmol_viewer.pyi
         uses: actions/upload-artifact@v4
         with:
           name: pyi
-          path: ./crates/python/cosmol_viewer.pyi
+          path: ./python/cosmol_viewer.pyi
 
   linux:
     needs: wasm
@@ -140,18 +137,18 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: wasm-pkg
-          path: crates/wasm/pkg
+          path: wasm/pkg
       - name: Download pyi
         uses: actions/download-artifact@v4
         with:
           name: pyi
-          path: ./crates/python/
+          path: ./python/
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
-          args: --release --locked --out dist --find-interpreter
-          working-directory: crates/python
+          args: --release --generate-stubs --locked --out dist --find-interpreter
+          working-directory: python
           sccache: true
           manylinux: auto
           # Share the restored host cache with Cargo inside manylinux.
@@ -166,7 +163,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: wheels-linux-${{ matrix.platform.target }}
-          path: crates/python/dist
+          path: python/dist
 
   windows:
     needs: wasm
@@ -199,30 +196,30 @@ jobs:
           cache-bin: false
           cache-on-failure: true
       - name: Build native renderer
-        run: python crates/python/build_native_viewer.py --release --target ${{ matrix.platform.rust_target }}
+        run: python python/build_native_viewer.py --release --target ${{ matrix.platform.rust_target }}
       - name: Download wasm pkg
         uses: actions/download-artifact@v4
         with:
           name: wasm-pkg
-          path: crates/wasm/pkg
+          path: wasm/pkg
       - name: Download pyi
         uses: actions/download-artifact@v4
         with:
           name: pyi
-          path: ./crates/python/
+          path: ./python/
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
-          args: --release --out dist --find-interpreter
-          working-directory: crates/python
+          args: --release --generate-stubs --out dist --find-interpreter
+          working-directory: python
           # Cargo downloads and build artifacts are cached by rust-cache.
           sccache: false
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
           name: wheels-windows-${{ matrix.platform.target }}
-          path: crates/python/dist
+          path: python/dist
 
   macos:
     needs: wasm
@@ -254,30 +251,30 @@ jobs:
           cache-bin: false
           cache-on-failure: true
       - name: Build native renderer
-        run: python crates/python/build_native_viewer.py --release --target ${{ matrix.platform.rust_target }}
+        run: python python/build_native_viewer.py --release --target ${{ matrix.platform.rust_target }}
       - name: Download wasm pkg
         uses: actions/download-artifact@v4
         with:
           name: wasm-pkg
-          path: crates/wasm/pkg
+          path: wasm/pkg
       - name: Download pyi
         uses: actions/download-artifact@v4
         with:
           name: pyi
-          path: ./crates/python/
+          path: ./python/
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
-          args: --release --out dist --find-interpreter
-          working-directory: crates/python
+          args: --release --generate-stubs --out dist --find-interpreter
+          working-directory: python
           # Cargo downloads and build artifacts are cached by rust-cache.
           sccache: false
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
           name: wheels-macos-${{ matrix.platform.target }}
-          path: crates/python/dist
+          path: python/dist
 
   sdist:
     needs: wasm
@@ -288,23 +285,23 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: wasm-pkg
-          path: crates/wasm/pkg
+          path: wasm/pkg
       - name: Download pyi
         uses: actions/download-artifact@v4
         with:
           name: pyi
-          path: crates/python/
+          path: python/
       - name: Build sdist
         uses: PyO3/maturin-action@v1
         with:
           command: sdist
-          working-directory: crates/python
+          working-directory: python
           args: --out dist
       - name: Upload sdist
         uses: actions/upload-artifact@v4
         with:
           name: wheels-sdist
-          path: crates/python/dist
+          path: python/dist
 
   release:
     name: Release
@@ -340,10 +337,10 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: wasm-pkg
-          path: crates/wasm/pkg
+          path: wasm/pkg
       - name: Run npm publish
         if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || (github.event_name == 'workflow_dispatch' && inputs.publish && needs.wasm.outputs.manual_publish_allowed == 'true') }}
-        working-directory: crates/wasm/pkg
+        working-directory: wasm/pkg
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |

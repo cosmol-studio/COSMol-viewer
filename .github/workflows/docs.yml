@@ -45,7 +45,7 @@ jobs:
       - name: Test deployment scripts
         run: docs-web/.venv/bin/python -m unittest discover -s docs-web/scripts -p 'test_*.py' -v
       - name: Build Sphinx source
-        run: docs-web/.venv/bin/python -m sphinx -W --keep-going -E -b html crates/python/docs/source crates/python/docs/_build/html
+        run: docs-web/.venv/bin/python -m sphinx -W --keep-going -E -b html python/docs/source python/docs/_build/html
       - uses: cargo-bins/cargo-binstall@main
       - name: Install Dioxus and search tooling
         run: |
@@ -64,7 +64,7 @@ jobs:
       - name: Prepare and validate deployment
         run: |
           public_dir="docs-web/target/dx/cosmol-viewer-docs-web/release/web/public"
-          docs-web/.venv/bin/python docs-web/scripts/prepare_deployment.py "$public_dir" crates/python/docs/_build/html
+          docs-web/.venv/bin/python docs-web/scripts/prepare_deployment.py "$public_dir" python/docs/_build/html
           docs-web/.venv/bin/python docs-web/scripts/check_ssg_output.py "$public_dir"
           docs-web/.venv/bin/python docs-web/scripts/check_search_browser.py "$public_dir"
           docs-web/.venv/bin/python docs-web/scripts/check_layout_browser.py "$public_dir"

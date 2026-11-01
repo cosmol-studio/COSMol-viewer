@@ -12,7 +12,7 @@ validation scope, package paths, and deployment configuration.
   status, canonical URLs, and legacy aliases.
 - Python and JavaScript are API bindings. The language switch matches topics;
   unavailable counterparts lead to the other binding's overview.
-- Python guides and API reference come from `../crates/python/docs/source`.
+- Python guides and API reference come from `../python/docs/source`.
 - JavaScript is a non-indexable placeholder for the standalone scene-building
   API. Existing Python notebook WebAssembly rendering is documented separately.
 - Rust API guidance is part of the Python guide navigation and links to docs.rs.
@@ -30,7 +30,7 @@ Run from the repository root:
 uv venv --python 3.11 docs-web/.venv
 uv pip install --python docs-web/.venv/bin/python --only-binary=:all: -r docs-web/requirements.txt
 docs-web/.venv/bin/python -m playwright install chromium
-docs-web/.venv/bin/python -m sphinx -W --keep-going -E -b html crates/python/docs/source crates/python/docs/_build/html
+docs-web/.venv/bin/python -m sphinx -W --keep-going -E -b html python/docs/source python/docs/_build/html
 cargo binstall dioxus-cli --version 0.7.10 --no-confirm
 rustup target add wasm32-unknown-unknown
 docs-web/.venv/bin/python docs-web/scripts/build_search_bundle.py --install-tools
@@ -62,7 +62,7 @@ Do not merge a fresh build into a previously flattened artifact.
 From the repository root, prepare and validate the artifact:
 
 ```sh
-docs-web/.venv/bin/python docs-web/scripts/prepare_deployment.py docs-web/target/dx/cosmol-viewer-docs-web/release/web/public crates/python/docs/_build/html
+docs-web/.venv/bin/python docs-web/scripts/prepare_deployment.py docs-web/target/dx/cosmol-viewer-docs-web/release/web/public python/docs/_build/html
 docs-web/.venv/bin/python docs-web/scripts/check_ssg_output.py docs-web/target/dx/cosmol-viewer-docs-web/release/web/public
 docs-web/.venv/bin/python docs-web/scripts/check_search_browser.py docs-web/target/dx/cosmol-viewer-docs-web/release/web/public
 docs-web/.venv/bin/python docs-web/scripts/check_layout_browser.py docs-web/target/dx/cosmol-viewer-docs-web/release/web/public

@@ -79,10 +79,10 @@ class DeploymentTests(unittest.TestCase):
         for name in ("404.html",):
             shutil.copyfile(docs_web / "deployment/public" / name, self.public / name)
         shutil.copyfile(
-            docs_web.parent / "crates/python/docs/source/robots.txt", self.public / "robots.txt"
+            docs_web.parent / "python/docs/source/robots.txt", self.public / "robots.txt"
         )
         shutil.copyfile(
-            docs_web.parent / f"crates/python/docs/source/{INDEXNOW_KEY}.txt", self.public / f"{INDEXNOW_KEY}.txt"
+            docs_web.parent / f"python/docs/source/{INDEXNOW_KEY}.txt", self.public / f"{INDEXNOW_KEY}.txt"
         )
         write_route_assets(self.public)
         for src in SEARCH_SCRIPTS:

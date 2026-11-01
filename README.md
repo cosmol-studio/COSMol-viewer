@@ -187,7 +187,7 @@ cargo run --example render_protein
 - Project development and release version upgrades: [DEV.md](DEV.md)
 - Documentation (Python and JavaScript tracks): <https://viewer.cosmol.org/>
 - Rust API reference: <https://docs.rs/cosmol_viewer/latest/cosmol_viewer/>
-- Documentation sources: [`crates/python/docs/source`](crates/python/docs/source)
+- Documentation sources: [`python/docs/source`](python/docs/source)
 - Documentation website and build instructions: [`docs-web`](docs-web/README.md)
 
 ---

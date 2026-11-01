@@ -1,0 +1,25 @@
+[package]
+name = "cosmol_viewer_python"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+cosmol_viewer_wasm = { path = "../wasm", default-features = false, features = ["js_bridge"] }
+cosmol_viewer_core.workspace = true
+egui_extras.workspace = true
+serde_json.workspace = true
+serde.workspace = true
+base64.workspace = true
+eframe.workspace = true
+pyo3 = { workspace = true, features = ["macros", "experimental-inspect"] }
+
+[lib]
+name = "cosmol_viewer"
+crate-type = ["cdylib", "rlib"]
+
+
+[features]
+default = ["release-abi3-py39"]
+extension-module = ["pyo3/macros", "pyo3/extension-module"]
+release-abi3-py39 = ["extension-module", "pyo3/abi3-py39"]

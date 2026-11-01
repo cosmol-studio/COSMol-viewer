@@ -88,7 +88,7 @@ macro_rules! sphinx_page {
                             div { class: "docs-article-toolbar",
                                 Link { to: Route::Python {}, "Python documentation" }
                                 if !matches!($source, "search" | "genindex" | "py-modindex") {
-                                    a { href: concat!("https://github.com/cosmol-studio/COSMol-viewer/blob/main/crates/python/docs/source/", $source, ".rst"), target: "_blank", rel: "noreferrer", "View source ↗" }
+                                    a { href: concat!("https://github.com/cosmol-studio/COSMol-viewer/blob/main/python/docs/source/", $source, ".rst"), target: "_blank", rel: "noreferrer", "View source ↗" }
                                 }
                             }
                             if !sphinx_toc($source).is_empty() {
