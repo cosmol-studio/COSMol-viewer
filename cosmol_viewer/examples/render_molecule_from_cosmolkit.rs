@@ -1,4 +1,4 @@
-use cosmol_viewer::{Scene, Viewer, cosmolkit, shapes::Molecule};
+use cosmol_viewer::{BallAndStick, Scene, Viewer, cosmolkit, select};
 use std::path::Path;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -6,14 +6,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let cosmolkit_mol =
         cosmolkit::Molecule::from_smiles("COc1cc(C=Nn2c(SC)nnc2c3ccccc3)c(Br)cc1O")?;
-    let cosmolkit_mol = cosmolkit_mol.with_hydrogens()?;
-    let mol = Molecule::from_cosmolkit(&cosmolkit_mol)?
-        .centered()
-        .enable_outline(0.04);
+    // Coordinate generation is an explicit scientific operation owned by CK.
+    let mol = cosmolkit_mol.with_hydrogens()?.with_2d_coordinates()?;
 
     let mut scene = Scene::new();
     scene.set_scale(0.8);
-    scene.add_shape_with_id("mol", mol);
+    scene.show_with_id(
+        "mol",
+        &mol,
+        &select(&mol).atoms(),
+        BallAndStick::default().outline("#050505", 0.04),
+    )?;
+    scene.recenter_on(&mol)?;
 
     let viewer = Viewer::render(&scene, 800.0, 500.0)?;
     let screenshot = viewer.take_screenshot()?;

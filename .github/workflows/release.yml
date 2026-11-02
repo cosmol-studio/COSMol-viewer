@@ -1,125 +1,125 @@
-name: GitHub release
+name: Release
 
 on:
-  # The GitHub Release is created only after the complete publish workflow
-  # succeeds for the same tag push.
-  workflow_run:
-    workflows: [publish]
-    types: [completed]
+  workflow_dispatch:
+
+concurrency:
+  group: github-release
+  cancel-in-progress: false
 
 permissions:
   contents: write
 
 jobs:
   release:
-    name: create GitHub release
+    name: Create Release
     runs-on: ubuntu-latest
-    if: >-
-      github.event_name == 'workflow_run' &&
-      github.event.workflow_run.event == 'push' &&
-      github.event.workflow_run.conclusion == 'success' &&
-      startsWith(github.event.workflow_run.head_branch, 'v')
-
     steps:
-      - name: Resolve release tag
-        id: release
-        shell: bash
-        env:
-          WORKFLOW_RUN_EVENT: ${{ github.event.workflow_run.event }}
-          WORKFLOW_RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
-          WORKFLOW_RUN_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
-        run: |
-          if [[ "$WORKFLOW_RUN_EVENT" != "push" ]]; then
-            echo "The publish workflow was not triggered by a push" >&2
-            exit 1
-          fi
-          if [[ "$WORKFLOW_RUN_CONCLUSION" != "success" ]]; then
-            echo "The publish workflow did not succeed" >&2
-            exit 1
-          fi
-          tag="$WORKFLOW_RUN_HEAD_BRANCH"
-          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
-            echo "Invalid release tag: $tag" >&2
-            exit 1
-          fi
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
-
-      - name: Checkout release tag
-        uses: actions/checkout@v4
+      - name: Find an unreleased tag on this commit
+        id: release_tag
+        uses: actions/github-script@v7
         with:
-          ref: ${{ steps.release.outputs.tag }}
+          script: |
+            const tags = await github.paginate(github.rest.repos.listTags, {
+              ...context.repo, per_page: 100,
+            });
+            const candidates = tags.filter(tag =>
+              tag.name.startsWith('v') && tag.commit.sha === context.sha &&
+              (!context.ref.startsWith('refs/tags/') ||
+                context.ref === `refs/tags/${tag.name}`)
+            );
+            if (candidates.length === 0) {
+              core.notice('This commit has no matching v* tag; no Release created.');
+              return;
+            }
+            // Include drafts and prereleases: never update an existing Release.
+            const releases = await github.paginate(github.rest.repos.listReleases, {
+              ...context.repo, per_page: 100,
+            });
+            const released = new Set(releases.map(release => release.tag_name));
+            const pending = candidates.filter(tag => !released.has(tag.name));
+            if (pending.length === 0) {
+              core.notice('This commit has no unreleased tag; no Release created.');
+              return;
+            }
+            if (pending.length !== 1) {
+              core.setFailed('Multiple unreleased tags point to this commit. Run this workflow on the intended tag ref.');
+              return;
+            }
+            core.setOutput('tag', pending[0].name);
+            core.info(`Release tag: ${pending[0].name}`);
 
-      - name: Validate version and extract changelog
-        shell: bash
+      - name: Checkout
+        if: steps.release_tag.outputs.tag != ''
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Validate versions and read release notes
+        if: steps.release_tag.outputs.tag != ''
         env:
-          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          RELEASE_TAG: ${{ steps.release_tag.outputs.tag }}
         run: |
           python - <<'PY'
           import os
           import re
           import tomllib
           from pathlib import Path
+          from tools.publish_policy import check_versions
 
-          version = os.environ["RELEASE_VERSION"]
+          tag = os.environ["RELEASE_TAG"]
+          version = tag.removeprefix("v")
           workspace = tomllib.loads(Path("Cargo.toml").read_text(encoding="utf-8"))
-          python_project = tomllib.loads(
-              Path("python/pyproject.toml").read_text(encoding="utf-8")
+          python_project = tomllib.loads(Path("python/pyproject.toml").read_text(encoding="utf-8"))
+          wasm = tomllib.loads(Path("wasm/Cargo.toml").read_text(encoding="utf-8"))
+          rust_version = workspace["workspace"]["package"]["version"]
+          wasm_version = wasm["package"]["version"]
+          if wasm_version == {"workspace": True}:
+              wasm_version = rust_version
+          check_versions(
+              rust_version, python_project["project"]["version"], wasm_version,
+              "push", f"refs/tags/{tag}", False,
           )
-
-          workspace_version = workspace["workspace"]["package"]["version"]
-          python_version = python_project["project"]["version"]
-          if workspace_version != version:
-              raise SystemExit(
-                  f"tag version {version} does not match Cargo version {workspace_version}"
-              )
-          if python_version != version:
-              raise SystemExit(
-                  f"tag version {version} does not match Python version {python_version}"
-              )
-
           changelog = Path("CHANGELOG.md").read_text(encoding="utf-8")
-          header_match = re.search(
-              r"^<!-- release-header:start -->\n"
-              r"(?P<body>.*?)"
-              r"^<!-- release-header:end -->$",
-              changelog,
-              re.MULTILINE | re.DOTALL,
-          )
-          if header_match is None:
-              raise SystemExit("CHANGELOG.md has no complete release-header block")
-
-          release_header = header_match.group("body").strip()
-          if not release_header:
+          def block(name):
+              match = re.search(
+                  rf"^<!-- release-{name}:start -->\n(?P<body>.*?)^<!-- release-{name}:end -->$",
+                  changelog, re.MULTILINE | re.DOTALL,
+              )
+              if match is None:
+                  raise SystemExit(f"CHANGELOG.md has no complete release-{name} block")
+              return match.group("body").strip()
+          header, footer = block("header"), block("footer")
+          if not header:
               raise SystemExit("CHANGELOG.md has an empty release-header block")
-
           match = re.search(
-              rf"^## \[{re.escape(version)}\] - "
-              rf"(?P<date>\d{{4}}-\d{{2}}-\d{{2}})\n"
-              rf"(?P<body>.*?)(?=^## \[|^\[[^\]]+\]:|\Z)",
-              changelog,
-              re.MULTILINE | re.DOTALL,
+              rf"^## \[{re.escape(version)}\] - (?P<date>\d{{4}}-\d{{2}}-\d{{2}})\n"
+              rf"(?P<body>.*?)(?=^## \[|^\[[^\]]+\]:|^<!-- release-footer:start -->|\Z)",
+              changelog, re.MULTILINE | re.DOTALL,
           )
           if match is None:
               raise SystemExit(f"CHANGELOG.md has no dated section for {version}")
-
-          version_notes = match.group("body").strip()
-          if not version_notes:
+          notes = match.group("body").strip()
+          if not notes:
               raise SystemExit(f"CHANGELOG.md has no release notes for {version}")
-
           Path("release-notes.md").write_text(
-              f"{release_header}\n\n"
-              f"## COSMol Viewer v{version} - {match.group('date')}\n\n"
-              f"{version_notes}\n",
+              f"{header}\n\n## COSMol Viewer v{version} - {match.group('date')}\n\n{notes}\n\n{footer}\n",
               encoding="utf-8",
           )
           PY
 
-      - name: Create GitHub release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.release.outputs.tag }}
-          name: COSMol Viewer ${{ steps.release.outputs.version }}
-          body_path: release-notes.md
-          draft: false
-          prerelease: false
+      - name: Create GitHub Release
+        if: steps.release_tag.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ steps.release_tag.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          flags=()
+          case "$RELEASE_TAG" in
+            *-dev.*|*-rc.*) flags+=(--prerelease --latest=false) ;;
+          esac
+          gh release create "$RELEASE_TAG" --verify-tag \
+            --title "$RELEASE_TAG" --notes-file release-notes.md "${flags[@]}"

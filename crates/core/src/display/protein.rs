@@ -1,287 +1,296 @@
-use crate::Shape;
+//! Backbone/surface geometry evaluated from borrowed CK protein values.
+//! Temporary DSSP inputs and surface points are discarded after projection.
+use super::input::{
+    ProteinAtomInput as RawSurfacePoint, ProteinInput, ProteinResidueInput as RawProteinResidue,
+};
+use super::{DisplayError, center};
 use crate::parser::dssp::SecondaryStructureCalculator;
 use crate::parser::utils::{Residue, RibbonResidueInfo, SecondaryStructure};
-use crate::shapes::Stick;
+use crate::shapes::{SphereInstance, Stick};
+use crate::styles::{Cartoon, Representation, Surface};
 use crate::surface::protein_templates::{self, ResiduePosition};
 use crate::surface::radii::default_radius;
-use crate::surface::{SurfaceError, SurfaceGeometry, ses_surface_geometry, sharp_edge_patches};
-use crate::utils::{Material, MeshData, Stylable};
+use crate::surface::{ses_surface_geometry, sharp_edge_patches};
+use crate::utils::{InstanceGroups, MeshData};
 use cosmolkit::{self as ck, BioCoordinateFormat};
 use glam::{Quat, Vec3, Vec4};
-use once_cell::sync::OnceCell;
-use rayon::prelude::*;
-use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-#[repr(C)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Protein {
-    pub chains: Vec<Chain>,
-    #[serde(default)]
-    atoms: Vec<ProteinAtom>,
-    pub center: Vec3,
-
-    pub style: Material,
-    #[serde(default)]
-    pub color_mode: ProteinColorMode,
-    #[serde(default)]
-    representation: ProteinRepresentation,
-    #[serde(skip)]
-    surface_cache: OnceCell<SurfaceGeometry>,
+struct SurfacePoint {
+    id: ck::BioAtomId,
+    position: Vec3,
+    radius: f32,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub struct ProteinAtom {
-    pub position: Vec3,
-    pub radius: f32,
-    pub atomic_number: u8,
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
-pub enum ProteinRepresentation {
-    #[default]
-    Ribbon,
-    Surface(ProteinSurfaceOptions),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct ProteinSurfaceOptions {
-    pub probe_radius: f32,
-    pub grid_spacing: f32,
-    pub solvent_accessible: bool,
-    #[serde(default = "default_sharp_boundaries")]
-    pub sharp_boundaries: bool,
-}
-
-const fn default_sharp_boundaries() -> bool {
-    true
-}
-
-impl Default for ProteinSurfaceOptions {
-    fn default() -> Self {
-        Self {
-            probe_radius: 1.4,
-            grid_spacing: 0.5,
-            solvent_accessible: false,
-            sharp_boundaries: true,
+pub(super) fn project_residues(
+    protein: &ProteinInput,
+    ids: &[ck::BioResidueId],
+    style: Representation,
+) -> Result<(MeshData, InstanceGroups, Vec3), DisplayError> {
+    if let Some(id) = ids
+        .iter()
+        .find(|id| id.index() >= protein.chains.iter().map(Vec::len).sum::<usize>())
+    {
+        return Err(DisplayError::InvalidEntity {
+            kind: "residue",
+            index: id.index(),
+        });
+    }
+    match style {
+        Representation::Cartoon(style) => {
+            let (mesh, center) = cartoon(protein, ids, &style)?;
+            Ok((mesh, InstanceGroups::default(), center))
         }
+        other => Err(DisplayError::IncompatibleStyle {
+            style: other.name(),
+            selection: "protein residues (select atoms explicitly for atom/surface styles)",
+        }),
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ProteinColorMode {
-    #[default]
-    Uniform,
-    RainbowResidues,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct Chain {
-    pub id: String,
-    pub residues: Vec<Residue>,
-
-    ss_cache: Option<Vec<SecondaryStructure>>,
-    #[serde(skip)]
-    ss: OnceCell<Vec<SecondaryStructure>>,
-    ribbon_cache: Option<Vec<RibbonResidueInfo>>,
-    #[serde(skip)]
-    ribbon: OnceCell<Vec<RibbonResidueInfo>>,
-}
-
-impl Chain {
-    pub fn init_ss(&mut self) {
-        let calculator = SecondaryStructureCalculator::new();
-        let ribbon = calculator.compute_ribbon_info(&self.residues);
-        self.ss_cache = Some(ribbon.iter().map(|info| info.ss).collect());
-        self.ribbon_cache = Some(ribbon);
+pub(super) fn project_atoms(
+    protein: &ProteinInput,
+    ids: &[ck::BioAtomId],
+    style: Representation,
+) -> Result<(MeshData, InstanceGroups, Vec3), DisplayError> {
+    if let Some(id) = ids.iter().find(|id| {
+        id.index()
+            >= protein
+                .chains
+                .iter()
+                .flatten()
+                .map(|r| r.atoms.len())
+                .sum::<usize>()
+    }) {
+        return Err(DisplayError::InvalidEntity {
+            kind: "atom",
+            index: id.index(),
+        });
     }
-
-    pub fn get_ss(&self) -> &Vec<SecondaryStructure> {
-        if let Some(cache) = self.ss_cache.as_ref() {
-            return &cache;
+    match style {
+        Representation::Surface(style) => {
+            let (mesh, center) = surface(protein, ids, &style)?;
+            Ok((mesh, InstanceGroups::default(), center))
         }
-        self.ss
-            .get_or_init(|| self.get_ribbon_info().iter().map(|info| info.ss).collect())
-    }
-
-    pub fn get_ribbon_info(&self) -> &Vec<RibbonResidueInfo> {
-        if let Some(cache) = self.ribbon_cache.as_ref() {
-            return cache;
-        }
-        self.ribbon.get_or_init(|| {
-            let calculator = SecondaryStructureCalculator::new();
-            calculator.compute_ribbon_info(&self.residues)
-        })
-    }
-
-    pub fn new(id: String, residues: Vec<Residue>) -> Self {
-        Self {
-            id,
-            residues,
-            ss_cache: None,
-            ribbon_cache: None,
-            ribbon: OnceCell::new(),
-            ss: OnceCell::new(),
-        }
-    }
-}
-
-use thiserror::Error;
-
-#[derive(Error, Debug)]
-pub enum ParseProteinError {
-    #[error("Failed to parse protein structure data: '{0}'")]
-    ParsingError(String),
-}
-
-impl Protein {
-    pub fn from_mmcif(mmcif: &str) -> Result<Self, ParseProteinError> {
-        let protein = ck::Protein::from_mmcif(mmcif)
-            .map_err(|e| ParseProteinError::ParsingError(e.to_string()))?;
-        Self::from_cosmolkit_protein(&protein)
-    }
-
-    pub fn from_pdb(pdb: &str) -> Result<Self, ParseProteinError> {
-        let protein = ck::Protein::from_pdb(pdb)
-            .map_err(|e| ParseProteinError::ParsingError(e.to_string()))?;
-        Self::from_cosmolkit_protein(&protein)
-    }
-
-    fn from_cosmolkit_protein(protein: &ck::Protein) -> Result<Self, ParseProteinError> {
-        let mut chains = Vec::new();
-        let mut centers = Vec::new();
-        let mut raw_chains = Vec::new();
-
-        for (chain_index, chain_ref) in protein.chains().enumerate() {
-            let mut raw_residues = Vec::new();
-
-            for residue_ref in chain_ref.residues() {
-                let mut raw_atoms = Vec::new();
-
-                for atom_ref in residue_ref.atoms() {
-                    let atom = atom_ref.row();
-                    let position = atom_ref.position();
-                    if position.len() == 0 {
-                        continue;
-                    }
-                    let position = Vec3::from_array(position.map(|coordinate| coordinate as f32));
-                    let name = cosmolkit_atom_name(&atom.name()).to_string();
-                    raw_atoms.push(RawProteinAtom {
-                        name: name,
-                        position,
-                        atomic_number: atom.element().atomic_number(),
-                        alt_loc: atom.altloc().map(|alt_loc| alt_loc.value()),
-                        occupancy: atom.occupancy(),
-                        b_factor: atom.b_iso(),
-                    });
-                }
-                raw_residues.push(RawProteinResidue {
-                    name: residue_ref.name().as_str().to_string(),
-                    residue_type: residue_ref.code(),
-                    atoms: raw_atoms,
-                    seq_id: residue_ref
-                        .row()
-                        .source()
-                        .seq_id()
-                        .map(|seq_id| (seq_id.seq_num(), seq_id.ins_code())),
-                    label_seq_id: residue_ref.row().source().label_seq_id(),
+        Representation::Sphere(style) => {
+            if !matches!(style.options.coordinates, crate::styles::Coordinates::Auto) {
+                return Err(DisplayError::IncompatibleStyle {
+                    style: "molecular coordinate selection",
+                    selection: "protein atoms, whose coordinates belong to BIO models",
                 });
             }
+            let selected: BTreeSet<_> = ids.iter().copied().collect();
+            let mut groups = InstanceGroups::default();
+            let mut positions = Vec::new();
+            for atom in protein
+                .chains
+                .iter()
+                .flatten()
+                .flat_map(|r| &r.atoms)
+                .filter(|a| selected.contains(&a.id))
+            {
+                let p = atom.position;
+                positions.push(p);
+                let element = ck::Element::from_atomic_number(atom.atomic_number)
+                    .ok_or(DisplayError::InvalidElement(atom.atomic_number))?;
+                let color = style
+                    .options
+                    .material
+                    .color
+                    .unwrap_or_else(|| super::molecular::element_color(&element));
+                groups.spheres.push(SphereInstance::new(
+                    p.to_array(),
+                    super::molecular::vdw_radius(
+                        &ck::Element::from_atomic_number(atom.atomic_number)
+                            .ok_or(DisplayError::InvalidElement(atom.atomic_number))?,
+                    ) * style.options.radius_scale,
+                    [color.x, color.y, color.z, style.options.material.opacity],
+                    [
+                        style.options.material.roughness,
+                        style.options.material.metallic,
+                    ],
+                ));
+            }
+            if style.options.outline.enabled && !groups.spheres.is_empty() {
+                groups.outlines.push(crate::utils::OutlineInstanceGroup {
+                    settings: style.options.outline,
+                    spheres: groups.spheres.clone(),
+                    sticks: Vec::new(),
+                });
+            }
+            Ok((MeshData::default(), groups, center(positions.into_iter())))
+        }
+        Representation::Cartoon(_) => Err(DisplayError::IncompatibleStyle {
+            style: "Cartoon",
+            selection: "protein atoms (select residues explicitly)",
+        }),
+        Representation::BallAndStick(_) => Err(DisplayError::IncompatibleStyle {
+            style: "BallAndStick",
+            selection: "protein atoms without a mapped chemical bond graph",
+        }),
+        Representation::Stick(_) => Err(DisplayError::IncompatibleStyle {
+            style: "Stick",
+            selection: "protein atoms without a mapped chemical bond graph",
+        }),
+    }
+}
 
-            select_best_alt_locs(&mut raw_residues);
-            let mut residues = Vec::new();
-            for (residue_index, raw_residue) in raw_residues.iter().enumerate() {
-                let atom_position = |name: &str| {
-                    raw_residue
-                        .atoms
-                        .iter()
-                        .find(|atom| atom.name == name)
-                        .map(|atom| atom.position)
-                };
-                let (Some(ca), Some(c), Some(n), Some(o)) = (
-                    atom_position("CA"),
-                    atom_position("C"),
-                    atom_position("N"),
-                    atom_position("O"),
-                ) else {
-                    continue;
-                };
-
-                centers.push(ca);
-                residues.push(Residue {
-                    residue_type: raw_residue.residue_type,
+fn cartoon(
+    protein: &ProteinInput,
+    ids: &[ck::BioResidueId],
+    style: &Cartoon,
+) -> Result<(MeshData, Vec3), DisplayError> {
+    let selected: BTreeSet<_> = ids.iter().copied().collect();
+    if selected.is_empty() {
+        return Ok((MeshData::default(), Vec3::ZERO));
+    }
+    let mut mesh = MeshData::default();
+    let mut centers = Vec::new();
+    for mut chain in protein.chains.clone() {
+        // A residue representation chooses one coherent backbone altloc using
+        // the existing occupancy/B-factor policy. Atom selections are not changed.
+        select_best_alt_locs(&mut chain);
+        let palette = (style.rainbow && style.material.color.is_none())
+            .then(|| chimerax_rainbow_residue_colors(chain.len(), style.material.opacity));
+        let mut backbones = Vec::new();
+        for raw in &chain {
+            let p = |name: &str| {
+                raw.atoms
+                    .iter()
+                    .find(|a| a.name == name)
+                    .map(|a| a.position)
+            };
+            let backbone = match (p("CA"), p("C"), p("N"), p("O")) {
+                (Some(ca), Some(c), Some(n), Some(o)) => Some(Residue {
+                    residue_type: raw.residue_type,
                     ca,
                     c,
                     n,
                     o,
-                    h: None,
-                    sns: raw_residue
-                        .seq_id
-                        .map(|(seq_num, _)| seq_num.max(0) as usize)
-                        .unwrap_or(residue_index + 1),
+                    h: p("H"),
+                    sns: raw.seq_id.map(|(n, _)| n.max(0) as usize).unwrap_or(0),
                     ss: None,
-                });
-            }
-
-            if !residues.is_empty() {
-                chains.push(Chain::new(
-                    cosmolkit_chain_id(chain_index, &chain_ref.row().source()),
-                    residues,
-                ));
-            }
-            raw_chains.push(raw_residues);
+                }),
+                _ if selected.contains(&raw.id) => {
+                    return Err(DisplayError::MissingBackbone(raw.id.value()));
+                }
+                _ => None,
+            };
+            backbones.push(backbone);
         }
-
-        let center = average_center(&centers);
-        let structure_has_hydrogens = raw_chains
-            .iter()
-            .flatten()
-            .flat_map(|residue| &residue.atoms)
-            .any(|atom| atom.atomic_number == 1);
-
-        let input_format = protein.input_format();
-        let atoms = raw_chains
-            .iter()
-            .flat_map(|residues| surface_atoms(residues, structure_has_hydrogens, input_format))
-            .collect();
-
-        Ok(Protein {
-            chains,
-            atoms,
-            center,
-            style: Material {
-                opacity: 1.0,
-                visible: true,
-                roughness: 0.7,
-                ..Default::default()
-            },
-            color_mode: ProteinColorMode::Uniform,
-            representation: ProteinRepresentation::Ribbon,
-            surface_cache: OnceCell::new(),
-        })
+        let mut start = 0;
+        while start < backbones.len() {
+            if backbones[start].is_none() {
+                start += 1;
+                continue;
+            }
+            let end = (start..backbones.len())
+                .find(|&i| backbones[i].is_none())
+                .unwrap_or(backbones.len());
+            let full: Vec<Residue> = backbones[start..end]
+                .iter()
+                .map(|r| r.as_ref().unwrap().clone())
+                .collect();
+            // DSSP uses complete available chain context, not only selected rows.
+            let info = SecondaryStructureCalculator::new().compute_ribbon_info(&full);
+            let mut run = 0;
+            while run < full.len() {
+                if !selected.contains(&chain[start + run].id) {
+                    run += 1;
+                    continue;
+                }
+                let stop = (run..full.len())
+                    .find(|&i| !selected.contains(&chain[start + i].id))
+                    .unwrap_or(full.len());
+                let residues: Vec<_> = full[run..stop].iter().collect();
+                centers.extend(residues.iter().map(|r| r.ca));
+                let colors = palette
+                    .as_ref()
+                    .map(|p| p[start + run..start + stop].to_vec());
+                if residues.len() >= 2 {
+                    mesh.append(&build_chimerax_ribbon_mesh(
+                        &residues,
+                        &info[run..stop],
+                        colors.as_deref(),
+                    ));
+                }
+                run = stop;
+            }
+            start = end;
+        }
     }
+    apply_material(&mut mesh, style.material);
+    Ok((mesh, center(centers.into_iter())))
 }
 
-struct RawProteinAtom {
-    name: String,
-    position: Vec3,
-    atomic_number: u8,
-    alt_loc: Option<u8>,
-    occupancy: f64,
-    b_factor: f64,
+fn surface(
+    protein: &ProteinInput,
+    ids: &[ck::BioAtomId],
+    style: &Surface,
+) -> Result<(MeshData, Vec3), DisplayError> {
+    if ids.is_empty() {
+        return Ok((MeshData::default(), Vec3::ZERO));
+    }
+    let selected: BTreeSet<_> = ids.iter().copied().collect();
+    let chains = protein.chains.clone();
+    let has_hydrogens = chains
+        .iter()
+        .flatten()
+        .flat_map(|r| &r.atoms)
+        .any(|a| a.atomic_number == 1);
+    let points: Vec<_> = chains
+        .iter()
+        .flat_map(|chain| surface_atoms(chain, has_hydrogens, protein.input_format))
+        .filter(|point| selected.contains(&point.id))
+        .collect();
+    let positions: Vec<_> = points.iter().map(|p| p.position).collect();
+    let radii: Vec<_> = points.iter().map(|p| p.radius).collect();
+    let mut geometry = ses_surface_geometry(
+        &positions,
+        &radii,
+        style.probe_radius,
+        style.grid_spacing,
+        style.solvent_accessible,
+    )?;
+    if style.sharp_boundaries {
+        geometry = sharp_edge_patches(
+            geometry,
+            &positions,
+            &radii,
+            style.probe_radius,
+            style.grid_spacing,
+            1,
+        );
+    }
+    let mut mesh = MeshData {
+        vertices: geometry.vertices,
+        normals: geometry.normals,
+        indices: geometry.triangles.into_iter().flatten().collect(),
+        ..Default::default()
+    };
+    apply_material(&mut mesh, style.material);
+    Ok((mesh, center(positions.into_iter())))
 }
 
-struct RawProteinResidue {
-    name: String,
-    residue_type: ck::ResidueCode,
-    atoms: Vec<RawProteinAtom>,
-    seq_id: Option<(i32, Option<u8>)>,
-    label_seq_id: Option<i32>,
+fn apply_material(mesh: &mut MeshData, material: crate::utils::Material) {
+    if !material.visible {
+        *mesh = MeshData::default();
+        return;
+    }
+    if mesh.colors.is_none() {
+        let color = material.color.unwrap_or(Vec3::ONE).extend(material.opacity);
+        mesh.colors = Some(vec![color; mesh.vertices.len()]);
+    }
+    mesh.material_params = Some(vec![
+        [material.roughness, material.metallic];
+        mesh.vertices.len()
+    ]);
+    mesh.is_wireframe = material.wireframe;
 }
 
 fn select_best_alt_locs(residues: &mut [RawProteinResidue]) {
     for residue in residues {
-        let mut atom_groups: Vec<Vec<RawProteinAtom>> = Vec::new();
+        let mut atom_groups: Vec<Vec<RawSurfacePoint>> = Vec::new();
         for atom in residue.atoms.drain(..) {
             if let Some(group) = atom_groups
                 .iter_mut()
@@ -314,7 +323,7 @@ fn select_best_alt_locs(residues: &mut [RawProteinResidue]) {
     }
 }
 
-fn best_alt_loc(atom_groups: &[Vec<RawProteinAtom>], labels: &BTreeSet<u8>) -> Option<u8> {
+fn best_alt_loc(atom_groups: &[Vec<RawSurfacePoint>], labels: &BTreeSet<u8>) -> Option<u8> {
     let mut best = None;
     let mut best_occupancy = 0.0f32;
     let mut best_b_factor = 0.0f32;
@@ -360,7 +369,7 @@ fn surface_atoms(
     residues: &[RawProteinResidue],
     structure_has_hydrogens: bool,
     input_format: BioCoordinateFormat,
-) -> Vec<ProteinAtom> {
+) -> Vec<SurfacePoint> {
     let mut result = Vec::new();
     for (residue_index, residue) in residues.iter().enumerate() {
         let chain_start = residue_index == 0;
@@ -440,7 +449,8 @@ fn surface_atoms(
 
             let idatm_type =
                 protein_templates::idatm_type(&residue.name, &atom.name, chain_start, present);
-            result.push(ProteinAtom {
+            result.push(SurfacePoint {
+                id: atom.id,
                 position: atom.position,
                 radius: default_radius(
                     atom.atomic_number,
@@ -449,7 +459,6 @@ fn surface_atoms(
                     has_hydrogen_neighbor,
                     structure_has_hydrogens,
                 ),
-                atomic_number: atom.atomic_number,
             });
         }
     }
@@ -495,295 +504,6 @@ fn residues_are_polymer_bonded(
 
     // ChimeraX Element::bond_length(C, N) is 0.68 + 0.68 Angstrom.
     carbon.distance_squared(nitrogen) < 3.0625 * 1.36 * 1.36
-}
-
-fn average_center(centers: &[Vec3]) -> Vec3 {
-    if centers.is_empty() {
-        return Vec3::ZERO;
-    }
-    centers.iter().copied().sum::<Vec3>() / centers.len() as f32
-}
-
-fn cosmolkit_atom_name(name: &cosmolkit::AtomName) -> &str {
-    std::str::from_utf8(&name.as_bytes()).unwrap_or("").trim()
-}
-
-fn cosmolkit_chain_id(chain_index: usize, source: &ck::ChainSourceIds) -> String {
-    source
-        .auth_chain_id()
-        .map(|chain_id| chain_id.as_str().to_string())
-        .or_else(|| source.label_asym_id().map(|chain_id| chain_id.to_string()))
-        .unwrap_or_else(|| chain_index.to_string())
-}
-
-impl Stylable for Protein {
-    fn style_mut(&mut self) -> &mut Material {
-        &mut self.style
-    }
-}
-
-crate::impl_stylable_methods!(Protein, style);
-
-impl Protein {
-    pub fn init_secondary_structure(&mut self) {
-        for chain in &mut self.chains {
-            chain.init_ss();
-        }
-    }
-
-    pub fn get_center(&self) -> [f32; 3] {
-        [self.center.x, self.center.y, self.center.z]
-    }
-
-    pub fn atoms(&self) -> &[ProteinAtom] {
-        &self.atoms
-    }
-
-    pub fn representation(&self) -> ProteinRepresentation {
-        self.representation
-    }
-
-    pub fn centered(mut self) -> Self {
-        let center = Vec3 {
-            x: self.center.x,
-            y: self.center.y,
-            z: self.center.z,
-        };
-        for chain in &mut self.chains {
-            for residue in &mut chain.residues {
-                residue.ca -= center;
-                residue.c -= center;
-                residue.n -= center;
-                residue.o -= center;
-                if let Some(h) = residue.h {
-                    residue.h = Some(h - center);
-                }
-            }
-        }
-        for atom in &mut self.atoms {
-            atom.position -= center;
-        }
-        self.center = Vec3::ZERO;
-        self.surface_cache = OnceCell::new();
-        self
-    }
-
-    pub fn rainbow_residues(mut self) -> Self {
-        self.color_mode = ProteinColorMode::RainbowResidues;
-        self.style.color = None;
-        self
-    }
-
-    pub fn ribbon(mut self) -> Self {
-        self.representation = ProteinRepresentation::Ribbon;
-        self
-    }
-
-    /// Display the protein as a ChimeraX-compatible solvent-excluded surface.
-    ///
-    /// The default surface uses a 1.4 angstrom solvent probe radius and 0.5
-    /// angstrom grid spacing. The resulting surface is emitted as normal mesh
-    /// geometry, so scene-level effects such as opacity and depth cueing apply
-    /// to it in the same way they apply to other shapes.
-    pub fn surface(mut self) -> Self {
-        self.representation = ProteinRepresentation::Surface(ProteinSurfaceOptions::default());
-        self.surface_cache = OnceCell::new();
-        self
-    }
-
-    /// Display the protein as a solvent-accessible surface.
-    ///
-    /// Like [`surface`](Self::surface), the generated surface is normal mesh
-    /// geometry and participates in scene-level opacity and depth cueing.
-    pub fn solvent_accessible_surface(mut self) -> Self {
-        self.representation = ProteinRepresentation::Surface(ProteinSurfaceOptions {
-            solvent_accessible: true,
-            ..ProteinSurfaceOptions::default()
-        });
-        self.surface_cache = OnceCell::new();
-        self
-    }
-
-    pub fn surface_with_options(
-        mut self,
-        probe_radius: f32,
-        grid_spacing: f32,
-        solvent_accessible: bool,
-    ) -> Self {
-        self.representation = ProteinRepresentation::Surface(ProteinSurfaceOptions {
-            probe_radius,
-            grid_spacing,
-            solvent_accessible,
-            sharp_boundaries: true,
-        });
-        self.surface_cache = OnceCell::new();
-        self
-    }
-
-    pub fn surface_with_settings(mut self, options: ProteinSurfaceOptions) -> Self {
-        self.representation = ProteinRepresentation::Surface(options);
-        self.surface_cache = OnceCell::new();
-        self
-    }
-
-    pub fn to_mesh(&self, scale: f32) -> MeshData {
-        if let ProteinRepresentation::Surface(options) = self.representation {
-            return self
-                .surface_mesh(scale, options)
-                .unwrap_or_else(|_| MeshData::default());
-        }
-        self.ribbon_mesh(scale)
-    }
-
-    pub fn try_surface_mesh(&self, scale: f32) -> Result<MeshData, SurfaceError> {
-        let options = match self.representation {
-            ProteinRepresentation::Surface(options) => options,
-            ProteinRepresentation::Ribbon => ProteinSurfaceOptions::default(),
-        };
-        self.surface_mesh(scale, options)
-    }
-
-    fn surface_mesh(
-        &self,
-        scale: f32,
-        options: ProteinSurfaceOptions,
-    ) -> Result<MeshData, SurfaceError> {
-        let geometry = if let Some(geometry) = self.surface_cache.get() {
-            geometry
-        } else {
-            let positions: Vec<Vec3> = self.atoms.iter().map(|atom| atom.position).collect();
-            let radii: Vec<f32> = self.atoms.iter().map(|atom| atom.radius).collect();
-            let mut geometry = ses_surface_geometry(
-                &positions,
-                &radii,
-                options.probe_radius,
-                options.grid_spacing,
-                options.solvent_accessible,
-            )?;
-            if options.sharp_boundaries {
-                geometry = sharp_edge_patches(
-                    geometry,
-                    &positions,
-                    &radii,
-                    options.probe_radius,
-                    options.grid_spacing,
-                    1,
-                );
-            }
-            let _ = self.surface_cache.set(geometry);
-            self.surface_cache
-                .get()
-                .expect("surface cache was initialized")
-        };
-        let color = match self.style.color {
-            Some(color) => Vec4::new(color[0], color[1], color[2], self.style.opacity),
-            None => Vec4::new(1.0, 1.0, 1.0, self.style.opacity),
-        };
-        Ok(MeshData {
-            vertices: geometry
-                .vertices
-                .iter()
-                .map(|vertex| *vertex * scale)
-                .collect(),
-            normals: geometry.normals.clone(),
-            indices: geometry
-                .triangles
-                .iter()
-                .flat_map(|triangle| triangle.iter().copied())
-                .collect(),
-            colors: Some(vec![color; geometry.vertices.len()]),
-            material_params: Some(vec![
-                [self.style.roughness, self.style.metallic];
-                geometry.vertices.len()
-            ]),
-            is_wireframe: self.style.wireframe,
-            ..Default::default()
-        })
-    }
-
-    fn ribbon_mesh(&self, scale: f32) -> MeshData {
-        let mut final_mesh = MeshData::default();
-
-        self.chains.par_iter().for_each(|chain| {
-            chain.get_ribbon_info();
-        });
-
-        let meshes: Vec<MeshData> = self
-            .chains
-            .par_iter()
-            .filter_map(|chain| {
-                let mut mesh = MeshData::default();
-                let ribbon_info_all = chain.get_ribbon_info();
-                let filtered: Vec<(usize, &Residue)> = chain
-                    .residues
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, residue)| residue.ca.length_squared() > 1e-6)
-                    .collect();
-
-                if filtered.len() < 2 {
-                    return None;
-                }
-
-                let residues: Vec<&Residue> =
-                    filtered.iter().map(|(_, residue)| *residue).collect();
-                let ribbon_info: Vec<RibbonResidueInfo> = filtered
-                    .iter()
-                    .map(|(idx, _)| ribbon_info_all[*idx])
-                    .collect();
-                let residue_colors = self.residue_colors(chain, &filtered);
-                mesh.append(&build_chimerax_ribbon_mesh(
-                    &residues,
-                    &ribbon_info,
-                    residue_colors.as_deref(),
-                ));
-
-                for vertex in &mut mesh.vertices {
-                    *vertex *= scale;
-                }
-
-                if mesh.colors.is_none() {
-                    let color = match self.style.color {
-                        Some(color) => Vec4::new(color[0], color[1], color[2], self.style.opacity),
-                        None => Vec4::new(1.0, 1.0, 1.0, self.style.opacity),
-                    };
-                    mesh.colors = Some(vec![color; mesh.vertices.len()]);
-                }
-                mesh.material_params = Some(vec![
-                    [self.style.roughness, self.style.metallic,];
-                    mesh.vertices.len()
-                ]);
-
-                Some(mesh)
-            })
-            .collect();
-
-        for mesh in meshes {
-            final_mesh.append(&mesh);
-        }
-
-        final_mesh
-    }
-
-    fn residue_colors(&self, _chain: &Chain, filtered: &[(usize, &Residue)]) -> Option<Vec<Vec4>> {
-        if self.style.color.is_some() || self.color_mode != ProteinColorMode::RainbowResidues {
-            return None;
-        }
-
-        // BEGIN CHIMERAX PYTHON BODY: src/bundles/std_commands/src/rainbow.py :: rainbow
-        // ChimeraX✔️✔️: rainbow delegates to color_sequential with level='residues'.
-        // END CHIMERAX PYTHON BODY: src/bundles/std_commands/src/rainbow.py :: rainbow
-        //
-        // BEGIN CHIMERAX PYTHON BODY: src/bundles/std_commands/src/color.py :: _set_sequential_residue
-        // ChimeraX✔️✔️: each chain is colored separately with the default rainbow colormap.
-        // ChimeraX✔️✔️: residues in a chain are sampled with numpy.linspace(0.0, 1.0, len(residues)).
-        // ChimeraX✔️✔️: the sampled rgba8 values become each residue's ribbon_color.
-        // END CHIMERAX PYTHON BODY: src/bundles/std_commands/src/color.py :: _set_sequential_residue
-        Some(chimerax_rainbow_residue_colors(
-            filtered.len(),
-            self.style.opacity,
-        ))
-    }
 }
 
 const CHIMERAX_RIBBON_DIVISIONS: usize = 20;
@@ -1976,210 +1696,3 @@ fn fallback_normal(tangent: Vec3) -> Vec3 {
 fn project_perpendicular(vector: Vec3, tangent: Vec3) -> Vec3 {
     vector - tangent * vector.dot(tangent)
 }
-
-impl Into<Shape> for Protein {
-    fn into(self) -> Shape {
-        Shape::Protein(self)
-    }
-}
-
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-
-//     #[test]
-//     fn from_pdb_reads_backbone() {
-//         let pdb = "\
-// ATOM      1  N   ALA A   1      11.104  13.207   9.900  1.00 20.00           N
-// ATOM      2  CA  ALA A   1      12.210  13.912  10.555  1.00 20.00           C
-// ATOM      3  C   ALA A   1      13.470  13.079  10.413  1.00 20.00           C
-// ATOM      4  O   ALA A   1      14.000  12.500  11.000  1.00 20.00           O
-// ";
-
-//         let protein = Protein::from_pdb(pdb).expect("PDB backbone should parse");
-
-//         assert_eq!(protein.chains.len(), 1);
-//         assert_eq!(protein.chains[0].id, "A");
-//         assert_eq!(protein.chains[0].residues.len(), 1);
-//         assert_eq!(protein.atoms.len(), 4);
-//         assert_eq!(
-//             protein
-//                 .atoms
-//                 .iter()
-//                 .map(|atom| atom.radius)
-//                 .collect::<Vec<_>>(),
-//             vec![1.64, 1.88, 1.76, 1.42]
-//         );
-//     }
-
-//     #[test]
-//     fn protein_surface_mesh_is_non_empty() {
-//         let pdb = "\
-// ATOM      1  N   ALA A   1      11.104  13.207   9.900  1.00 20.00           N
-// ATOM      2  CA  ALA A   1      12.210  13.912  10.555  1.00 20.00           C
-// ATOM      3  C   ALA A   1      13.470  13.079  10.413  1.00 20.00           C
-// ATOM      4  O   ALA A   1      14.000  12.500  11.000  1.00 20.00           O
-// ";
-//         let protein = Protein::from_pdb(pdb).expect("PDB should parse").surface();
-//         let mesh = protein.try_surface_mesh(1.0).expect("surface should build");
-
-//         assert!(!mesh.vertices.is_empty());
-//         assert!(!mesh.indices.is_empty());
-//         assert_eq!(mesh.vertices.len(), mesh.normals.len());
-//         assert_eq!(mesh.vertices.len(), mesh.colors.unwrap().len());
-//     }
-
-//     #[test]
-//     #[ignore = "full protein surface regression"]
-//     fn six_fi1_surface_builds() {
-//         let protein =
-//             Protein::from_mmcif(include_str!("../../../../cosmol_viewer/examples/6fi1.cif"))
-//                 .expect("6fi1 should parse")
-//                 .surface();
-//         let mesh = protein
-//             .try_surface_mesh(1.0)
-//             .expect("6fi1 surface should build");
-
-//         println!(
-//             "6fi1 atoms={}, vertices={}, triangles={}",
-//             protein.atoms.len(),
-//             mesh.vertices.len(),
-//             mesh.indices.len() / 3
-//         );
-//         assert_eq!(protein.atoms.len(), 856);
-//         assert_eq!(mesh.vertices.len(), 84_457);
-//         assert_eq!(mesh.indices.len() / 3, 119_810);
-//     }
-
-//     #[test]
-//     fn rainbow_residue_colors_match_chimerax_default_stops() {
-//         let colors = chimerax_rainbow_residue_colors(5, 1.0);
-
-//         assert_eq!(
-//             colors,
-//             vec![
-//                 Vec4::new(0.0, 0.0, 1.0, 1.0),
-//                 Vec4::new(0.0, 1.0, 1.0, 1.0),
-//                 Vec4::new(0.0, 1.0, 0.0, 1.0),
-//                 Vec4::new(1.0, 1.0, 0.0, 1.0),
-//                 Vec4::new(1.0, 0.0, 0.0, 1.0),
-//             ]
-//         );
-//         assert_eq!(
-//             chimerax_rainbow_residue_colors(1, 0.5),
-//             vec![Vec4::new(0.0, 0.0, 1.0, 0.5)]
-//         );
-//     }
-
-//     #[test]
-//     fn obvious_backbone_gap_splits_ribbon_and_adds_dashes() {
-//         let pdb = "\
-// ATOM      1  N   ALA A   1      11.104  13.207   9.900  1.00 20.00           N
-// ATOM      2  CA  ALA A   1      12.210  13.912  10.555  1.00 20.00           C
-// ATOM      3  C   ALA A   1      13.470  13.079  10.413  1.00 20.00           C
-// ATOM      4  O   ALA A   1      14.000  12.500  11.000  1.00 20.00           O
-// ATOM      5  N   GLY A  10      31.104  13.207   9.900  1.00 20.00           N
-// ATOM      6  CA  GLY A  10      32.210  13.912  10.555  1.00 20.00           C
-// ATOM      7  C   GLY A  10      33.470  13.079  10.413  1.00 20.00           C
-// ATOM      8  O   GLY A  10      34.000  12.500  11.000  1.00 20.00           O
-// ";
-//         let protein = Protein::from_pdb(pdb).expect("PDB backbone should parse");
-//         let residues: Vec<&Residue> = protein.chains[0].residues.iter().collect();
-
-//         assert_eq!(
-//             contiguous_backbone_ranges(&residues),
-//             vec![
-//                 RibbonRange { start: 0, end: 1 },
-//                 RibbonRange { start: 1, end: 2 },
-//             ]
-//         );
-
-//         let dashes = build_backbone_gap_dashes(&residues, None);
-//         assert!(!dashes.vertices.is_empty());
-//         assert!(dashes.colors.is_none());
-//         assert_eq!(protein.atoms[2].radius, 1.76);
-//     }
-
-//     #[test]
-//     fn from_mmcif_reads_atom_site_backbone() {
-//         let cif = r#"
-// data_demo
-// loop_
-// _atom_site.group_PDB
-// _atom_site.id
-// _atom_site.type_symbol
-// _atom_site.label_atom_id
-// _atom_site.label_alt_id
-// _atom_site.label_comp_id
-// _atom_site.label_asym_id
-// _atom_site.label_seq_id
-// _atom_site.Cartn_x
-// _atom_site.Cartn_y
-// _atom_site.Cartn_z
-// _atom_site.occupancy
-// _atom_site.B_iso_or_equiv
-// _atom_site.auth_seq_id
-// _atom_site.auth_comp_id
-// _atom_site.auth_asym_id
-// _atom_site.auth_atom_id
-// _atom_site.pdbx_PDB_model_num
-// ATOM 1 N N . ALA A 1 11.104 13.207 9.900 1.00 20.00 1 ALA A N 1
-// ATOM 2 C CA . ALA A 1 12.210 13.912 10.555 1.00 20.00 1 ALA A CA 1
-// ATOM 3 C C . ALA A 1 13.470 13.079 10.413 1.00 20.00 1 ALA A C 1
-// ATOM 4 O O . ALA A 1 14.000 12.500 11.000 1.00 20.00 1 ALA A O 1
-// "#;
-
-//         let protein = Protein::from_mmcif(cif).expect("mmCIF protein should convert");
-
-//         assert_eq!(protein.chains.len(), 1);
-//         assert_eq!(protein.chains[0].id, "A");
-//         assert_eq!(protein.chains[0].residues.len(), 1);
-//     }
-
-//     #[test]
-//     fn mmcif_alt_loc_uses_occupancy_then_b_factor() {
-//         let cif = r#"
-// data_demo
-// loop_
-// _atom_site.group_PDB
-// _atom_site.id
-// _atom_site.type_symbol
-// _atom_site.label_atom_id
-// _atom_site.label_alt_id
-// _atom_site.label_comp_id
-// _atom_site.label_asym_id
-// _atom_site.label_seq_id
-// _atom_site.Cartn_x
-// _atom_site.Cartn_y
-// _atom_site.Cartn_z
-// _atom_site.occupancy
-// _atom_site.B_iso_or_equiv
-// _atom_site.auth_seq_id
-// _atom_site.auth_comp_id
-// _atom_site.auth_asym_id
-// _atom_site.auth_atom_id
-// _atom_site.pdbx_PDB_model_num
-// ATOM 1 N N . TYR A 1 0.0 0.0 0.0 1.00 20.00 1 TYR A N 1
-// ATOM 2 C CA A TYR A 1 10.0 0.0 0.0 0.50 10.00 1 TYR A CA 1
-// ATOM 3 C CA B TYR A 1 10.5 0.0 0.0 0.50 5.00 1 TYR A CA 1
-// ATOM 4 C C . TYR A 1 1.0 0.0 0.0 1.00 20.00 1 TYR A C 1
-// ATOM 5 O O . TYR A 1 2.0 0.0 0.0 1.00 20.00 1 TYR A O 1
-// ATOM 6 C CB A TYR A 1 20.0 0.0 0.0 0.50 10.00 1 TYR A CB 1
-// ATOM 7 C CB B TYR A 1 21.0 0.0 0.0 0.50 5.00 1 TYR A CB 1
-// "#;
-
-//         let protein = Protein::from_mmcif(cif).expect("mmCIF altlocs should parse");
-
-//         assert_eq!(protein.atoms.len(), 5);
-//         assert_eq!(protein.atoms[1].position.x, 10.5);
-//         assert_eq!(protein.atoms[4].position.x, 21.0);
-//         assert_eq!(protein.chains[0].residues[0].ca.x, 10.5);
-//     }
-// }
-
-// #[repr(C)]
-// #[derive(Copy, Clone, Pod, Zeroable)]
-// struct SimdVertex {
-//     position: [f32; 3],
-//     normal: [f32; 3],
-// }

@@ -1,4 +1,4 @@
-use cosmol_viewer::{Scene, Viewer, cosmolkit, shapes::Molecule};
+use cosmol_viewer::{BallAndStick, Scene, Viewer, cosmolkit, select};
 use std::path::Path;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -10,15 +10,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     params.random_seed = 0xF00D;
     params.num_threads = 1;
 
-    let cosmolkit_mol = base.with_3d_conformer_with_params(&params)?;
-    let mol = Molecule::from_cosmolkit(&cosmolkit_mol)?
-        .centered()
-        .enable_outline(0.04);
+    let mol = base.with_3d_conformer_with_params(&params)?;
 
     let mut scene = Scene::new();
     scene.set_scale(0.9);
     scene.set_camera_view(35.0, 22.0, 0.0, 28.0, [0.0, 0.0, 0.0], 18.0);
-    scene.add_shape_with_id("conformer", mol);
+    scene.show_with_id(
+        "conformer",
+        &mol,
+        &select(&mol).atoms(),
+        BallAndStick::default().outline("#050505", 0.04),
+    )?;
+    scene.recenter_on(&mol)?;
 
     let viewer = Viewer::render(&scene, 800.0, 500.0)?;
     viewer

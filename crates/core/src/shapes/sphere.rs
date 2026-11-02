@@ -263,7 +263,9 @@ impl Stylable for Sphere {
 crate::impl_stylable_methods!(Sphere, material);
 
 #[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Debug)]
+#[derive(
+    Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Debug, serde::Serialize, serde::Deserialize,
+)]
 pub struct SphereInstance {
     pub position: [f32; 3],
     pub radius: f32,

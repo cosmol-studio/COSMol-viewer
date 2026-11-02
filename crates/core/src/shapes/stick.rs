@@ -413,7 +413,9 @@ struct StickTemplateGpu {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Debug)]
+#[derive(
+    Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Debug, serde::Serialize, serde::Deserialize,
+)]
 pub struct StickInstance {
     pub start: [f32; 3],
     pub end: [f32; 3],

@@ -54,6 +54,7 @@ def validate(pkg: Path, env: dict[str, str], browser: bool) -> None:
     if browser:
         run(node, "--test", str(ROOT / "wasm/tests/browser_render.mjs"), cwd=ROOT, env=runtime_env)
     with tempfile.TemporaryDirectory(prefix="cosmol-viewer-types-") as temporary:
+        dependencies = json.loads((pkg / "package.json").read_text(encoding="utf-8")).get("dependencies", {})
         config = Path(temporary) / "tsconfig.json"
         config.write_text(json.dumps({
             "compilerOptions": {
@@ -61,6 +62,7 @@ def validate(pkg: Path, env: dict[str, str], browser: bool) -> None:
                 "module": "ESNext", "moduleResolution": "Bundler",
                 "lib": ["ES2022", "DOM", "ESNext.Disposable"],
                 "paths": {
+                    **{name: [str(pkg / "node_modules" / name)] for name in dependencies},
                     "cosmol-viewer-generated": [str(pkg / "cosmol_viewer_wasm.d.ts")],
                     "cosmol-viewer-converters": [str(converters / "converters.d.ts")],
                 },
@@ -100,11 +102,21 @@ def main() -> None:
         info.update(name="@cosmol-studio/cosmol-viewer", type="module",
                     description=metadata["description"], license=metadata["license"],
                     repository={"type": "git", "url": metadata["repository"]})
+        binding_metadata = tomllib.loads((WASM / "Cargo.toml").read_text(encoding="utf-8"))
+        info.update(binding_metadata["package"].get("metadata", {}).get("javascript", {}))
         package_json.write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
+        # Notebook Blob modules need a self-contained ES module without bare imports.
+        run(command("npm", "NPM_BIN"), "install", "--ignore-scripts", "--no-audit",
+            "--no-fund", "--package-lock=false", cwd=package, env=env)
+        run(command("npx", "NPX_BIN"), "--yes", "--package", "esbuild@0.25.12",
+            "esbuild", str(package / "cosmol_viewer_wasm.js"), "--bundle",
+            "--format=esm", "--platform=browser", "--minify",
+            "--outfile=" + str(package / "notebook.js"), cwd=package, env=env)
         if options.check:
             validate(package, env, options.browser_check)
         # Stage only after the build and all requested checks succeed.
-        shutil.copytree(package, WASM / "pkg", dirs_exist_ok=True)
+        shutil.copytree(package, WASM / "pkg", dirs_exist_ok=True,
+                        ignore=shutil.ignore_patterns("node_modules", "package-lock.json"))
     print(f"Official browser package staged in {WASM / 'pkg'}")
 
 

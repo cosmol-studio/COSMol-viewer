@@ -1,5 +1,5 @@
 //! Viewer-specific input declarations. PyO3 derives their unions and extraction.
-use crate::shapes::{PyMolecule, PyProtein, PySphere, PyStick};
+use crate::shapes::{PySphere, PyStick};
 use cosmol_viewer_core::utils::{Color, Shape};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -9,8 +9,6 @@ use pyo3::prelude::*;
 pub enum ShapeInput {
     Sphere(PySphere),
     Stick(PyStick),
-    Molecule(PyMolecule),
-    Protein(PyProtein),
 }
 
 impl From<ShapeInput> for Shape {
@@ -18,8 +16,6 @@ impl From<ShapeInput> for Shape {
         match value {
             ShapeInput::Sphere(value) => value.inner.into(),
             ShapeInput::Stick(value) => value.inner.into(),
-            ShapeInput::Molecule(value) => value.inner.into(),
-            ShapeInput::Protein(value) => value.inner.into(),
         }
     }
 }

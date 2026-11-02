@@ -147,6 +147,62 @@ impl Scene {
         Self::default()
     }
 
+    /// Add an independent visual projection of a CK source and its selection.
+    /// Validation and geometry generation finish before this scene is changed.
+    /// The scene retains a shared CK snapshot, not a second editable model.
+    pub fn show<S: ?Sized, I>(
+        &mut self,
+        source: &S,
+        selection: &crate::selection::Selection<'_, S, I>,
+        style: impl Into<crate::styles::Representation>,
+    ) -> Result<(), crate::display::DisplayError>
+    where
+        S: crate::display::ProjectSource<I>,
+    {
+        use crate::display::DisplayError;
+        if !selection.belongs_to(source) {
+            return Err(DisplayError::SourceMismatch);
+        }
+        let display = source.project(selection.ids(), style.into())?;
+        self.unnamed_shapes.push(Shape::Display(display));
+        Ok(())
+    }
+
+    /// Add or replace a named display. Failed projections leave the old one intact.
+    pub fn show_with_id<S: ?Sized, I>(
+        &mut self,
+        id: impl Into<String>,
+        source: &S,
+        selection: &crate::selection::Selection<'_, S, I>,
+        style: impl Into<crate::styles::Representation>,
+    ) -> Result<(), crate::display::DisplayError>
+    where
+        S: crate::display::ProjectSource<I>,
+    {
+        use crate::display::DisplayError;
+        if !selection.belongs_to(source) {
+            return Err(DisplayError::SourceMismatch);
+        }
+        let display = source.project(selection.ids(), style.into())?;
+        self.named_shapes.insert(id.into(), Shape::Display(display));
+        Ok(())
+    }
+
+    /// Frame a scientific object without translating its coordinates.
+    /// Works before or after `show`, independently of display IDs and styles.
+    /// Missing or ambiguous coordinates leave the current scene center unchanged.
+    pub fn recenter_on<S: crate::display::CenterSource + ?Sized>(
+        &mut self,
+        source: &S,
+    ) -> Result<(), crate::display::DisplayError> {
+        let center = source.center()?;
+        if !center.iter().all(|value| value.is_finite()) {
+            return Err(crate::display::DisplayError::InvalidCoordinates);
+        }
+        self.scene_center = center;
+        Ok(())
+    }
+
     pub fn recenter(&mut self, center: [f32; 3]) {
         self.scene_center = center;
     }
@@ -279,17 +335,8 @@ impl Scene {
     }
 
     pub fn prepare_for_wasm(&mut self) {
-        for shape in self.named_shapes.values_mut() {
-            if let Shape::Protein(protein) = shape {
-                protein.init_secondary_structure();
-            }
-        }
-
-        for shape in &mut self.unnamed_shapes {
-            if let Shape::Protein(protein) = shape {
-                protein.init_secondary_structure();
-            }
-        }
+        // Scientific projections (including DSSP) are prepared by show().
+        // Renderer transport carries ready-to-draw geometry on every platform.
     }
 
     /// === u_model ===

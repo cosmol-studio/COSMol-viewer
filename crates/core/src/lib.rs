@@ -15,7 +15,10 @@ use std::{
 use thiserror::Error;
 
 pub mod binding_contract;
+pub mod display;
 pub mod parser;
+pub mod selection;
+pub mod styles;
 pub mod transport;
 use transport::RendererTransport;
 #[cfg(not(target_arch = "wasm32"))]

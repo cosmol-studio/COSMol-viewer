@@ -1,7 +1,8 @@
 [project]
 name = "cosmol-viewer"
-version = "0.6.0.dev1"
+version = "0.6.0rc1"
 description = "Molecular visualization tools"
+dependencies = ["cosmolkit>=0.6,<0.7"]
 authors = [{name = "95028", email = "wjt@cosmol.org"}]
 readme = "README.md"
 

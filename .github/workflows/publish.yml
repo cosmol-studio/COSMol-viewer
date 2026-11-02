@@ -1,296 +1,241 @@
-﻿name: publish
+name: publish
 
 on:
   push:
-    tags:
-      - "*"
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
     inputs:
       publish:
-        description: "Publish RC versions to PyPI and npm (stable releases require a tag push)"
+        description: "Publish dev/RC versions to PyPI and npm (stable releases require a tag push)"
         type: boolean
         default: false
 
 permissions:
-  id-token: write # Required for OIDC
   contents: read
 
 jobs:
-  wasm:
+  build-wasm:
+    name: build and test npm package
     runs-on: ubuntu-latest
     outputs:
       manual_publish_allowed: ${{ steps.release_policy.outputs.manual_publish_allowed }}
     steps:
       - uses: actions/checkout@v6
-      - uses: actions-rs/toolchain@v1.0.6
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          profile: minimal
-          toolchain: stable
-          override: true
-          target: wasm32-unknown-unknown
+          targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
-      - name: Install Python dev
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y python3-dev
-      - uses: cargo-bins/cargo-binstall@main
+        with:
+          cache-workspace-crates: true
+          cache-on-failure: true
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - name: Check manual publishing policy
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+      - name: Check release policy
         id: release_policy
         env:
           PUBLISH_REQUESTED: ${{ inputs.publish }}
         run: |
-          python tools/test_publish_policy.py -v
-          python - <<'PY'
-          import os
-          import re
-          import tomllib
-
-          with open("Cargo.toml", "rb") as manifest:
-              rust_version = tomllib.load(manifest)["workspace"]["package"]["version"]
-          with open("python/pyproject.toml", "rb") as manifest:
-              python_version = tomllib.load(manifest)["project"]["version"]
-          candidate = re.fullmatch(r"(\d+\.\d+\.\d+)-rc\.(\d+)", rust_version)
-          allowed = candidate is not None and python_version == f"{candidate[1]}rc{candidate[2]}"
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-              output.write(f"manual_publish_allowed={str(allowed).lower()}\n")
-          if os.environ["GITHUB_EVENT_NAME"] == "workflow_dispatch" and os.environ["PUBLISH_REQUESTED"] == "true" and not allowed:
-              raise SystemExit("::error::Manual publishing requires matching RC versions in Rust and Python. Stable releases must be published by pushing a tag.")
-          PY
-      - uses: actions/setup-node@v6
-        with:
-          node-version: "24"
-      - name: Install browser smoke test dependencies
-        run: |
-          npm install --prefix target/browser-check --no-save playwright@1.58.2
-          target/browser-check/node_modules/.bin/playwright install --with-deps chromium
-      - name: Build and check official browser bindings
+          python -m unittest discover -s tools -p 'test_*.py' -v
+          python tools/publish_policy.py
+      - uses: cargo-bins/cargo-binstall@main
+      - name: Install browser build and smoke test tools
         run: |
           cargo binstall -y wasm-pack --force
-          python wasm/build.py --release --check --browser-check
+          npm install --prefix target/browser-check --no-save playwright@1.58.2
+          target/browser-check/node_modules/.bin/playwright install --with-deps chromium
+      - name: Build and validate browser bindings
+        run: |
+          python wasm/build.py --check --browser-check
+          python wasm/build.py --release
+          npm pack --dry-run --json ./wasm/pkg
       - name: Check Rust binding contracts
         run: |
-          cargo test -p cosmol_viewer_derive
-          cargo test -p cosmol_viewer_core --test binding_contract
-          cargo test -p cosmol_viewer_core --doc binding_contract
-          cargo test -p cosmol_viewer_wasm --no-default-features --test binding_contract
-          cargo test -p cosmol_viewer_wasm --no-default-features --test scene
-      - name: Build and check official Python projections
-        run: |
-          python -m pip install "maturin==1.15.0" "basedpyright==1.40.2" cosmolkit
-          python python/build.py --install-extractor --check
-      - name: Check Python API and Notebook command transport
-        run: |
-          maturin build --generate-stubs --manifest-path python/Cargo.toml --out target/contract-wheels
-          python -m pip install target/contract-wheels/*.whl
-          python python/tests/test_binding_surface.py
-          python python/tests/test_viewer_backend.py
-      - name: Upload wasm pkg
+          cargo test -p cosmol_viewer_derive --locked
+          cargo test -p cosmol_viewer_core --locked --test binding_contract --test display --test residue_code
+          cargo test -p cosmol_viewer_core --locked --doc
+          cargo test -p cosmol_viewer_wasm --locked --no-default-features --test binding_contract --test scene
+      - name: Upload browser package
         uses: actions/upload-artifact@v4
         with:
           name: wasm-pkg
-          path: ./wasm/pkg
-      - name: Upload cosmol_viewer.pyi
+          path: wasm/pkg
+          if-no-files-found: error
+
+  generate-stubs:
+    name: generate and test Python projections
+    runs-on: ubuntu-latest
+    needs: build-wasm
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+      - name: Download browser package for Notebook embedding
+        uses: actions/download-artifact@v4
+        with:
+          name: wasm-pkg
+          path: wasm/pkg
+      - name: Build and check official Python declarations
+        run: |
+          python -m pip install "maturin==1.15.0" "basedpyright==1.40.2" "cosmolkit>=0.6,<0.7"
+          python python/build.py --install-extractor --check
+      - name: Check packaged Python API and Notebook transport
+        run: |
+          python python/build_native_viewer.py
+          maturin build --locked --generate-stubs --manifest-path python/Cargo.toml --out target/contract-wheels
+          python -m pip install target/contract-wheels/*.whl
+          python python/tests/test_binding_surface.py
+          python python/tests/test_viewer_backend.py
+      - name: Upload Python declarations
         uses: actions/upload-artifact@v4
         with:
-          name: pyi
-          path: ./python/cosmol_viewer.pyi
+          name: python-stubs
+          path: python/cosmol_viewer.pyi
+          if-no-files-found: error
 
-  linux:
-    needs: wasm
-    runs-on: ${{ matrix.platform.runner }}
+  build-wheels:
+    name: build wheel ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    needs: [build-wasm, generate-stubs]
+    env:
+      CARGO_INCREMENTAL: "0"
     strategy:
+      fail-fast: false
       matrix:
-        platform:
-          - runner: ubuntu-22.04
-            target: x86_64
-            rust_target: x86_64-unknown-linux-gnu
-          - runner: ubuntu-22.04
-            target: x86
-            rust_target: i686-unknown-linux-gnu
-          - runner: ubuntu-22.04
-            target: aarch64
-            rust_target: aarch64-unknown-linux-gnu
+        include:
+          - name: linux-x86_64
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            python_arch: x64
+          - name: linux-x86
+            os: ubuntu-22.04
+            target: i686-unknown-linux-gnu
+            python_arch: x64
+          - name: linux-aarch64
+            os: ubuntu-22.04
+            target: aarch64-unknown-linux-gnu
+            python_arch: x64
+          - name: windows-x86_64
+            os: windows-2025
+            target: x86_64-pc-windows-msvc
+            python_arch: x64
+          - name: windows-x86
+            os: windows-2025
+            target: i686-pc-windows-msvc
+            python_arch: x86
+          - name: macos-x86_64
+            os: macos-26
+            target: x86_64-apple-darwin
+            python_arch: x64
+          - name: macos-aarch64
+            os: macos-26
+            target: aarch64-apple-darwin
+            python_arch: arm64
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
-          python-version: 3.x
-      # Follow akfamily/akquant's manylinux cache + Docker mounts:
-      # https://github.com/akfamily/akquant/actions/runs/36444578395
-      - name: Cache Cargo downloads
+          python-version: "3.12"
+          architecture: ${{ matrix.python_arch }}
+      - uses: dtolnay/rust-toolchain@stable
+        if: runner.os != 'Linux'
+        with:
+          targets: ${{ matrix.target }}
+      - name: Cache Cargo downloads and build artifacts
+        if: runner.os != 'Linux'
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+          cache-targets: true
+          cache-bin: false
+          cache-on-failure: true
+      # Keep the existing manylinux cache mounts and renderer build hook.
+      - name: Cache Cargo downloads for manylinux
+        if: runner.os == 'Linux'
         uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-          key: cargo-registry-linux-${{ matrix.platform.target }}-${{ hashFiles('**/Cargo.lock') }}
+          key: cargo-registry-linux-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            cargo-registry-linux-${{ matrix.platform.target }}-
+            cargo-registry-linux-${{ matrix.target }}-
       - name: Prepare Cargo cache directories
+        if: runner.os == 'Linux'
         run: mkdir -p ~/.cargo/registry ~/.cargo/git
-      - name: Download wasm pkg
+      - name: Download browser package
         uses: actions/download-artifact@v4
         with:
           name: wasm-pkg
           path: wasm/pkg
-      - name: Download pyi
+      - name: Download Python declarations
         uses: actions/download-artifact@v4
         with:
-          name: pyi
-          path: ./python/
-      - name: Build wheels
+          name: python-stubs
+          path: python
+      - name: Build native renderer
+        if: runner.os != 'Linux'
+        run: python python/build_native_viewer.py --release --target ${{ matrix.target }}
+      - name: Build manylinux wheel and renderer
+        if: runner.os == 'Linux'
         uses: PyO3/maturin-action@v1
         with:
-          target: ${{ matrix.platform.target }}
-          args: --release --generate-stubs --locked --out dist --find-interpreter
+          command: build
+          target: ${{ matrix.target }}
+          args: --release --locked --generate-stubs --out dist --find-interpreter
           working-directory: python
           sccache: true
           manylinux: auto
-          # Share the restored host cache with Cargo inside manylinux.
           docker-options: -v /home/runner/.cargo/registry:/root/.cargo/registry -v /home/runner/.cargo/git:/root/.cargo/git
           before-script-linux: |
             # Install the wrapper before any Cargo command can invoke it.
             uv tool install "sccache>=0.11.0"
             sccache --version
-            RUSTC_WRAPPER=sccache python3 build_native_viewer.py --release --target ${{ matrix.platform.rust_target }}
+            RUSTC_WRAPPER=sccache python3 build_native_viewer.py --release --target ${{ matrix.target }}
             sccache --show-stats
-      - name: Upload wheels
-        uses: actions/upload-artifact@v4
-        with:
-          name: wheels-linux-${{ matrix.platform.target }}
-          path: python/dist
-
-  windows:
-    needs: wasm
-    runs-on: ${{ matrix.platform.runner }}
-    env:
-      CARGO_INCREMENTAL: "0"
-    strategy:
-      matrix:
-        platform:
-          - runner: windows-2025
-            target: x64
-            rust_target: x86_64-pc-windows-msvc
-          - runner: windows-2025
-            target: x86
-            rust_target: i686-pc-windows-msvc
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
-        with:
-          python-version: 3.x
-          architecture: ${{ matrix.platform.target }}
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.platform.rust_target }}
-      - name: Cache Cargo downloads and build artifacts
-        uses: Swatinem/rust-cache@v2
-        with:
-          key: ${{ matrix.platform.rust_target }}
-          cache-targets: true
-          cache-bin: false
-          cache-on-failure: true
-      - name: Build native renderer
-        run: python python/build_native_viewer.py --release --target ${{ matrix.platform.rust_target }}
-      - name: Download wasm pkg
-        uses: actions/download-artifact@v4
-        with:
-          name: wasm-pkg
-          path: wasm/pkg
-      - name: Download pyi
-        uses: actions/download-artifact@v4
-        with:
-          name: pyi
-          path: ./python/
-      - name: Build wheels
+      - name: Build Windows or macOS wheel
+        if: runner.os != 'Linux'
         uses: PyO3/maturin-action@v1
         with:
-          target: ${{ matrix.platform.target }}
-          args: --release --generate-stubs --out dist --find-interpreter
+          command: build
+          target: ${{ matrix.target }}
+          args: --release --locked --generate-stubs --out dist --find-interpreter
           working-directory: python
-          # Cargo downloads and build artifacts are cached by rust-cache.
           sccache: false
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
-          name: wheels-windows-${{ matrix.platform.target }}
+          name: wheels-${{ matrix.name }}
           path: python/dist
+          if-no-files-found: error
 
-  macos:
-    needs: wasm
-    runs-on: ${{ matrix.platform.runner }}
-    env:
-      CARGO_INCREMENTAL: "0"
-    strategy:
-      matrix:
-        platform:
-          - runner: macos-26
-            target: x86_64
-            rust_target: x86_64-apple-darwin
-          - runner: macos-26
-            target: aarch64
-            rust_target: aarch64-apple-darwin
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
-        with:
-          python-version: 3.x
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.platform.rust_target }}
-      - name: Cache Cargo downloads and build artifacts
-        uses: Swatinem/rust-cache@v2
-        with:
-          key: ${{ matrix.platform.rust_target }}
-          cache-targets: true
-          cache-bin: false
-          cache-on-failure: true
-      - name: Build native renderer
-        run: python python/build_native_viewer.py --release --target ${{ matrix.platform.rust_target }}
-      - name: Download wasm pkg
-        uses: actions/download-artifact@v4
-        with:
-          name: wasm-pkg
-          path: wasm/pkg
-      - name: Download pyi
-        uses: actions/download-artifact@v4
-        with:
-          name: pyi
-          path: ./python/
-      - name: Build wheels
-        uses: PyO3/maturin-action@v1
-        with:
-          target: ${{ matrix.platform.target }}
-          args: --release --generate-stubs --out dist --find-interpreter
-          working-directory: python
-          # Cargo downloads and build artifacts are cached by rust-cache.
-          sccache: false
-      - name: Upload wheels
-        uses: actions/upload-artifact@v4
-        with:
-          name: wheels-macos-${{ matrix.platform.target }}
-          path: python/dist
-
-  sdist:
-    needs: wasm
+  build-sdist:
+    name: build sdist
     runs-on: ubuntu-latest
+    needs: [build-wasm, generate-stubs]
     steps:
       - uses: actions/checkout@v6
-      - name: Download wasm pkg
+      - name: Download browser package
         uses: actions/download-artifact@v4
         with:
           name: wasm-pkg
           path: wasm/pkg
-      - name: Download pyi
+      - name: Download Python declarations
         uses: actions/download-artifact@v4
         with:
-          name: pyi
-          path: python/
+          name: python-stubs
+          path: python
       - name: Build sdist
         uses: PyO3/maturin-action@v1
         with:
@@ -300,49 +245,53 @@ jobs:
       - name: Upload sdist
         uses: actions/upload-artifact@v4
         with:
-          name: wheels-sdist
+          name: sdist
           path: python/dist
+          if-no-files-found: error
 
-  release:
-    name: Release
+  publish:
+    name: publish to PyPI and npm
+    if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || (github.event_name == 'workflow_dispatch' && inputs.publish && needs.build-wasm.outputs.manual_publish_allowed == 'true') }}
     runs-on: ubuntu-latest
-    if: ${{ startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
-    needs: [wasm, linux, windows, macos, sdist]
-    # needs: [linux, windows, macos, windows-arm, sdist]
+    needs: [build-wasm, generate-stubs, build-wheels, build-sdist]
     permissions:
+      contents: read
       id-token: write
-      contents: write
       attestations: write
     steps:
-      - uses: actions/download-artifact@v4
+      - name: Download wheels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          path: dist
+          merge-multiple: true
+      - name: Download sdist
+        uses: actions/download-artifact@v4
+        with:
+          name: sdist
+          path: dist
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@v2
         with:
-          subject-path: "wheels-*/*"
+          subject-path: "dist/*"
       - name: Publish to PyPI
-        if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || (github.event_name == 'workflow_dispatch' && inputs.publish && needs.wasm.outputs.manual_publish_allowed == 'true') }}
-        uses: PyO3/maturin-action@v1
-        env:
-          MATURIN_PYPI_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+        uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          command: upload
-          args: --non-interactive --skip-existing wheels-*/*
-      - name: Publish to npm
-        if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || (github.event_name == 'workflow_dispatch' && inputs.publish && needs.wasm.outputs.manual_publish_allowed == 'true') }}
-        uses: actions/setup-node@v6
+          password: ${{ secrets.PYPI_API_TOKEN }}
+          skip-existing: true
+      - uses: actions/setup-node@v6
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
-      - name: Download wasm pkg
+      - name: Download npm package
         uses: actions/download-artifact@v4
         with:
           name: wasm-pkg
           path: wasm/pkg
-      - name: Run npm publish
-        if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || (github.event_name == 'workflow_dispatch' && inputs.publish && needs.wasm.outputs.manual_publish_allowed == 'true') }}
+      - name: Publish to npm
         working-directory: wasm/pkg
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          npm_tag="$(node -p "require('./package.json').version.includes('-') ? 'rc' : 'latest'")"
+          npm_tag="$(node -p "require('./package.json').version.includes('-') ? require('./package.json').version.split('-')[1].split('.')[0] : 'latest'")"
           npm publish --access public --tag "$npm_tag"

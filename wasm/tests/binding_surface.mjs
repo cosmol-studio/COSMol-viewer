@@ -4,6 +4,67 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
 
+test("CK selections project molecules and proteins without viewer chemistry wrappers", async () => {
+    const ckPath = join(pkg, "node_modules/@cosmol-studio/cosmolkit");
+    const ck = await import(pathToFileURL(join(ckPath, "cosmolkit_wasm.js")));
+    ck.initSync({module: readFileSync(join(ckPath, "cosmolkit_wasm_bg.wasm"))});
+    const source = ck.Molecule.fromSmiles("CO").withAdded3dConformer([[0, 0, 1], [2, 0, 3]]);
+    const selector = binding.select(source);
+    const atoms = selector.atoms();
+    const oxygenElement = ck.Element.fromSymbol("O");
+    const oxygen = atoms.element(oxygenElement);
+    assert.deepEqual(Array.from(atoms.ids()), [0, 1]);
+    assert.deepEqual(Array.from(oxygen.ids()), [1]);
+    const scene = binding.Scene.new();
+    const balls = binding.Style.ballAndStick();
+    const spheres = binding.Style.sphere();
+    const scaled = spheres.scale(1.4);
+    scene.showWithId("mol", source, atoms, balls);
+    const saved = scene.toJson();
+    scene.show(source, oxygen, scaled);
+    scene.recenterOn(source);
+    assert.equal(scene.shapeCount(), 2);
+    assert.deepEqual(JSON.parse(scene.toJson()).scene_center, [1, 0, 2]);
+    const other = source.copy();
+    const before = scene.toJson();
+    assert.throws(() => scene.showWithId("mol", other, atoms, balls), /different source/);
+    assert.equal(scene.toJson(), before);
+    source.setAtomPosition_(0, [9, 9, 9]);
+    assert.throws(() => scene.showWithId("mol", source, atoms, balls), /changed/);
+    assert.equal(scene.toJson(), before);
+    const fresh = binding.select(source).atoms();
+    scene.showWithId("mol", source, fresh, balls);
+    assert.notEqual(scene.toJson(), saved);
+    const unpositioned = ck.Molecule.fromSmiles("CO");
+    const unpositionedAtoms = binding.select(unpositioned).atoms();
+    assert.throws(() => scene.show(unpositioned, unpositionedAtoms, balls), /no stored coordinates/);
+    assert.equal(unpositioned.coordinates2d, undefined);
+    assert.throws(() => binding.select({}), TypeError);
+    assert.throws(() => atoms.element({atomicNumber: 8}), TypeError);
+    assert.throws(() => selector.residues(), /selection/);
+    assert.throws(() => spheres.scale(0), RangeError);
+    assert.throws(() => spheres.opacity(NaN), RangeError);
+    assert.throws(() => spheres.scale("1.4"), TypeError);
+    assert.equal(binding.Molecule, undefined);
+    assert.equal(binding.Protein, undefined);
+
+    const root = new URL("../../cosmol_viewer/examples/", import.meta.url);
+    const protein = ck.Protein.fromMmcif(readFileSync(new URL("6fi1.cif", root), "utf8"));
+    const residues = binding.select(protein).residues();
+    const cartoon = binding.Style.cartoon();
+    const rainbow = cartoon.rainbowResidues();
+    scene.showWithId("protein", protein, residues, rainbow);
+    const proteinOxygens = binding.select(protein).atoms().element(oxygenElement);
+    scene.show(protein, proteinOxygens, spheres);
+    const proteinBefore = scene.toJson();
+    protein.translate_([1, 0, 0]);
+    assert.throws(() => scene.showWithId("protein", protein, residues, cartoon), /changed/);
+    assert.equal(scene.toJson(), proteinBefore);
+    for (const handle of [proteinOxygens, rainbow, cartoon, residues, protein,
+        unpositionedAtoms, unpositioned, fresh, other, scaled, spheres, balls, scene,
+        oxygen, oxygenElement, atoms, selector, source]) handle.free();
+});
+
 const pkg = process.env.COSMOL_VIEWER_WASM_PKG;
 assert.ok(pkg, "COSMOL_VIEWER_WASM_PKG must point at the generated package");
 const binding = await import(pathToFileURL(join(pkg, "cosmol_viewer_wasm.js")));
@@ -29,7 +90,7 @@ test("generated browser API has the declared names and native-only restrictions"
             const [owner, method] = row.javascript.name.split(".");
             const type = binding[owner];
             assert.ok(type, owner);
-            assert.ok(typeof type[method] === "function" || typeof type.prototype[method] === "function", row.semantic_id);
+            assert.ok(method ? typeof type[method] === "function" || typeof type.prototype[method] === "function" : typeof type === "function", row.semantic_id);
         }
         if (row.javascript.notebook_endpoint) {
             const [owner, method] = row.javascript.notebook_endpoint.split(".");

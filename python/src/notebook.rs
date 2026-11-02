@@ -11,7 +11,7 @@ pub fn setup_wasm_if_needed(py: Python, env: RuntimeEnv) -> PyResult<()> {
         _ => (),
     }
 
-    const JS_CODE: &str = include_str!("../../wasm/pkg/cosmol_viewer_wasm.js");
+    const JS_CODE: &str = include_str!("../../wasm/pkg/notebook.js");
     const WASM_BYTES: &[u8] = include_bytes!("../../wasm/pkg/cosmol_viewer_wasm_bg.wasm");
 
     let js_base64 = base64::engine::general_purpose::STANDARD.encode(JS_CODE);

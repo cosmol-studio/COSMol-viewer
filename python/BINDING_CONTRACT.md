@@ -10,7 +10,7 @@ command installs that same extractor version.
 
 - `src/lib.rs` declares exports with an inline `#[pymodule]`. Do not replace it
   with dynamic registration that hides exports from official introspection.
-- `src/scene.rs`, `animation.rs` and `shapes/` project native values. Scene
+- `src/scene.rs`, `animation.rs`, `styles.rs` and `shapes/` project native values. Scene
   insertion and animation frames retain snapshots; shape fluent methods return
   the same Python shape. Indexing an animation returns an independent scene.
 - `src/image.rs` owns Python image-export adaptation and its subprocess
@@ -53,11 +53,21 @@ normalized float RGBA and the documented background selectors. Failed color
 conversion does not change the shape or scene. Image paths accept `str` and
 `os.PathLike[str]`, passed literally without `~` expansion.
 
-The COSMolKit adapter accepts actual `cosmolkit.Molecule` objects. It reads the
-canonical atom/bond/coordinate members, supporting their property and previous
-zero-argument accessor representations. It generates 2D coordinates only when
-no coordinate block exists, never after an arbitrary failure. Coordinate row
-counts and dimensions must match exactly, and values must fit finite `f32`.
+The selection adapter accepts actual `cosmolkit.Molecule` and `cosmolkit.Protein`
+objects. `select(source)` retains that object and captures read-only rendering
+inputs, shared by derived selections. It never generates coordinates or performs
+kekulization. Core projection code owns geometry for Rust, Python and JS.
+`Scene.show` and `show_with_id` require the exact original foreign object and
+re-read its rendering inputs before modifying the scene. Changed inputs require
+a new selection. This is an O(source size) comparison, not a CK version token:
+unrelated properties and edits that restore the same inputs are not distinguished.
+Completed displays and animation frames store geometry snapshots and survive
+deletion or later mutation of local CK variables. Source handles are retained by
+selectors/selections, not needed by completed geometry.
+
+`BallAndStick`, `SphereStyle`, `StickStyle`, `Cartoon` and `Surface` configure
+scientific projections. `Sphere` and `Stick` remain positioned primitives.
+No viewer-defined `Molecule` or `Protein` class is exported.
 
 ## Validation and packaging
 

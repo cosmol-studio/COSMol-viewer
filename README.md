@@ -71,17 +71,19 @@ Install with `pip install cosmol-viewer`
 ### 1. Static molecular rendering
 
 ```python
-from cosmol_viewer import Molecule, Scene
+import cosmolkit as ck
+from cosmol_viewer import BallAndStick, Scene, select
 
 mol_data = open("molecule.sdf", "r", encoding="utf-8").read()
 
-mol = Molecule.from_sdf(mol_data).centered()
+mol = ck.Molecule.from_sdf(mol_data)
 
 scene = Scene()
 
 scene.set_scale(1.0)
 
-scene.add_shape_with_id("molecule", mol)
+scene.show_with_id("molecule", mol, select(mol).atoms(), BallAndStick())
+scene.recenter_on(mol)
 
 scene.set_camera_view(azimuth=35, elevation=20, distance=32, fov=18)
 scene.save_image("rendered_scene.png", width=1600, height=1000)
@@ -104,8 +106,7 @@ from cosmol_viewer import Viewer
 
 viewer = Viewer.render(scene, width=800, height=500)
 
-print("Press Any Key to exit...", end='', flush=True)
-_ = input()
+viewer.keep_alive()  # Native scripts only.
 ```
 
 In a notebook, use a static PNG display when you do not need interaction:
@@ -131,16 +132,28 @@ a transparent background.
 
 ### 2. Animation playback with `Viewer.play`
 
+Scientific objects stay in CK. Selections reject a different source object or
+changed rendering inputs; select again after an in-place edit. Coordinates must
+already exist. For extra molecular representations use `SphereStyle` or
+`StickStyle`; `Sphere`/`Stick` remain positioned primitives.
+
 ```python
-from cosmol_viewer import Scene, Viewer, Molecule, Animation
+from cosmol_viewer import SphereStyle
+oxygen = select(mol).atoms().element(ck.Element.O)
+scene.show(mol, oxygen, SphereStyle().scale(1.4))
+```
+
+```python
+import cosmolkit as ck
+from cosmol_viewer import Scene, Viewer, BallAndStick, Animation, select
 
 anim = Animation(interval=0.05, loops=-1, interpolate=False)
 for i in range(1, 10):
     with open(f"frames/frame_{i}.sdf", "r") as f:
-        mol = Molecule.from_sdf(f.read())
+        mol = ck.Molecule.from_sdf(f.read())
 
     scene = Scene()
-    scene.add_shape(mol)
+    scene.show(mol, select(mol).atoms(), BallAndStick())
     anim.add_frame(scene)
 
 Viewer.play(anim, width=800, height=500)  # loops=-1 for infinite repeat
@@ -149,21 +162,23 @@ Viewer.play(anim, width=800, height=500)  # loops=-1 for infinite repeat
 ### 3. Protein cartoon rendering
 
 ```python
-from cosmol_viewer import Protein, Scene, Viewer
+import cosmolkit as ck
+from cosmol_viewer import Cartoon, Scene, Viewer, select
 
 mmcif_data = open("protein.cif", "r", encoding="utf-8").read()
-protein = Protein.from_mmcif(mmcif_data).centered().rainbow_residues()
+protein = ck.Protein.from_mmcif(mmcif_data)
 
 scene = Scene()
-scene.add_shape_with_id("protein", protein)
+scene.show_with_id("protein", protein, select(protein).residues(), Cartoon().rainbow_residues())
+scene.recenter_on(protein)
 
 viewer = Viewer.render(scene, width=800, height=500)
 ```
 
-`Protein.from_mmcif()` and `Protein.from_pdb()` use COSMolKit's protein
-reader, then the viewer core assigns secondary structure before rendering a
+`ck.Protein.from_mmcif()` and `ck.Protein.from_pdb()` create the scientific
+object; the viewer core assigns secondary structure before rendering a
 ChimeraX-style cartoon ribbon mesh. Use
-`.rainbow_residues()` for ChimeraX-style residue rainbow coloring, or `.color("#10ACBF")`
+`Cartoon().rainbow_residues()` for ChimeraX-style residue rainbow coloring, or `Cartoon().color("#10ACBF")`
 for a uniform cartoon color.
 
 more examples can be found in the [examples](https://github.com/COSMol-repl/COSMol-viewer/tree/main/cosmol_viewer/examples) folder:
@@ -175,6 +190,35 @@ python .\examples\render_protein.py
 ## Rust
 
 Install with `cargo add cosmol_viewer`
+
+Rust scenes consume COSMolKit scientific objects directly. Selection and visual
+styles are separate; there is no viewer-owned `Molecule` or `Protein` wrapper:
+
+```rust
+use cosmol_viewer::{BallAndStick, Cartoon, Scene, select};
+use cosmol_viewer::cosmolkit as ck;
+
+fn example(sdf: &str, mmcif: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let ligand = ck::Molecule::from_sdf(sdf)?;
+    let protein = ck::Protein::from_mmcif(mmcif)?;
+    let mut scene = Scene::new();
+    scene.show(&protein, &select(&protein).residues(), Cartoon::default().rainbow_residues())?;
+    scene.show_with_id("ligand", &ligand, &select(&ligand).atoms(), BallAndStick::default())?;
+    scene.recenter_on(&ligand)?;
+    Ok(())
+}
+```
+
+Each display retains a shared CK snapshot and derived render geometry. Styling,
+camera framing and later edits of a CK value do not mutate or retarget earlier
+displays. `show` rejects selections from another source and leaves the scene
+unchanged on failure. Coordinate generation and chemical transformations must
+be requested explicitly through CK before rendering. Multiple 3D conformers
+require an explicit `styles::Coordinates::ThreeD { id }` choice.
+
+This migration currently covers Rust only; Python/JavaScript binding migration
+is pending. Rust examples use primitive `shapes::Sphere` / `shapes::Stick` for
+positioned geometry and `styles::Sphere` / `styles::Stick` for scientific displays.
 
 see examples in [examples](https://github.com/COSMol-repl/COSMol-viewer/tree/main/cosmol_viewer/examples) folder:
 ```bash

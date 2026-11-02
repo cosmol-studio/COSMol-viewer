@@ -8,7 +8,9 @@ mod image;
 mod input;
 mod notebook;
 mod scene;
+mod selection;
 mod shapes;
+mod styles;
 mod viewer;
 
 pub use animation::Animation;
@@ -25,7 +27,11 @@ pub fn binding_contract_json() -> String {
 #[pymodule]
 mod cosmol_viewer {
     #[pymodule_export]
-    use super::shapes::{PyMolecule, PyProtein, PySphere, PyStick};
+    use super::selection::{Selection, Selector, select};
+    #[pymodule_export]
+    use super::shapes::{PySphere, PyStick};
+    #[pymodule_export]
+    use super::styles::{BallAndStick, Cartoon, SphereStyle, StickStyle, Surface};
     #[pymodule_export]
     use super::{Animation, Scene, Viewer, binding_contract_json};
 }

@@ -15,6 +15,9 @@ input/output behavior; that separate package is not distributed.
 The second enables release optimization and the real Chromium rendering tests.
 `--no-opt` skips wasm-opt; `WASM_PACK_BIN`, `NODE_BIN`, `NPX_BIN` select tools.
 The manifest pins wasm-bindgen; wasm-pack installs the matching CLI for extraction.
+The build installs the external dependencies declared in Cargo package metadata
+and bundles a self-contained `notebook.js` with esbuild for Blob-module loading.
+Ordinary JS/TypeScript declarations remain official wasm-bindgen outputs.
 
 Browser checks need Playwright:
 

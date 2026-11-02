@@ -1,7 +1,6 @@
 use cosmol_viewer_core::{
-    ImageBackground, ImageRenderer,
-    scene::Scene,
-    shapes::{Molecule, Sphere},
+    ImageBackground, ImageRenderer, scene::Scene, selection::select, shapes::Sphere,
+    styles::BallAndStick,
 };
 
 #[test]
@@ -18,14 +17,20 @@ fn rejects_zero_dimensions_before_initializing_gl() {
 #[test]
 #[ignore = "requires an available OpenGL backend"]
 fn renders_repeatedly_with_background_alpha_and_png_encoding() {
-    let molecule = Molecule::from_sdf(include_str!(
+    let molecule = cosmolkit::Molecule::from_sdf(include_str!(
         "../../../cosmol_viewer/examples/6fi1_ligand.sdf"
     ))
-    .unwrap()
-    .centered()
-    .enable_outline(0.04);
+    .unwrap();
     let mut scene = Scene::new();
-    scene.add_shape_with_id("molecule", molecule);
+    scene
+        .show_with_id(
+            "molecule",
+            &molecule,
+            &select(&molecule).atoms(),
+            BallAndStick::default().outline("#050505", 0.04),
+        )
+        .unwrap();
+    scene.recenter_on(&molecule).unwrap();
     let original_scene = serde_json::to_value(&scene).unwrap();
 
     // Recreate and destroy contexts on the same thread, with varying image sizes.
@@ -181,4 +186,44 @@ fn translucent_colored_background_is_premultiplied_before_blending() {
     {
         assert!((i16::from(actual) - expected).abs() <= 2);
     }
+}
+
+#[test]
+#[ignore = "requires an available OpenGL backend"]
+fn renders_ck_protein_ligand_after_geometry_only_transport() {
+    let protein =
+        cosmolkit::Protein::from_mmcif(include_str!("../../../cosmol_viewer/examples/6fi1.cif"))
+            .unwrap();
+    let ligand = cosmolkit::Molecule::from_sdf(include_str!(
+        "../../../cosmol_viewer/examples/6fi1_ligand.sdf"
+    ))
+    .unwrap();
+    let mut scene = Scene::new();
+    scene
+        .show(
+            &protein,
+            &select(&protein).residues(),
+            cosmol_viewer_core::styles::Cartoon::default().rainbow_residues(),
+        )
+        .unwrap();
+    scene
+        .show_with_id(
+            "ligand",
+            &ligand,
+            &select(&ligand).atoms(),
+            BallAndStick::default().outline("#EEEEEE", 0.02),
+        )
+        .unwrap();
+    scene.recenter_on(&ligand).unwrap();
+    let wire = postcard::to_allocvec(&scene).unwrap();
+    let received: Scene = postcard::from_bytes(&wire).unwrap();
+    let image = ImageRenderer::render_with_background(
+        &received,
+        193,
+        127,
+        ImageBackground::Color([0.0, 1.0, 0.0, 1.0]),
+    )
+    .unwrap();
+    assert!(image.pixels().filter(|p| p.0 != [0, 255, 0, 255]).count() > 100);
+    assert!(image.pixels().all(|p| p.0[3] == 255));
 }

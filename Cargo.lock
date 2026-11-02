@@ -634,7 +634,7 @@ dependencies = [
 
 [[package]]
 name = "cosmol_viewer"
-version = "0.6.0-dev.1"
+version = "0.6.0-rc.1"
 dependencies = [
  "cosmol_viewer_core",
  "cosmolkit",
@@ -642,7 +642,7 @@ dependencies = [
 
 [[package]]
 name = "cosmol_viewer_core"
-version = "0.6.0-dev.1"
+version = "0.6.0-rc.1"
 dependencies = [
  "base64",
  "bytemuck",
@@ -660,7 +660,7 @@ dependencies = [
  "postcard",
  "rayon",
  "regex",
- "resvg",
+ "resvg 0.48.1",
  "serde",
  "serde_json",
  "surfman",
@@ -670,7 +670,7 @@ dependencies = [
 
 [[package]]
 name = "cosmol_viewer_derive"
-version = "0.6.0-dev.1"
+version = "0.6.0-rc.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -679,11 +679,12 @@ dependencies = [
 
 [[package]]
 name = "cosmol_viewer_python"
-version = "0.6.0-dev.1"
+version = "0.6.0-rc.1"
 dependencies = [
  "base64",
  "cosmol_viewer_core",
  "cosmol_viewer_wasm",
+ "cosmolkit",
  "eframe",
  "egui_extras",
  "pyo3",
@@ -693,11 +694,12 @@ dependencies = [
 
 [[package]]
 name = "cosmol_viewer_wasm"
-version = "0.6.0-dev.1"
+version = "0.6.0-rc.1"
 dependencies = [
  "base64",
  "cosmol_viewer_core",
  "cosmol_viewer_derive",
+ "cosmolkit",
  "eframe",
  "flate2",
  "gloo-timers",
@@ -707,6 +709,7 @@ dependencies = [
  "postcard",
  "pyo3",
  "serde",
+ "serde-wasm-bindgen",
  "serde_json",
  "thiserror 2.0.21",
  "tsify",
@@ -739,6 +742,7 @@ dependencies = [
  "cosmolkit-bio",
  "cosmolkit-conformer",
  "cosmolkit-core",
+ "cosmolkit-depict",
  "cosmolkit-forcefields",
  "cosmolkit-io",
  "cosmolkit-macros",
@@ -833,6 +837,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "cosmolkit-depict"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8fafcfa07573c50be3098fa45e957df7d04cace128e743ff75feaf4587e69e05"
+dependencies = [
+ "cosmolkit-core",
+ "cosmolkit-macros",
+ "cosmolkit-model",
+ "cosmolkit-search",
+ "glam",
+ "resvg 0.49.0",
+ "thiserror 2.0.21",
+ "tiny-skia",
+ "usvg 0.49.0",
+]
+
+[[package]]
 name = "cosmolkit-forcefields"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -854,6 +875,7 @@ dependencies = [
  "compact_str",
  "cosmolkit-bio",
  "cosmolkit-core",
+ "cosmolkit-depict",
  "cosmolkit-macros",
  "cosmolkit-model",
  "cosmolkit-types",
@@ -3922,8 +3944,23 @@ dependencies = [
  "rgb",
  "svgtypes",
  "tiny-skia",
- "usvg",
+ "usvg 0.48.1",
  "zune-jpeg",
+]
+
+[[package]]
+name = "resvg"
+version = "0.49.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1572844b6727a1bf842190e9947641a68ac44bed83f50afb4bd1407a2564bee8"
+dependencies = [
+ "bytemuck",
+ "log",
+ "pico-args",
+ "rgb",
+ "svgtypes",
+ "tiny-skia",
+ "usvg 0.49.0",
 ]
 
 [[package]]
@@ -4801,6 +4838,33 @@ dependencies = [
  "base64",
  "data-url",
  "flate2",
+ "fontdb",
+ "harfrust 0.12.0",
+ "imagesize",
+ "kurbo",
+ "log",
+ "pico-args",
+ "roxmltree 0.21.2",
+ "simplecss",
+ "siphasher",
+ "skrifa 0.44.0",
+ "strict-num",
+ "svgtypes",
+ "tiny-skia-path",
+ "unicode-bidi",
+ "unicode-script",
+ "unicode-vo",
+ "xmlwriter",
+]
+
+[[package]]
+name = "usvg"
+version = "0.49.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d09b73ee83641d390ad7ffd9000f347b16eb128e437675b6ff277ea5c7fcf22c"
+dependencies = [
+ "base64",
+ "data-url",
  "fontdb",
  "harfrust 0.12.0",
  "imagesize",

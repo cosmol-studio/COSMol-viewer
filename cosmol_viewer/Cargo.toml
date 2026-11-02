@@ -15,4 +15,4 @@ cosmol_viewer_core.workspace = true
 cosmolkit.workspace = true
 
 [dev-dependencies]
-cosmolkit = { workspace = true, features = ["conformer"] }
+cosmolkit = { workspace = true, features = ["conformer", "depict"] }

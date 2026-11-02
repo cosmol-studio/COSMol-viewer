@@ -64,27 +64,16 @@ class ProjectionTests(unittest.TestCase):
 
 
 class Array:
-    def __init__(self, rows):
-        self.rows = rows
-
-    def tolist(self):
-        return self.rows
-
+    def __init__(self, rows): self.rows = rows
+    def tolist(self): return self.rows
 
 class ForeignMolecule:
     atoms = [types.SimpleNamespace(atomic_number=6)]
     bonds = []
     conformers_3d = []
     coordinates_2d = Array([[2.0, 3.0]])
-    layout_calls = 0
-
-    def with_kekulized_bonds(self):
-        return self
-
-    def with_2d_coordinates(self):
-        self.layout_calls += 1
-        return self
-
+    properties = types.SimpleNamespace(sdf_data_fields=[])
+    def atom_property_double(self, index, name): return None
 
 class ForeignProjectionTests(unittest.TestCase):
     def setUp(self):
@@ -95,51 +84,133 @@ class ForeignProjectionTests(unittest.TestCase):
         self.addCleanup(self.modules.stop)
 
     def test_nominal_external_type_and_property_projection(self):
-        with self.assertRaises(TypeError):
-            cv.Molecule.from_cosmolkit(object())
-        molecule = cv.Molecule.from_cosmolkit(ForeignMolecule())
-        self.assertEqual(list(molecule.get_center()), [2.0, 3.0, 0.0])
+        with self.assertRaises(TypeError): cv.select(object())
+        source = ForeignMolecule()
+        selected = cv.select(source).atoms()
+        self.assertEqual(selected.ids, [0])
+        scene = cv.Scene()
+        scene.show(source, selected, cv.BallAndStick())
+        scene.recenter_on(source)
 
-    def test_invalid_foreign_coordinates_never_trigger_layout_fallback(self):
+    def test_invalid_foreign_coordinates_never_change_scene(self):
         for rows in [[], [[1, 2], [3, 4]], [[1]], [[1, 2, 3]], [[float("inf"), 2]], [[1e100, 2]]]:
             source = ForeignMolecule()
             source.coordinates_2d = Array(rows)
+            scene = cv.Scene()
+            before = repr(scene)
             with self.subTest(rows=rows), self.assertRaises(ValueError):
-                cv.Molecule.from_cosmolkit(source)
-            self.assertEqual(source.layout_calls, 0)
+                scene.show(source, cv.select(source).atoms(), cv.BallAndStick())
+            self.assertEqual(repr(scene), before)
 
     def test_foreign_exception_identity_is_preserved(self):
         source = ForeignMolecule()
-        error = RuntimeError("foreign chemistry failed")
-
-        def fail():
-            raise error
-
-        source.with_kekulized_bonds = fail
-        with self.assertRaises(RuntimeError) as caught:
-            cv.Molecule.from_cosmolkit(source)
+        error = RuntimeError("foreign read failed")
+        def fail(*args): raise error
+        source.atom_property_double = fail
+        with self.assertRaises(RuntimeError) as caught: cv.select(source)
         self.assertIs(caught.exception, error)
-        self.assertEqual(source.layout_calls, 0)
 
     def test_first_stored_conformer_does_not_assume_id_zero(self):
         source = ForeignMolecule()
         source.conformers_3d = [types.SimpleNamespace(id=8, coordinates=Array([[4, 5, 6]]))]
-        converted = cv.Molecule.from_cosmolkit(source)
-        self.assertEqual(list(converted.get_center()), [4.0, 5.0, 6.0])
+        scene = cv.Scene()
+        scene.show(source, cv.select(source).atoms(), cv.BallAndStick().conformer(8))
+        scene.recenter_on(source)
 
 
 class InstalledCosmolkitTests(unittest.TestCase):
-    def test_real_molecule_with_and_without_stored_coordinates(self):
-        try:
-            import cosmolkit as ck
-        except ImportError:
-            self.skipTest("Optional COSMolKit package is not installed")
-        source = ck.mol_from_smiles("CCO")
+    @classmethod
+    def setUpClass(cls):
+        import cosmolkit
+        cls.ck = cosmolkit
+
+    def molecule(self):
+        return self.ck.Molecule.from_smiles("CO").with_added_3d_conformer([[0, 0, 1], [2, 0, 3]])
+
+    def test_real_source_selection_multiple_styles_and_named_replacement(self):
+        ck = self.ck
+        source = self.molecule()
         before = source.to_binary()
-        self.assertIsInstance(cv.Molecule.from_cosmolkit(source), cv.Molecule)
+        all_atoms = cv.select(source).atoms()
+        oxygen = all_atoms.element(ck.Element.O)
+        self.assertEqual(oxygen.ids, [1])
+        self.assertEqual(len(all_atoms), 2)
+        scene = cv.Scene()
+        scene.show_with_id("mol", source, all_atoms, cv.BallAndStick())
+        saved = repr(scene)
+        scene.show(source, oxygen, cv.SphereStyle().scale(1.4))
+        self.assertNotEqual(repr(scene), saved)
+        scene.recenter_on(source)
+        scene.show_with_id("mol", source, oxygen, cv.SphereStyle())
         self.assertEqual(source.to_binary(), before)
-        positioned = source.with_added_3d_conformer([[0, 0, 1], [1, 0, 2], [2, 0, 3]])
-        self.assertEqual(list(cv.Molecule.from_cosmolkit(positioned).get_center()), [1.0, 0.0, 2.0])
+        self.assertFalse(hasattr(cv, "Molecule"))
+        self.assertFalse(hasattr(cv, "Protein"))
+
+    def test_missing_coordinates_and_source_mismatch_are_atomic(self):
+        source = self.molecule()
+        selected = cv.select(source).atoms()
+        scene = cv.Scene()
+        scene.show_with_id("mol", source, selected, cv.BallAndStick())
+        before = repr(scene)
+        with self.assertRaisesRegex(ValueError, "different source"):
+            scene.show_with_id("mol", source.copy(), selected, cv.BallAndStick())
+        self.assertEqual(repr(scene), before)
+        source.set_atom_position_(0, [9, 9, 9])
+        with self.assertRaisesRegex(ValueError, "changed"):
+            scene.show_with_id("mol", source, selected, cv.BallAndStick())
+        self.assertEqual(repr(scene), before)
+        unpositioned = self.ck.Molecule.from_smiles("CO")
+        archive = unpositioned.to_binary()
+        with self.assertRaisesRegex(ValueError, "no stored coordinates"):
+            scene.show(unpositioned, cv.select(unpositioned).atoms(), cv.BallAndStick())
+        self.assertEqual(unpositioned.to_binary(), archive)
+        scene.show(source, cv.select(source).atoms(), cv.BallAndStick())
+
+    def test_aromatic_bonds_and_invalid_kind_or_style(self):
+        source = self.ck.Molecule.from_smiles("c1ccccc1").with_2d_coordinates()
+        aromatic = cv.select(source).bonds().aromatic()
+        self.assertEqual(len(aromatic), 6)
+        scene = cv.Scene()
+        scene.show(source, aromatic, cv.StickStyle())
+        before = repr(scene)
+        with self.assertRaises(ValueError): scene.show(source, aromatic, cv.BallAndStick())
+        with self.assertRaises(ValueError): cv.select(source).residues()
+        with self.assertRaises(ValueError): aromatic.element(self.ck.Element.C)
+        with self.assertRaises(TypeError): cv.select(source).atoms().element(8)
+        self.assertEqual(repr(scene), before)
+
+    def test_multiple_conformers_require_explicit_id(self):
+        source = self.molecule().with_added_3d_conformer([[1, 0, 1], [3, 0, 3]])
+        atoms = cv.select(source).atoms()
+        scene = cv.Scene()
+        with self.assertRaisesRegex(ValueError, "conformers"): scene.show(source, atoms, cv.BallAndStick())
+        scene.show(source, atoms, cv.BallAndStick().conformer(source.conformers_3d[-1].id))
+
+    def test_protein_and_ligand_use_ck_objects_directly(self):
+        from pathlib import Path
+        root = Path(__file__).resolve().parents[2] / "cosmol_viewer/examples"
+        protein = self.ck.Protein.from_mmcif((root / "6fi1.cif").read_text(encoding="utf-8"))
+        ligand = self.ck.Molecule.from_sdf((root / "6fi1_ligand.sdf").read_text(encoding="utf-8"))
+        residues = cv.select(protein).residues()
+        scene = cv.Scene()
+        scene.show_with_id("protein", protein, residues, cv.Cartoon().rainbow_residues())
+        scene.show_with_id("ligand", ligand, cv.select(ligand).atoms(), cv.BallAndStick())
+        scene.show(protein, cv.select(protein).atoms().element(self.ck.Element.O), cv.SphereStyle())
+        scene.recenter_on(ligand)
+        before = repr(scene)
+        with self.assertRaises(ValueError): scene.show(protein, residues, cv.BallAndStick())
+        protein.translate_([1, 0, 0])
+        with self.assertRaisesRegex(ValueError, "changed"): scene.show(protein, residues, cv.Cartoon())
+        self.assertEqual(repr(scene), before)
+
+    def test_style_validation_does_not_panic_or_mutate_on_error(self):
+        style = cv.SphereStyle()
+        for value in [0, -1, float("nan"), float("inf")]:
+            with self.subTest(value=value), self.assertRaises(ValueError): style.scale(value)
+        for value in [-1, 2, float("nan")]:
+            with self.assertRaises(ValueError): style.opacity(value)
+        self.assertIs(style.color("#123456").scale(1.4), style)
+        with self.assertRaises(ValueError): cv.Surface().configure(-1, .5, False, True)
 
 
 if __name__ == "__main__":

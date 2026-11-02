@@ -10,6 +10,10 @@ Rust source in build scripts, or patch generated code for individual methods.
 ## Ownership
 
 - `scene.rs` projects core scene state; `animation.rs` owns animation snapshots.
+- `selection.rs` declares checked external CK class references and reads public
+  CK members into shared core rendering inputs. Foreign references refer to a
+  separate WASM instance: never interpret them as local Rust/native pointers.
+- `styles.rs` projects display settings through `Style` factories and builders.
 - `viewer.rs` owns the browser renderer lifecycle and typed request dispatch.
 - `notebook.rs` decodes notebook inputs into those same typed operations.
 - `protocol.rs` and `utils.rs` own notebook transport, shared with Python.
@@ -53,6 +57,22 @@ they are not serialized into replacement objects. Invalid value inputs produce
 TypeError. Native operation errors follow the existing native error projection;
 the adapter does not classify errors by matching messages.
 
+External CK references declare the actual dependency type once with
+`typescript_type = "import(...).Type"`; runtime checks use the real imported CK
+constructors. The scientific-source union checks both imported classes.
+These are checked foreign types, not arbitrary annotation overrides or TS
+fragments inserted by build tooling. Temporary CK getter handles are released
+after reads, including error paths. Generated declarations retain the dependency
+imports. The dependency lives in Cargo package metadata; build tooling projects
+that metadata without an API inventory.
+
+Selectors retain the original JS object. `show` checks object identity and
+compares current rendering inputs with the captured input snapshot before any
+scene mutation. This O(source size) check detects changed rendering data; it is
+not a version token and does not track unrelated properties or edit history.
+Missing coordinates require explicit CK generation, and multiple conformers
+require an explicit style choice. Completed displays contain geometry snapshots.
+
 Structured types derive Tsify and Serde in their owning module and implement
 CheckedValue there, with no framework lookup entry. Structured outputs derive
 Serialize/Tsify and implement TypedOutput once, using `Ts::from_rust` for the
@@ -70,6 +90,10 @@ Notebook payload strings are internal transport endpoints, not replacements
 for typed Scene/Animation parameters. Native-only APIs remain absent in JS.
 The core registry audits semantic availability across languages; it does not
 generate signatures or supply a second implementation.
+The official ES module imports the CK dependency for those constructor checks.
+The build also bundles `notebook.js` with esbuild so injected Blob modules resolve
+without bare imports or external network fetches. It uses the same viewer WASM
+and methods; the bundle does not change individual generated APIs.
 
 ## Verification
 

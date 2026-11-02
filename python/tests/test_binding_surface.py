@@ -50,7 +50,7 @@ class BindingSurfaceTests(unittest.TestCase):
             with self.subTest(api=name):
                 owner, _, method = name.partition(".")
                 runtime = getattr(cv, owner)
-                self.assertIn(owner, classes)
+                self.assertIn(owner, classes if method or isinstance(runtime, type) else functions)
                 if method:
                     runtime = getattr(runtime, method)
                     methods = {node.name for node in classes[owner].body

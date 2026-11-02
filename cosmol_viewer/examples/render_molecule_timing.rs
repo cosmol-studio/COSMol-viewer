@@ -1,4 +1,5 @@
-use cosmol_viewer::{Scene, Viewer, shapes::Molecule};
+use cosmol_viewer::{BallAndStick, Scene, Viewer, select};
+use cosmolkit::Molecule;
 use std::time::Instant;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -6,9 +7,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let t_main = Instant::now();
 
-    let mol = Molecule::from_sdf(include_str!("../examples/6fi1_ligand.sdf"))?.centered();
+    let mol = Molecule::from_sdf(include_str!("6fi1_ligand.sdf"))?;
     let mut scene = Scene::new();
-    scene.add_shape_with_id("mol", mol);
+    scene.show_with_id("mol", &mol, &select(&mol).atoms(), BallAndStick::default())?;
+    scene.recenter_on(&mol)?;
 
     let viewer = Viewer::render(&scene, 800.0, 500.0)?;
     let t_after_render = Instant::now();

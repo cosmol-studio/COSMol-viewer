@@ -65,17 +65,19 @@ Install with `pip install cosmol-viewer`
 ### 1. Static molecular rendering
 
 ```python
-from cosmol_viewer import Molecule, Scene
+import cosmolkit as ck
+from cosmol_viewer import BallAndStick, Scene, select
 
 mol_data = open("molecule.sdf", "r", encoding="utf-8").read()
 
-mol = Molecule.from_sdf(mol_data).centered()
+mol = ck.Molecule.from_sdf(mol_data)
 
 scene = Scene()
 
 scene.set_scale(1.0)
 
-scene.add_shape_with_id("molecule", mol)
+scene.show_with_id("molecule", mol, select(mol).atoms(), BallAndStick())
+scene.recenter_on(mol)
 
 scene.set_camera_view(azimuth=35, elevation=20, distance=32, fov=18)
 scene.save_image("rendered_scene.png", width=1600, height=1000)
@@ -132,16 +134,28 @@ a transparent background.
 
 ### 2. Animation playback with `Viewer.play`
 
+Scientific objects stay in CK. Selections reject a different source object or
+changed rendering inputs; select again after an in-place edit. Coordinates must
+already exist. For extra molecular representations use `SphereStyle` or
+`StickStyle`; `Sphere`/`Stick` remain positioned primitives.
+
 ```python
-from cosmol_viewer import Scene, Viewer, Molecule, Animation
+from cosmol_viewer import SphereStyle
+oxygen = select(mol).atoms().element(ck.Element.O)
+scene.show(mol, oxygen, SphereStyle().scale(1.4))
+```
+
+```python
+import cosmolkit as ck
+from cosmol_viewer import Scene, Viewer, BallAndStick, Animation, select
 
 anim = Animation(interval=0.05, loops=-1, interpolate=False)
 for i in range(1, 10):
     with open(f"frames/frame_{i}.sdf", "r") as f:
-        mol = Molecule.from_sdf(f.read())
+        mol = ck.Molecule.from_sdf(f.read())
 
     scene = Scene()
-    scene.add_shape(mol)
+    scene.show(mol, select(mol).atoms(), BallAndStick())
     anim.add_frame(scene)
 
 Viewer.play(anim, width=800, height=500)  # loops=-1 for infinite repeat
@@ -150,21 +164,23 @@ Viewer.play(anim, width=800, height=500)  # loops=-1 for infinite repeat
 ### 3. Protein cartoon rendering
 
 ```python
-from cosmol_viewer import Protein, Scene, Viewer
+import cosmolkit as ck
+from cosmol_viewer import Cartoon, Scene, Viewer, select
 
 mmcif_data = open("protein.cif", "r", encoding="utf-8").read()
-protein = Protein.from_mmcif(mmcif_data).centered().rainbow_residues()
+protein = ck.Protein.from_mmcif(mmcif_data)
 
 scene = Scene()
-scene.add_shape_with_id("protein", protein)
+scene.show_with_id("protein", protein, select(protein).residues(), Cartoon().rainbow_residues())
+scene.recenter_on(protein)
 
 viewer = Viewer.render(scene, width=800, height=500)
 ```
 
-`Protein.from_mmcif()` and `Protein.from_pdb()` use COSMolKit's protein
-reader, then the viewer core assigns secondary structure before rendering a
+`ck.Protein.from_mmcif()` and `ck.Protein.from_pdb()` create the scientific
+object; the viewer core assigns secondary structure before rendering a
 ChimeraX-style cartoon ribbon mesh. Use
-`.rainbow_residues()` for ChimeraX-style residue rainbow coloring, or `.color("#10ACBF")`
+`Cartoon().rainbow_residues()` for ChimeraX-style residue rainbow coloring, or `Cartoon().color("#10ACBF")`
 for a uniform cartoon color.
 
 more examples can be found in the [examples](https://github.com/COSMol-repl/COSMol-viewer/tree/main/cosmol_viewer/examples) folder:

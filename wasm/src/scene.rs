@@ -23,6 +23,47 @@ impl crate::input::NativeOutput for Scene {}
     cosmol_viewer_derive::checked_wasm
 )]
 impl Scene {
+    #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
+    pub fn show(
+        &self,
+        source: &crate::selection::ScientificInput,
+        selection: &crate::selection::Selection,
+        style: &crate::styles::Style,
+    ) -> Result<(), wasm_bindgen::JsValue> {
+        let display = selection.project(source, style.inner)?;
+        self.state
+            .lock()
+            .unwrap()
+            .add_shape(cosmol_viewer_core::utils::Shape::Display(display));
+        Ok(())
+    }
+    #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
+    pub fn show_with_id(
+        &self,
+        id: String,
+        source: &crate::selection::ScientificInput,
+        selection: &crate::selection::Selection,
+        style: &crate::styles::Style,
+    ) -> Result<(), wasm_bindgen::JsValue> {
+        let display = selection.project(source, style.inner)?;
+        self.state
+            .lock()
+            .unwrap()
+            .add_shape_with_id(id, cosmol_viewer_core::utils::Shape::Display(display));
+        Ok(())
+    }
+    #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
+    pub fn recenter_on(
+        &self,
+        source: &crate::selection::ScientificInput,
+    ) -> Result<(), wasm_bindgen::JsValue> {
+        let center = source
+            .capture()?
+            .center()
+            .map_err(|e| js_sys::Error::new(&e.to_string()))?;
+        self.state.lock().unwrap().recenter(center);
+        Ok(())
+    }
     pub fn new() -> Self {
         CoreScene::new().into()
     }

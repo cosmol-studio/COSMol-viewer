@@ -7,6 +7,7 @@ Project release version changes are described in [the root guide](../DEV.md).
 
 ```bash
 python -m pip install "maturin==1.15.0" "basedpyright==1.40.2" cosmolkit
+python wasm/build.py --check
 python python/build.py --install-extractor --check
 ```
 

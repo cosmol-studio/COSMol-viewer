@@ -7,6 +7,9 @@ wasm-bindgen extractor. Its JavaScript and `.d.ts` output is used unchanged.
 See [BINDING_CONTRACT.md](BINDING_CONTRACT.md) for architectural constraints and
 [DEV.md](DEV.md) for build commands.
 
+For a runnable frontend page with CK molecules, proteins, selections, animation
+and screenshots, see [the browser example](examples/browser/README.md).
+
 ## Typed JavaScript API
 
 The npm package is `@cosmol-studio/cosmol-viewer`. Install prereleases with
@@ -62,9 +65,39 @@ scene.free();
   the viewer rejects pending screenshot waits.
 - Coordinates use `Float32Array`; RGB colors use `Uint8Array`; loop counts use
   `bigint`. Async failures reject, and synchronous failures throw.
-- Scene supports camera, lighting, backgrounds, depth cue, sphere/stick creation,
-  merging and removal. Dedicated molecule/protein shape bindings remain future
-  work; this change does not claim all scientific-object APIs are exported.
+- Scene also supports CK-backed molecular/protein displays through `select`,
+  `show`, `showWithId` and `recenterOn`, in addition to positioned primitives.
+
+## COSMolKit scientific objects
+
+Initialize the CK and viewer WASM packages separately. For example, in a bundled
+browser application after both default initializers have completed:
+
+```js
+import * as ck from "@cosmol-studio/cosmolkit";
+import * as cv from "@cosmol-studio/cosmol-viewer";
+
+const mol = ck.Molecule.fromSdf(sdf);
+const oxygen = cv.select(mol).atoms().element(ck.Element.fromSymbol("O"));
+const scene = cv.Scene.new();
+scene.show(mol, cv.select(mol).atoms(), cv.Style.ballAndStick());
+scene.show(mol, oxygen, cv.Style.sphere().scale(1.4));
+scene.recenterOn(mol);
+const viewer = await cv.Viewer.render(scene, 800, 500);
+```
+
+`Style.stick()` accepts molecular atoms or bonds; `select(mol).bonds().aromatic()`
+reads CK aromatic flags. For a CK Protein, use `select(protein).residues()` with
+`Style.cartoon().rainbowResidues()`, or atom selections with `Style.sphere()`
+or `Style.surface()`. Protein bond representations are not implemented.
+
+Selections keep the exact original JS object. A different object or changed
+rendering inputs are rejected before scene mutation; select again after an
+in-place edit. Geometry snapshots survive later CK edits and source deletion.
+No coordinates are generated implicitly. Use `.conformer(id)` when multiple
+3D conformers exist, or `.coordinates2d()` for stored 2D coordinates.
+`Style` builders return independent styles; free temporary handles normally.
+No viewer-defined Molecule/Protein wrapper is needed or exported.
 
 ## Notebook transport is separate
 

@@ -15,8 +15,41 @@ All notable changes to COSMol Viewer are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-The text between the `release-header` markers is prepended to every GitHub
-Release. The release workflow extracts the section matching the pushed tag.
+The manually triggered GitHub Release workflow uses an unreleased `v*` tag on
+the selected commit. It combines the release-header, matching dated version
+section and release-footer without modifying an existing Release.
+
+## [0.6.0-rc.1] - 2026-11-02
+
+### Added
+
+- Source-bound molecule/protein selections and independent display styles for
+  Rust, Python and JavaScript, including named scene projections and source-based
+  camera centering.
+- A runnable browser example covering molecular and protein displays, selection
+  highlighting, scene updates, animation and PNG screenshots. It installs the
+  local Viewer build as an ordinary npm dependency.
+
+### Changed
+
+- Scientific objects now come directly from COSMolKit 0.6.0. Removed the viewer's
+  Molecule/Protein wrappers; geometry generation is shared across all bindings.
+- Rendering reads stored coordinates without implicit chemical transformations.
+  Multiple molecular conformers require explicit selection.
+- Python and JavaScript validate source identity and changed rendering inputs
+  before inserting or replacing displays.
+- Notebook bootstrapping uses a self-contained bundle of the generated browser
+  module; public JavaScript callers retain the typed Scene and Animation APIs.
+
+### Fixed
+
+- Aligned publishing with COSMolKit: validate matching Rust/Python/WASM versions,
+  build wheels in a shared platform matrix, and publish packages only for matching
+  version tags or explicitly requested dev/RC builds.
+- GitHub Releases are created separately on demand, preserve existing releases,
+  accept equivalent Cargo/Python RC versions, and mark prereleases correctly.
+- Notebook command tests pass large payloads through stdin instead of exceeding
+  the Windows command-line length limit.
 
 ## [0.3.0] - 2026-08-28
 
@@ -88,4 +121,8 @@ Release. The release workflow extracts the section matching the pushed tag.
 
 [0.2.25]: https://github.com/cosmol-studio/COSMol-viewer/compare/v0.2.24...v0.2.25
 [0.2.26]: https://github.com/cosmol-studio/COSMol-viewer/compare/v0.2.25...v0.2.26
+
+<!-- release-footer:start -->
+Installation and API usage: [COSMol Viewer documentation](https://viewer.cosmol.org/).
+<!-- release-footer:end -->
 [0.3.0]: https://github.com/cosmol-studio/COSMol-viewer/compare/v0.2.26...v0.3.0

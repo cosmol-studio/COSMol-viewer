@@ -44,20 +44,22 @@ def verify_backend(mode):
     if mode == "colab":
         sys.modules["google.colab"] = types.ModuleType("google.colab")
 
-    from cosmol_viewer import Animation, Protein, Scene, Viewer
+    from cosmol_viewer import Animation, Cartoon, Scene, Viewer, select
+    from cosmolkit import Protein
 
     assert callable(Viewer.keep_alive)
     assert callable(Viewer.is_open)
 
     scene = Scene()
     # Exercise the temporary CK residue-name Serde adapter in actual WASM payloads.
-    scene.add_shape(Protein.from_pdb("""\
+    protein = Protein.from_pdb("""\
 ATOM      1  N   MSE A   1      11.104  13.207   9.900  1.00 20.00           N
 ATOM      2  CA  MSE A   1      12.210  13.912  10.555  1.00 20.00           C
 ATOM      3  C   MSE A   1      13.470  13.079  10.413  1.00 20.00           C
 ATOM      4  O   MSE A   1      14.000  12.500  11.000  1.00 20.00           O
 END
-"""))
+""")
+    scene.show_with_id("protein", protein, select(protein).residues(), Cartoon())
     animation = Animation(interval=0.1, loops=1, interpolate=False)
     animation.add_frame(scene)
 
@@ -175,23 +177,23 @@ def verify_wasm_receiver(payloads, startups):
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
+const {contract: expectedContract, startups, payloads} = JSON.parse(readFileSync(0, 'utf8'));
 const mod = await import(pathToFileURL(process.argv[1]).href);
 await mod.default({ module_or_path: readFileSync(process.argv[2]) });
 const app = mod.Viewer.new();
 const contract = JSON.parse(mod.bindingContractJson());
-assert.deepEqual(contract, JSON.parse(process.argv[3]));
+assert.deepEqual(contract, expectedContract);
 const wait = contract.find(entry => entry.semantic_id === 'Viewer.keep_alive');
 assert.deepEqual(wait.python.platforms, ['native']);
 assert.equal(wait.javascript.name, null);
 assert.ok(wait.javascript.unsupported_reason);
 assert.equal(typeof app.keepAlive, 'undefined');
-for (const payload of process.argv.slice(5)) {
+for (const payload of payloads) {
     assert.throws(
         () => app.dispatch(payload),
         error => String(error).includes('before app initialization'),
     );
 }
-const startups = JSON.parse(process.argv[4]);
 for (const payload of startups.scene_payload) {
     await assert.rejects(mod.Viewer.renderNotebook('missing-canvas', payload),
         error => String(error).includes('Canvas not found'));
@@ -204,9 +206,10 @@ app.free();
 """
     result = subprocess.run(
         [node, "--input-type=module", "-e", script,
-         str(pkg / "cosmol_viewer_wasm.js"),
-         str(pkg / "cosmol_viewer_wasm_bg.wasm"),
-         __import__("cosmol_viewer").binding_contract_json(), json.dumps(startups), *payloads],
+         str(pkg / "notebook.js"),
+         str(pkg / "cosmol_viewer_wasm_bg.wasm")],
+        input=json.dumps({"contract": json.loads(__import__("cosmol_viewer").binding_contract_json()),
+                          "startups": startups, "payloads": payloads}),
         capture_output=True,
         text=True,
         encoding="utf-8",

@@ -1,5 +1,6 @@
 use cosmol_viewer_core::parser::utils::Residue;
-use cosmol_viewer_core::shapes::Protein;
+use cosmol_viewer_core::{scene::Scene, selection::select, styles::Cartoon};
+use cosmolkit::Protein;
 use cosmolkit::{self as ck, ResidueCode};
 use glam::Vec3;
 
@@ -61,18 +62,26 @@ fn pdb_keeps_ck_standard_and_modified_residue_codes() {
         ("DPR", ResidueCode::DPR),
     ] {
         let protein = Protein::from_pdb(&PDB.replace("ALA", name)).unwrap();
-        assert_eq!(protein.chains.len(), 1, "{name}");
-        assert_eq!(protein.chains[0].residues.len(), 1, "{name}");
-        assert_eq!(protein.chains[0].residues[0].residue_type, expected);
+        let mut scene = Scene::new();
+        scene
+            .show(&protein, &select(&protein).residues(), Cartoon::default())
+            .unwrap();
+        assert_eq!(protein.chains().count(), 1, "{name}");
+        assert_eq!(protein.residues().count(), 1, "{name}");
+        assert_eq!(protein.residues().next().unwrap().code(), expected);
     }
 }
 
 #[test]
 fn mmcif_keeps_modified_residue_identity() {
     let protein = Protein::from_mmcif(MMCIF).unwrap();
-    assert_eq!(protein.chains.len(), 1);
-    assert_eq!(protein.chains[0].residues.len(), 1);
-    assert_eq!(protein.chains[0].residues[0].residue_type, ResidueCode::MSE);
+    let mut scene = Scene::new();
+    scene
+        .show(&protein, &select(&protein).residues(), Cartoon::default())
+        .unwrap();
+    assert_eq!(protein.chains().count(), 1);
+    assert_eq!(protein.residues().count(), 1);
+    assert_eq!(protein.residues().next().unwrap().code(), ResidueCode::MSE);
 }
 
 #[test]
@@ -121,14 +130,27 @@ fn temporary_serde_rejects_invalid_names_instead_of_guessing_unknown() {
 }
 
 #[test]
-fn protein_postcard_round_trip_preserves_modified_residues_and_ribbon_data() {
-    let mut protein = Protein::from_mmcif(MMCIF).unwrap();
-    protein.chains[0].init_ss();
-    let bytes = postcard::to_allocvec(&protein).unwrap();
-    let decoded: Protein = postcard::from_bytes(&bytes).unwrap();
-    assert_eq!(decoded.chains[0].residues[0].residue_type, ResidueCode::MSE);
+fn scene_postcard_round_trip_transports_render_data_not_a_scientific_protein() {
+    let protein =
+        Protein::from_mmcif(include_str!("../../../cosmol_viewer/examples/6fi1.cif")).unwrap();
+    let mut scene = Scene::new();
+    scene
+        .show(
+            &protein,
+            &select(&protein).residues(),
+            Cartoon::default().rainbow_residues(),
+        )
+        .unwrap();
+    let bytes = postcard::to_allocvec(&scene).unwrap();
+    let decoded: Scene = postcard::from_bytes(&bytes).unwrap();
     assert_eq!(
-        decoded.chains[0].get_ribbon_info(),
-        protein.chains[0].get_ribbon_info()
+        serde_json::to_value(&decoded).unwrap(),
+        serde_json::to_value(&scene).unwrap()
+    );
+    // Modified residue names remain CK-owned; only derived render geometry travels.
+    assert!(
+        !serde_json::to_string(&scene)
+            .unwrap()
+            .contains("residue_type")
     );
 }

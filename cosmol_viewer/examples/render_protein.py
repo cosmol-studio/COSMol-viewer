@@ -1,14 +1,15 @@
-from cosmol_viewer import Protein, Scene, Viewer
+import cosmolkit as ck
+from cosmol_viewer import Cartoon, Scene, Viewer, select
 
 mmcif_data = open("./examples/6fi1.cif", "r", encoding="utf-8").read()
 
-prot = Protein.from_mmcif(mmcif_data).rainbow_residues()
+prot = ck.Protein.from_mmcif(mmcif_data)
 
 scene = Scene()
 # scene.use_black_background()
 scene.set_scale(0.25)
-scene.recenter(prot.get_center())
-scene.add_shape_with_id("prot", prot)
+scene.recenter_on(prot)
+scene.show_with_id("prot", prot, select(prot).residues(), Cartoon().rainbow_residues())
 scene.set_background_color("#021529")
 scene.set_camera_view(azimuth=180, elevation=0, distance=32, fov=18)
 

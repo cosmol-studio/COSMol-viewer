@@ -1,4 +1,24 @@
 import { Viewer, Scene, Animation, bindingContractJson } from "cosmol-viewer-generated";
+import { select, Style, Selection, Selector } from "cosmol-viewer-generated";
+import type { Molecule, Protein, Element } from "@cosmol-studio/cosmolkit";
+
+declare const molecule: Molecule;
+declare const protein: Protein;
+declare const oxygen: Element;
+const selectedSource: Selector = select(molecule);
+const selectedAtoms: Selection = selectedSource.atoms().element(oxygen);
+const selectedIds: Uint32Array = selectedAtoms.ids();
+const scientificScene: Scene = Scene.new();
+const shown: void = scientificScene.show(molecule, selectedAtoms, Style.sphere().scale(1.4));
+scientificScene.showWithId("protein", protein, select(protein).residues(), Style.cartoon().rainbowResidues());
+scientificScene.recenterOn(molecule);
+// @ts-expect-error Foreign source types must not collapse to any.
+select({});
+// @ts-expect-error Element filtering accepts the real CK Element type.
+selectedAtoms.element(8);
+// @ts-expect-error A rendering style is a native Style handle.
+scientificScene.show(molecule, selectedAtoms, {kind: "sphere"});
+void [shown, selectedIds];
 
 const scene: Scene = Scene.new();
 scene.addSphere("sphere", new Float32Array([0, 0, 0]), 1);

@@ -1,21 +1,15 @@
-from cosmol_viewer import Protein, Scene, Viewer
+import cosmolkit as ck
+from cosmol_viewer import Cartoon, Scene, Surface, Viewer, select
 
 mmcif_data = open("./examples/6fi1.cif", "r", encoding="utf-8").read()
 
-protein = Protein.from_mmcif(mmcif_data).centered().rainbow_residues()
-
-protein_surface = (
-    Protein.from_mmcif(mmcif_data)
-    .centered()
-    .surface()
-    .color("#DCE8F2")
-    .opacity(0.9)
-)
+protein = ck.Protein.from_mmcif(mmcif_data)
 
 scene = Scene()
 scene.set_scale(0.2)
-scene.add_shape(protein)
-scene.add_shape(protein_surface)
+scene.show(protein, select(protein).residues(), Cartoon().rainbow_residues())
+scene.show(protein, select(protein).atoms(), Surface().color("#DCE8F2").opacity(0.9))
+scene.recenter_on(protein)
 scene.set_background_color("#021529")
 scene.set_depth_cue(True)
 scene.set_depth_cue_range(0.3,1.0)

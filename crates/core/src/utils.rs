@@ -1,7 +1,8 @@
 use glam::{Mat4, Vec3, Vec4};
 use serde::{Deserialize, Serialize};
 
-use crate::shapes::{Molecule, Protein, Sphere, SphereInstance, Stick, StickInstance};
+use crate::display::Display;
+use crate::shapes::{Sphere, SphereInstance, Stick, StickInstance};
 
 pub trait Logger: Send + Sync + Copy {
     fn log(&self, message: impl std::fmt::Display);
@@ -65,8 +66,7 @@ pub trait Interpolatable {
 pub enum Shape {
     Sphere(Sphere),
     Stick(Stick),
-    Molecules(Molecule),
-    Protein(Protein),
+    Display(Display),
     Qudrate, // Custom(CustomShape),
              // ...
 }
@@ -89,15 +89,13 @@ impl Interpolatable for Shape {
         match (self, other) {
             (Shape::Sphere(a), Shape::Sphere(b)) => Shape::Sphere(a.interpolate(b, t, logger)),
             (Shape::Stick(a), Shape::Stick(b)) => Shape::Stick(a.interpolate(b, t, logger)),
-            (Shape::Molecules(a), Shape::Molecules(b)) => {
-                Shape::Molecules(a.interpolate(b, t, logger))
-            }
+            (Shape::Display(a), Shape::Display(b)) => Shape::Display(a.interpolate(b, t, logger)),
             _ => self.clone(), // 如果类型不匹配，可以选择不插值或做默认处理
         }
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct InstanceGroups {
     pub spheres: Vec<SphereInstance>,
     pub sticks: Vec<StickInstance>,
@@ -129,7 +127,7 @@ impl Default for OutlineSettings {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct OutlineInstanceGroup {
     pub settings: OutlineSettings,
     pub spheres: Vec<SphereInstance>,
@@ -144,8 +142,8 @@ impl IntoInstanceGroups for Shape {
             Shape::Sphere(s) => {
                 groups.spheres.push(s.to_instance(scale));
             }
-            Shape::Molecules(m) => {
-                let m_groups = m.to_instance_group(scale);
+            Shape::Display(display) => {
+                let m_groups = display.instances(scale);
                 groups.merge(m_groups);
             }
             _ => {}
@@ -167,14 +165,13 @@ impl ToMesh for Shape {
         match self {
             Shape::Sphere(s) => s.to_mesh(scale),
             Shape::Stick(s) => s.to_mesh(scale),
-            Shape::Molecules(s) => s.to_mesh(scale),
-            Shape::Protein(s) => s.to_mesh(scale),
+            Shape::Display(display) => display.mesh(scale),
             Shape::Qudrate => todo!(),
         }
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct MeshData {
     pub vertices: Vec<Vec3>,
     pub normals: Vec<Vec3>,

@@ -12,7 +12,7 @@ const playwright = process.env.PLAYWRIGHT_MODULE || join(root, "target/browser-c
 const { chromium } = await import(pathToFileURL(playwright));
 
 test("typed JS scenes render/update/screenshot and animations play in a real browser", { timeout: 60000 }, async () => {
-    const files = new Set(["cosmol_viewer_wasm.js", "cosmol_viewer_wasm_bg.wasm"]);
+    const files = new Set(["notebook.js", "cosmol_viewer_wasm_bg.wasm"]);
     const server = createServer(async (request, response) => {
         const name = request.url.slice(1);
         if (request.url === "/") {
@@ -39,8 +39,8 @@ test("typed JS scenes render/update/screenshot and animations play in a real bro
         page.on("dialog", dialog => { errors.push(dialog.message()); dialog.dismiss(); });
         await page.goto(`http://127.0.0.1:${server.address().port}/`);
         const result = await page.evaluate(async () => {
-            const cv = await import("/cosmol_viewer_wasm.js");
-            await cv.default();
+            const cv = await import("/notebook.js");
+            await cv.default({module_or_path: "/cosmol_viewer_wasm_bg.wasm"});
             const scene = cv.Scene.new();
             scene.addSphere("sphere", new Float32Array([0, 0, 0]), 1);
             scene.setBackgroundColor(new Uint8Array([0, 0, 0]));

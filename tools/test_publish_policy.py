@@ -1,62 +1,72 @@
-"""Exercise the workflow's actual publishing policy without uploading packages."""
-
+"""Exercise the shared publish policy without uploading packages."""
+import importlib.util
 import os
 from pathlib import Path
-import re
-import textwrap
+import tempfile
 import unittest
 from unittest import mock
 
+from publish_policy import check_versions
+import publish_policy
 
 ROOT = Path(__file__).resolve().parents[1]
 
-
 class PublishPolicyTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.workflow = (ROOT / ".github/workflows/publish.yml").read_text(encoding="utf-8")
-        match = re.search(r"          python - <<'PY'\n(.*?)          PY\n", cls.workflow, re.S)
-        if match is None:
-            raise AssertionError("Missing workflow publishing policy")
-        cls.policy = compile(textwrap.dedent(match[1]), "<workflow publishing policy>", "exec")
-
     def test_publishing_policy(self):
         cases = [
-            ("manual RC publish", "0.5.0-rc.2", "0.5.0rc2", "workflow_dispatch", "true", True, False),
-            ("manual stable publish", "0.5.0", "0.5.0", "workflow_dispatch", "true", False, True),
-            ("manual stable build", "0.5.0", "0.5.0", "workflow_dispatch", "false", False, False),
-            ("stable tag push", "0.5.0", "0.5.0", "push", "", False, False),
-            ("mismatched RCs", "0.5.0-rc.2", "0.5.0rc1", "workflow_dispatch", "true", False, True),
-            ("stable Python", "0.5.0-rc.2", "0.5.0", "workflow_dispatch", "true", False, True),
-            ("other prereleases", "0.5.0-beta.2", "0.5.0b2", "workflow_dispatch", "true", False, True),
-            ("stable pull request", "0.5.0", "0.5.0", "pull_request", "", False, False),
+            ("manual RC publish", "0.6.0-rc.1", "0.6.0rc1", "workflow_dispatch", True, True),
+            ("manual RC build", "0.6.0-rc.1", "0.6.0rc1", "workflow_dispatch", False, True),
+            ("manual dev publish", "0.6.0-dev.1", "0.6.0.dev1", "workflow_dispatch", True, True),
+            ("manual stable build", "0.6.0", "0.6.0", "workflow_dispatch", False, False),
+            ("stable tag push", "0.6.0", "0.6.0", "push", False, False),
+            ("RC tag push", "0.6.0-rc.1", "0.6.0rc1", "push", False, True),
+            ("stable pull request", "0.6.0", "0.6.0", "pull_request", False, False),
         ]
-        for name, rust, python, event, requested, allowed, rejected in cases:
+        for name, rust, python, event, requested, allowed in cases:
             with self.subTest(name=name):
-                files = mock.mock_open()
-                versions = [
-                    {"workspace": {"package": {"version": rust}}},
-                    {"project": {"version": python}},
-                ]
-                env = {
-                    "GITHUB_OUTPUT": "test-output",
-                    "GITHUB_EVENT_NAME": event,
-                    "PUBLISH_REQUESTED": requested,
-                }
-                with mock.patch("builtins.open", files), mock.patch("tomllib.load", side_effect=versions), mock.patch.dict(os.environ, env, clear=True):
-                    if rejected:
-                        with self.assertRaisesRegex(SystemExit, "Stable releases must be published by pushing a tag"):
-                            exec(self.policy, {})
-                    else:
-                        exec(self.policy, {})
-                files().write.assert_called_once_with(f"manual_publish_allowed={str(allowed).lower()}\n")
+                ref = f"refs/tags/v{rust}" if event == "push" else "refs/heads/main"
+                self.assertEqual(check_versions(rust, python, rust, event, ref, requested), allowed)
 
-    def test_all_publish_steps_use_the_same_guard(self):
-        condition = "if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || (github.event_name == 'workflow_dispatch' && inputs.publish && needs.wasm.outputs.manual_publish_allowed == 'true') }}"
-        self.assertEqual(self.workflow.count(condition), 3)
-        self.assertIn("needs: [wasm, linux, windows, macos, sdist]", self.workflow)
-        self.assertIn("manual_publish_allowed: ${{ steps.release_policy.outputs.manual_publish_allowed }}", self.workflow)
+    def test_stable_manual_publication_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "stable releases by pushing a tag"):
+            check_versions("0.6.0", "0.6.0", "0.6.0", "workflow_dispatch", "", True)
 
+    def test_versions_and_tag_must_match(self):
+        for python, wasm in (("0.6.0rc2", "0.6.0-rc.1"), ("0.6.0", "0.6.0-rc.1"), ("0.6.0rc1", "0.6.0-rc.2")):
+            with self.subTest(python=python, wasm=wasm), self.assertRaisesRegex(ValueError, "must match"):
+                check_versions("0.6.0-rc.1", python, wasm, "workflow_dispatch", "", True)
+        with self.assertRaisesRegex(ValueError, "Release tag"):
+            check_versions("0.6.0-rc.1", "0.6.0rc1", "0.6.0-rc.1", "push", "refs/tags/v0.6.0-rc.2", False)
+        for version in ("0.6.0-beta.2", "0.6.0rc1"):
+            with self.subTest(version=version), self.assertRaises(ValueError):
+                check_versions(version, "0.6.0rc1", version, "workflow_dispatch", "", True)
+
+    def test_cli_resolves_inherited_wasm_version_and_writes_output(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "python").mkdir()
+            (root / "wasm").mkdir()
+            (root / "Cargo.toml").write_text('[workspace.package]\nversion = "0.6.0-rc.1"\n', encoding="utf-8")
+            (root / "python/pyproject.toml").write_text('[project]\nversion = "0.6.0rc1"\n', encoding="utf-8")
+            (root / "wasm/Cargo.toml").write_text('[package]\nversion.workspace = true\n', encoding="utf-8")
+            output = root / "outputs"
+            with mock.patch.object(publish_policy, "ROOT", root), mock.patch.dict(os.environ, {
+                "GITHUB_EVENT_NAME": "workflow_dispatch", "PUBLISH_REQUESTED": "true", "GITHUB_OUTPUT": str(output)
+            }, clear=True):
+                publish_policy.main()
+            self.assertEqual(output.read_text(encoding="utf-8"), "manual_publish_allowed=true\n")
+
+    def test_publish_job_waits_for_all_artifacts_and_has_one_guard(self):
+        workflow = (ROOT / ".github/workflows/publish.yml").read_text(encoding="utf-8")
+        condition = "if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || (github.event_name == 'workflow_dispatch' && inputs.publish && needs.build-wasm.outputs.manual_publish_allowed == 'true') }}"
+        self.assertEqual(workflow.count(condition), 1)
+        self.assertIn("needs: [build-wasm, generate-stubs, build-wheels, build-sdist]", workflow)
+        self.assertIn("python tools/publish_policy.py", workflow)
+        self.assertIn("pattern: wheels-*", workflow)
+        self.assertIn("merge-multiple: true", workflow)
+        self.assertIn("name: sdist", workflow)
+        self.assertIn("npm pack --dry-run --json", workflow)
+        self.assertIn("fail-fast: false", workflow)
 
 if __name__ == "__main__":
     unittest.main()

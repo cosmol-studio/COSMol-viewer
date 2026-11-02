@@ -55,7 +55,7 @@ def main() -> None:
         ], cwd=ROOT, env=env, check=True)
         config = output / "typing.json"
         config.write_text(json.dumps({
-            "include": [str(HERE / "tests/typing/positive.py"), str(stub)],
+            "include": [str(HERE / "tests/typing"), str(stub)],
             "extraPaths": [str(package)], "pythonVersion": "3.10",
             "typeCheckingMode": "strict", "reportMissingModuleSource": False,
         }, indent=2), encoding="utf-8")

@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>COSMol Viewer · Browser example</title>
+  <link rel="icon" href="data:,">
+  <style>
+    :root { font-family: system-ui, sans-serif; color: #16324a; background: #f3f6f8; color-scheme: light; }
+    body { max-width: 1000px; margin: 40px auto; padding: 0 20px; }
+    h1 { font-size: 1.8rem; margin-bottom: 8px; }
+    p { line-height: 1.6; }
+    nav, .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 20px 0; }
+    button { padding: 9px 14px; background: white; color: inherit; border: 1px solid #b7c8d5; border-radius: 6px; cursor: pointer; font: inherit; }
+    button[aria-pressed="true"] { background: #16324a; color: white; }
+    button:disabled { opacity: .5; cursor: wait; }
+    label { display: inline-flex; align-items: center; gap: 6px; }
+    canvas { display: block; width: 100%; aspect-ratio: 8 / 5; background: #021529; border-radius: 10px; touch-action: none; }
+    #status { min-height: 1.6em; }
+    #status[data-error="true"] { color: #a02020; }
+    a { color: #145d8b; }
+  </style>
+  <!-- Both packages must resolve to the same CK module for source type checks. -->
+  <script type="importmap">
+  {
+    "imports": {
+      "@cosmol-studio/cosmolkit": "./node_modules/@cosmol-studio/cosmolkit/cosmolkit_wasm.js",
+      "@cosmol-studio/cosmol-viewer": "./node_modules/@cosmol-studio/cosmol-viewer/cosmol_viewer_wasm.js"
+    }
+  }
+  </script>
+</head>
+<body>
+  <h1>COSMol Viewer</h1>
+  <p>CK objects, selections and display styles in a browser. Drag to rotate and scroll to zoom.</p>
+  <nav aria-label="Examples">
+    <button data-mode="molecule" aria-pressed="false" disabled>Molecule</button>
+    <button data-mode="protein" aria-pressed="false" disabled>Protein + ligand</button>
+    <button data-mode="animation" aria-pressed="false" disabled>Animation</button>
+  </nav>
+  <canvas id="viewer" width="800" height="500" aria-label="Molecular scene"></canvas>
+  <div class="controls">
+    <button id="update" disabled>Update ligand color</button>
+    <label><input id="oxygen" type="checkbox" disabled>Highlight oxygen</label>
+    <label><input id="fps" type="checkbox" disabled>Show FPS</label>
+    <label><input id="camera" type="checkbox" disabled>Show camera parameters</label>
+    <button id="screenshot" disabled>Save PNG</button>
+  </div>
+  <p id="status" role="status">Loading WASM…</p>
+  <p><a href="./main.js">Example source</a> · <a href="./README.md">Run instructions</a></p>
+  <script type="module" src="./main.js"></script>
+</body>
+</html>

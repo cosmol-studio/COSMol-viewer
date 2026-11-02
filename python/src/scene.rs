@@ -12,7 +12,8 @@ background color. Static image export is also a scene-level operation via
 ``scene.save_image(...)`` and ``scene.to_png(...)``; it does not depend on a
 ``Viewer`` instance or the current notebook/browser/window size.
 
-Supported shape types include ``Sphere``, ``Stick``, ``Molecule``, and ``Protein``.
+Positioned shapes include ``Sphere`` and ``Stick``. Use ``show`` with CK
+objects, selections and styles for molecular/protein displays.
 Shapes can optionally be assigned a string ``id`` so they can be updated or removed later.
 
 Examples
@@ -27,6 +28,42 @@ pub struct Scene {
 
 #[pymethods]
 impl Scene {
+    /// Add a CK source selection with an independent rendering style.
+    pub(crate) fn show(
+        &mut self,
+        source: crate::selection::ScientificInput<'_>,
+        selection: &crate::selection::Selection,
+        style: crate::styles::StyleInput,
+    ) -> PyResult<()> {
+        let display = selection.project(source, style.representation())?;
+        self.inner
+            .add_shape(cosmol_viewer_core::utils::Shape::Display(display));
+        Ok(())
+    }
+    /// Replace a named display only after source/selection validation succeeds.
+    pub(crate) fn show_with_id(
+        &mut self,
+        id: &str,
+        source: crate::selection::ScientificInput<'_>,
+        selection: &crate::selection::Selection,
+        style: crate::styles::StyleInput,
+    ) -> PyResult<()> {
+        let display = selection.project(source, style.representation())?;
+        self.inner
+            .add_shape_with_id(id, cosmol_viewer_core::utils::Shape::Display(display));
+        Ok(())
+    }
+    pub(crate) fn recenter_on(
+        &mut self,
+        source: crate::selection::ScientificInput<'_>,
+    ) -> PyResult<()> {
+        let center = source
+            .capture()?
+            .center()
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        self.inner.recenter(center);
+        Ok(())
+    }
     #[new]
     pub fn new() -> Self {
         Self {
@@ -39,7 +76,7 @@ Add a shape to the scene without assigning an explicit ID.
 
 Parameters
 ----------
-shape : Sphere or Stick or Molecule or Protein
+shape : Sphere or Stick
     A shape instance to add to the scene.
 "#]
     pub fn add_shape(&mut self, shape: ShapeInput) -> PyResult<()> {
@@ -55,7 +92,7 @@ Parameters
 ----------
 id : str
     A unique string identifier for the shape.
-shape : Sphere or Stick or Molecule or Protein
+shape : Sphere or Stick
     A shape instance to add to the scene.
 
 Notes
@@ -75,7 +112,7 @@ Parameters
 ----------
 id : str
     The ID of the shape to replace.
-shape : Sphere or Stick or Molecule or Protein
+shape : Sphere or Stick
     The new shape object.
 "#]
     pub fn replace_shape(&mut self, id: &str, shape: ShapeInput) -> PyResult<()> {

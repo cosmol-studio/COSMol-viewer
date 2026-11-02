@@ -1,8 +1,7 @@
 use cosmol_viewer_core::{
-    scene::Scene,
-    shapes::Molecule,
-    utils::{InstanceGroups, IntoInstanceGroups},
+    scene::Scene, selection::select, styles::BallAndStick, utils::InstanceGroups,
 };
+use cosmolkit::Molecule;
 use std::{hint::black_box, time::Instant};
 
 const SDF: &str = include_str!("../../../cosmol_viewer/examples/6fi1_ligand.sdf");
@@ -59,23 +58,36 @@ fn bench_instances(name: &str, iterations: usize, mut f: impl FnMut() -> Instanc
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let molecule = Molecule::from_sdf(SDF)?.centered();
-    let linear_64 = Molecule::from_sdf(&make_linear_sdf(64))?.centered();
-    let linear_512 = Molecule::from_sdf(&make_linear_sdf(512))?.centered();
+    let molecule = Molecule::from_sdf(SDF)?;
+    let linear_64 = Molecule::from_sdf(&make_linear_sdf(64))?;
+    let linear_512 = Molecule::from_sdf(&make_linear_sdf(512))?;
 
-    bench_instances("molecule.to_instance_group", 10_000, || {
-        black_box(&molecule).to_instance_group(black_box(1.0))
+    let project = |molecule: &Molecule| {
+        let mut scene = Scene::new();
+        scene
+            .show(molecule, &select(molecule).atoms(), BallAndStick::default())
+            .unwrap();
+        scene.get_instances_grouped()
+    };
+
+    bench_instances("molecule.projection", 10_000, || {
+        project(black_box(&molecule))
     });
-    bench_instances("linear_64.to_instance_group", 5_000, || {
-        black_box(&linear_64).to_instance_group(black_box(1.0))
+    bench_instances("linear_64.projection", 5_000, || {
+        project(black_box(&linear_64))
     });
-    bench_instances("linear_512.to_instance_group", 1_000, || {
-        black_box(&linear_512).to_instance_group(black_box(1.0))
+    bench_instances("linear_512.projection", 1_000, || {
+        project(black_box(&linear_512))
     });
 
     let mut scene = Scene::new();
     for i in 0..128 {
-        scene.add_shape_with_id(format!("mol_{i}"), molecule.clone());
+        scene.show_with_id(
+            format!("mol_{i}"),
+            &molecule,
+            &select(&molecule).atoms(),
+            BallAndStick::default(),
+        )?;
     }
 
     bench_instances("scene.get_instances_grouped/128_molecules", 500, || {
