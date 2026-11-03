@@ -54,16 +54,33 @@ conversion does not change the shape or scene. Image paths accept `str` and
 `os.PathLike[str]`, passed literally without `~` expansion.
 
 The selection adapter accepts actual `cosmolkit.Molecule` and `cosmolkit.Protein`
-objects. `select(source)` retains that object and captures read-only rendering
-inputs, shared by derived selections. It never generates coordinates or performs
-kekulization. Core projection code owns geometry for Rust, Python and JS.
-`Scene.show` and `show_with_id` require the exact original foreign object and
-re-read its rendering inputs before modifying the scene. Changed inputs require
-a new selection. This is an O(source size) comparison, not a CK version token:
-unrelated properties and edits that restore the same inputs are not distinguished.
-Completed displays and animation frames store geometry snapshots and survive
-deletion or later mutation of local CK variables. Source handles are retained by
-selectors/selections, not needed by completed geometry.
+objects. The binding imports the source once into this extension's native CK
+value: both Molecule and Protein use `to_transfer_binary()` and the corresponding
+native `ck::Molecule::from_transfer_binary` / `ck::Protein::from_transfer_binary`.
+Rust pins CK `0.6.2-rc.1` and Python pins `0.6.2rc1` for the transfer format's
+exact-version requirement. Protein is decoded directly without mmCIF conversion
+or another protein projection.
+
+All selection IDs come from the imported native source. `select`, atom/residue/
+bond selection, `element` and `aromatic` delegate to core Rust selection methods.
+The binding retains native IDs and reborrows a core selection from that same
+native source when calling Rust. It does not traverse foreign scientific fields,
+compare rendering snapshots, infer mutations, or map original Protein IDs.
+`Scene.add`, `set` and `recenter_on` call the corresponding core Scene
+methods with the native CK object. Core Rust owns validation, geometry generation,
+and atomic insertion/replacement. Python only converts arguments, dispatches concrete types and retains their
+lifetimes. `add` and `set` accept positioned shapes, entire CK objects or selections; selections carry
+their source and never require a second source argument. Core Rust chooses the
+whole-object entity set from the style. `Viewer.open` creates a viewer.
+
+Live selectors, selections and Scenes share an immutable import by Python object
+identity. A weak registry does not keep discarded imports alive; each live import
+retains its Python owner to prevent address reuse. Source edits do not update an
+existing import. To import edited data while the old snapshot is still in use,
+pass a new CK object (for example a copy). Once all owners of an import are gone,
+a later use imports the object again. No per-platform mutation heuristics run.
+Cloned Scenes share imports; animation frames retain core geometry snapshots.
+Completed geometry survives deletion of the original Python variables.
 
 `BallAndStick`, `SphereStyle`, `StickStyle`, `Cartoon` and `Surface` configure
 scientific projections. `Sphere` and `Stick` remain positioned primitives.
@@ -79,3 +96,10 @@ cross-language audit; it does not manufacture Python signatures or types.
 Wheel and editable builds use `maturin --generate-stubs`, extracting from the
 binary being packaged. PEP 517 enables this automatically. Generated files are
 outputs, never additional API sources. See [DEV.md](DEV.md) for commands.
+
+Styles are optional. The core owns all defaults: Molecule and molecule atom
+selections use BallAndStick, Protein and residues use Cartoon, protein atoms use
+Sphere, and bonds use Stick. Positioned shapes retain their material and reject
+an additional scientific style. Python passes the optional style through without
+choosing a platform-specific default. The old shape-specific insertion/replacement
+methods are removed; `set` creates or replaces named content of any supported kind.

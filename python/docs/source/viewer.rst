@@ -7,7 +7,7 @@ Interactive Viewers and Animation
 Runtime Selection
 -----------------
 
-``Viewer.render()`` selects its backend from the Python runtime:
+``Viewer.open()`` selects its backend from the Python runtime:
 
 * Jupyter and Google Colab use an inline WebAssembly canvas.
 * Plain Python scripts and terminal IPython use a native GUI window.
@@ -17,7 +17,7 @@ Runtime Selection
    from cosmol_viewer import Viewer
 
    print(Viewer.get_environment())
-   viewer = Viewer.render(scene, width=800, height=500)
+   viewer = Viewer.open(scene, width=800, height=500)
 
 The returned viewer must remain referenced while it is being updated.
 
@@ -69,7 +69,7 @@ viewer:
 
 .. code-block:: python
 
-   scene.replace_shape("molecule", next_molecule)
+   scene.set("molecule", next_molecule)
    viewer.update(scene)
 
 ``update()`` is intended for live or streaming data where frames are not known
@@ -101,7 +101,7 @@ playback:
    animation = Animation(interval=0.05, loops=-1, interpolate=False)
    for molecule in molecules:
        frame = Scene()
-       frame.add_shape(molecule)
+       frame.add(molecule)
        animation.add_frame(frame)
 
    Viewer.play(animation, width=800, height=500)

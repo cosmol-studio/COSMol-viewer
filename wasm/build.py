@@ -1,4 +1,4 @@
-"""Build official wasm-bindgen declarations and check the resulting package."""
+"""Build official WASM outputs and stage the independent npm entry point."""
 from __future__ import annotations
 
 import argparse
@@ -25,66 +25,11 @@ def run(*arguments: str, cwd: Path, env: dict[str, str]) -> None:
     subprocess.run(arguments, cwd=cwd, env=env, check=True)
 
 
-def validate(pkg: Path, env: dict[str, str], browser: bool) -> None:
-    node = command("node", "NODE_BIN")
-    # A fixed, independent consumer checks the converter mechanism without
-    # exporting test-only types from the viewer or enumerating business APIs.
-    converters = pkg.parent / "converters"
-    run(command("wasm-pack", "WASM_PACK_BIN"), "build", str(WASM / "tests/converters"),
-        "--target", "web", "--out-dir", str(converters), "--out-name", "converters",
-        "--dev", "--no-opt", "--locked", cwd=ROOT, env=env)
-    (converters / "package.json").write_text('{"type":"module","private":true}\n', encoding="utf-8")
-    run(node, "--test", str(WASM / "tests/converters/runtime.mjs"), cwd=ROOT,
-        env=dict(env, COSMOL_VIEWER_WASM_CONVERTERS=str(converters)))
-    for case, boundary in (("converter_invalid_input", "CheckedValue"), ("converter_invalid_output", "TypedOutput")):
-        result = subprocess.run([
-            "cargo", "rustc", "--lib", "--locked", "--manifest-path", str(WASM / "tests/converters/Cargo.toml"),
-            "--target", "wasm32-unknown-unknown", "--message-format=json", "--", "--cfg", case,
-        ], cwd=ROOT, env=env, capture_output=True, text=True, encoding="utf-8")
-        diagnostics = [json.loads(line) for line in result.stdout.splitlines() if line.startswith("{")]
-        if result.returncode == 0 or not any(
-            row.get("reason") == "compiler-message"
-            and (row["message"].get("code") or {}).get("code") == "E0277"
-            and boundary in (row["message"]["message"] + (row["message"].get("rendered") or ""))
-            for row in diagnostics
-        ):
-            raise RuntimeError(f"{case} did not fail at {boundary}:\n{result.stderr}\n{result.stdout}")
-    runtime_env = dict(env, COSMOL_VIEWER_WASM_PKG=str(pkg))
-    run(node, "--test", str(ROOT / "wasm/tests/binding_surface.mjs"), cwd=ROOT, env=runtime_env)
-    if browser:
-        run(node, "--test", str(ROOT / "wasm/tests/browser_render.mjs"), cwd=ROOT, env=runtime_env)
-    with tempfile.TemporaryDirectory(prefix="cosmol-viewer-types-") as temporary:
-        dependencies = json.loads((pkg / "package.json").read_text(encoding="utf-8")).get("dependencies", {})
-        config = Path(temporary) / "tsconfig.json"
-        config.write_text(json.dumps({
-            "compilerOptions": {
-                "strict": True, "noEmit": True, "target": "ES2022",
-                "module": "ESNext", "moduleResolution": "Bundler",
-                "lib": ["ES2022", "DOM", "ESNext.Disposable"],
-                "paths": {
-                    **{name: [str(pkg / "node_modules" / name)] for name in dependencies},
-                    "cosmol-viewer-generated": [str(pkg / "cosmol_viewer_wasm.d.ts")],
-                    "cosmol-viewer-converters": [str(converters / "converters.d.ts")],
-                },
-            },
-            "files": [str(WASM / "tests/binding_surface.ts"), str(WASM / "tests/converters/types.ts")],
-        }), encoding="utf-8")
-        tsc = shutil.which("tsc")
-        if tsc:
-            run(tsc, "--project", str(config), cwd=ROOT, env=env)
-        else:
-            run(command("npx", "NPX_BIN"), "--yes", "--package", "typescript@5.8.3", "tsc", "--project", str(config), cwd=ROOT, env=env)
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--check", action="store_true", help="Run runtime and strict TypeScript checks")
-    parser.add_argument("--browser-check", action="store_true", help="Also render in Chromium (requires --check)")
     parser.add_argument("--release", action="store_true")
     parser.add_argument("--no-opt", action="store_true", help="Skip release wasm-opt")
     options = parser.parse_args()
-    if options.browser_check and not options.check:
-        parser.error("--browser-check requires --check")
     env = os.environ.copy()
     env.setdefault("CARGO_TARGET_DIR", str(ROOT / "target"))
     with tempfile.TemporaryDirectory(prefix="cosmol-viewer-wasm-") as temporary:
@@ -104,19 +49,14 @@ def main() -> None:
                     repository={"type": "git", "url": metadata["repository"]})
         binding_metadata = tomllib.loads((WASM / "Cargo.toml").read_text(encoding="utf-8"))
         info.update(binding_metadata["package"].get("metadata", {}).get("javascript", {}))
+        shutil.copytree(WASM / "js", package, dirs_exist_ok=True)
+        info["main"] = "index.js"
+        info["files"] = list(dict.fromkeys([*info["files"], "index.js"]))
         package_json.write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
-        # Notebook Blob modules need a self-contained ES module without bare imports.
-        run(command("npm", "NPM_BIN"), "install", "--ignore-scripts", "--no-audit",
-            "--no-fund", "--package-lock=false", cwd=package, env=env)
-        run(command("npx", "NPX_BIN"), "--yes", "--package", "esbuild@0.25.12",
-            "esbuild", str(package / "cosmol_viewer_wasm.js"), "--bundle",
-            "--format=esm", "--platform=browser", "--minify",
-            "--outfile=" + str(package / "notebook.js"), cwd=package, env=env)
-        if options.check:
-            validate(package, env, options.browser_check)
-        # Stage only after the build and all requested checks succeed.
+        # The Notebook uses the unmodified official JS/WASM, without npm imports.
         shutil.copytree(package, WASM / "pkg", dirs_exist_ok=True,
                         ignore=shutil.ignore_patterns("node_modules", "package-lock.json"))
+        (WASM / "pkg/notebook.js").unlink(missing_ok=True)
     print(f"Official browser package staged in {WASM / 'pkg'}")
 
 

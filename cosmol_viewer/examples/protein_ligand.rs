@@ -1,4 +1,4 @@
-use cosmol_viewer::{BallAndStick, Cartoon, Scene, Viewer, select};
+use cosmol_viewer::{BallAndStick, Cartoon, ImageRenderer, Scene, Viewer};
 use cosmolkit as ck;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -8,22 +8,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ligand = ck::Molecule::from_sdf(include_str!("6fi1_ligand.sdf"))?;
 
     let mut scene = Scene::new();
-    scene.show_with_id(
-        "prot",
-        &prot,
-        &select(&prot).residues(),
-        Cartoon::default().rainbow_residues(),
-    )?;
-    scene.show_with_id(
+    scene.set("prot", (&prot, Cartoon::default().rainbow_residues()))?;
+    scene.set(
         "ligand",
-        &ligand,
-        &select(&ligand).atoms(),
-        BallAndStick::default().outline("#EEEEEE", 0.02),
+        (&ligand, BallAndStick::default().outline("#EEEEEE", 0.02)),
     )?;
     scene.recenter_on(&ligand)?;
     scene.set_background_color("#021529");
 
-    let viewer = Viewer::render(&scene, 800.0, 500.0)?;
+    ImageRenderer::save_png(&scene, "protein_ligand.png", 1200, 900)?;
+
+    let viewer = Viewer::open(&scene, 800.0, 500.0)?;
 
     viewer.show_fps(true);
     viewer.show_camera_parameters(true);

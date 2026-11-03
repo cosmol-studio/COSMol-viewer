@@ -14,11 +14,11 @@ Use IDs when a shape must later be replaced or removed:
    from cosmol_viewer import Scene, Sphere
 
    scene = Scene()
-   scene.add_shape_with_id("focus", Sphere([0, 0, 0], 1.0).color("#d1495b"))
-   scene.replace_shape("focus", Sphere([1, 0, 0], 1.2).color("#00798c"))
+   scene.set("focus", Sphere([0, 0, 0], 1.0).color("#d1495b"))
+   scene.set("focus", Sphere([1, 0, 0], 1.2).color("#00798c"))
    scene.remove_shape("focus")
 
-``add_shape()`` is sufficient for static content that does not need an ID.
+``add()`` is sufficient for static content that does not need an ID.
 ``recenter()`` changes the scene center and ``set_scale()`` applies a global
 uniform scale.
 
@@ -50,7 +50,7 @@ parameter line whenever the camera moves:
 
    from cosmol_viewer import Viewer
 
-   viewer = Viewer.render(scene, width=800, height=500)
+   viewer = Viewer.open(scene, width=800, height=500)
    viewer.camera_parameter_logging(True)
 
 Logging is disabled by default. Native viewers log to the terminal;

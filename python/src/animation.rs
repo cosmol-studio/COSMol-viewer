@@ -25,7 +25,7 @@ Examples
     animation = Animation(interval=0.1, loops=-1, interpolate=True)
     for _ in range(100):
         scene = Scene()
-        scene.add_shape(..)
+        scene.add(..)
         animation.add_frame(scene)
 
     Viewer.play(animation, width=800.0, height=500.0)
@@ -175,7 +175,10 @@ RuntimeError
         }
 
         let scene_inner = frames[idx].clone();
-        let py_scene = Scene { inner: scene_inner };
+        let py_scene = Scene {
+            inner: scene_inner,
+            ..Scene::new()
+        };
 
         Ok(Py::new(py, py_scene)?)
     }

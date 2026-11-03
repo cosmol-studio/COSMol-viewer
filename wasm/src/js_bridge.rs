@@ -10,7 +10,7 @@ pub struct NotebookViewer {
 }
 
 impl NotebookViewer {
-    pub fn render(py: Python, scene: &Scene, width: f32, height: f32) -> PyResult<Self> {
+    pub fn open(py: Python, scene: &Scene, width: f32, height: f32) -> PyResult<Self> {
         use pyo3::types::PyAnyMethods;
         use uuid::Uuid;
 
@@ -46,7 +46,7 @@ impl NotebookViewer {
             return;
         }}
         const scene_payload = {SCENE};
-        const app = await mod.Viewer.renderNotebook(canvas.id, scene_payload);
+        const app = await mod.Viewer.openNotebook(canvas.id, scene_payload);
 
         window[ns + "_instances"] = window[ns + "_instances"] || {{}};
         window[ns + "_instances"]["{id}"] = app;

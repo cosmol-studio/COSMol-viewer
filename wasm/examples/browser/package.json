@@ -6,7 +6,7 @@
     "start": "python -m http.server 8000 --bind 127.0.0.1 --directory ../../.."
   },
   "dependencies": {
-    "@cosmol-studio/cosmolkit": "0.6.0",
-    "@cosmol-studio/cosmol-viewer": "file:../../pkg"
+    "@cosmol-studio/cosmol-viewer": "file:../../pkg",
+    "@cosmol-studio/cosmolkit": "0.6.2-rc.1"
   }
 }

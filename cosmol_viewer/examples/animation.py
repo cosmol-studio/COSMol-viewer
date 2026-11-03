@@ -32,7 +32,7 @@ for frame_idx in range(num_frames):
         b = 1.0 - r
 
         sphere = Sphere([x, y, z], radius).color((int(r* 255), int(g* 255), int(b* 255)))
-        scene.add_shape_with_id(id, sphere)
+        scene.set(id, sphere)
 
     animation.add_frame(scene)
 

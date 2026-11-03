@@ -15,12 +15,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ids = ["a", "b", "c", "d", "e", "f"];
     for id in ids.iter() {
         let sphere = Sphere::new([0.0, 0.0, 0.0], 0.4).color([255, 255, 255]);
-        scene.add_shape_with_id(*id, sphere);
+        scene.set(*id, sphere)?;
     }
 
     scene.set_scale(2.0);
 
-    let viewer = Viewer::render(&scene, 800.0, 500.0)?;
+    let viewer = Viewer::open(&scene, 800.0, 500.0)?;
     viewer.show_fps(true);
 
     // === time-driven animation ===
@@ -52,7 +52,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 (g * 256.0) as u8,
                 (b * 256.0) as u8,
             ]);
-            scene.replace_shape(id, sphere)?;
+            scene.set(*id, sphere)?;
         }
 
         viewer.update(&scene);

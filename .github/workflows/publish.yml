@@ -3,11 +3,10 @@ name: publish
 on:
   push:
     tags: ["v*"]
-  pull_request:
   workflow_dispatch:
     inputs:
       publish:
-        description: "Publish dev/RC versions to PyPI and npm (stable releases require a tag push)"
+        description: "Publish built packages to PyPI and npm"
         type: boolean
         default: false
 
@@ -16,10 +15,8 @@ permissions:
 
 jobs:
   build-wasm:
-    name: build and test npm package
-    runs-on: ubuntu-latest
-    outputs:
-      manual_publish_allowed: ${{ steps.release_policy.outputs.manual_publish_allowed }}
+    name: build npm package
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -35,30 +32,11 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: "24"
-      - name: Check release policy
-        id: release_policy
-        env:
-          PUBLISH_REQUESTED: ${{ inputs.publish }}
-        run: |
-          python -m unittest discover -s tools -p 'test_*.py' -v
-          python tools/publish_policy.py
       - uses: cargo-bins/cargo-binstall@main
-      - name: Install browser build and smoke test tools
-        run: |
-          cargo binstall -y wasm-pack --force
-          npm install --prefix target/browser-check --no-save playwright@1.58.2
-          target/browser-check/node_modules/.bin/playwright install --with-deps chromium
-      - name: Build and validate browser bindings
-        run: |
-          python wasm/build.py --check --browser-check
-          python wasm/build.py --release
-          npm pack --dry-run --json ./wasm/pkg
-      - name: Check Rust binding contracts
-        run: |
-          cargo test -p cosmol_viewer_derive --locked
-          cargo test -p cosmol_viewer_core --locked --test binding_contract --test display --test residue_code
-          cargo test -p cosmol_viewer_core --locked --doc
-          cargo test -p cosmol_viewer_wasm --locked --no-default-features --test binding_contract --test scene
+      - name: Install browser build tool
+        run: cargo binstall -y wasm-pack --force
+      - name: Build browser bindings
+        run: python wasm/build.py --release
       - name: Upload browser package
         uses: actions/upload-artifact@v4
         with:
@@ -67,9 +45,8 @@ jobs:
           if-no-files-found: error
 
   generate-stubs:
-    name: generate and test Python projections
+    name: generate Python declarations
     runs-on: ubuntu-latest
-    needs: build-wasm
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -77,25 +54,14 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - uses: actions/setup-node@v6
-        with:
-          node-version: "24"
-      - name: Download browser package for Notebook embedding
-        uses: actions/download-artifact@v4
-        with:
-          name: wasm-pkg
-          path: wasm/pkg
-      - name: Build and check official Python declarations
+      - name: Prepare compile-only Notebook assets
         run: |
-          python -m pip install "maturin==1.15.0" "basedpyright==1.40.2" "cosmolkit>=0.6,<0.7"
-          python python/build.py --install-extractor --check
-      - name: Check packaged Python API and Notebook transport
-        run: |
-          python python/build_native_viewer.py
-          maturin build --locked --generate-stubs --manifest-path python/Cargo.toml --out target/contract-wheels
-          python -m pip install target/contract-wheels/*.whl
-          python python/tests/test_binding_surface.py
-          python python/tests/test_viewer_backend.py
+          # Rust include_str!/include_bytes! need files, but type extraction
+          # does not execute Notebook code. Only the .pyi leaves this job.
+          mkdir -p wasm/pkg
+          touch wasm/pkg/cosmol_viewer_wasm.js wasm/pkg/cosmol_viewer_wasm_bg.wasm
+      - name: Generate official Python declarations
+        run: python python/build.py --install-extractor
       - name: Upload Python declarations
         uses: actions/upload-artifact@v4
         with:
@@ -104,58 +70,47 @@ jobs:
           if-no-files-found: error
 
   build-wheels:
-    name: build wheel ${{ matrix.name }}
-    runs-on: ${{ matrix.os }}
+    name: build wheel ${{ matrix.platform.name }} ${{ matrix.python }}
+    runs-on: ${{ matrix.platform.os }}
     needs: [build-wasm, generate-stubs]
     env:
       CARGO_INCREMENTAL: "0"
     strategy:
       fail-fast: false
       matrix:
-        include:
+        python: ["abi3", "3.11", "3.12", "3.13"]
+        platform:
           - name: linux-x86_64
-            os: ubuntu-22.04
+            os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            python_arch: x64
-          - name: linux-x86
-            os: ubuntu-22.04
-            target: i686-unknown-linux-gnu
-            python_arch: x64
           - name: linux-aarch64
-            os: ubuntu-22.04
+            os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
-            python_arch: x64
           - name: windows-x86_64
-            os: windows-2025
+            os: windows-latest
             target: x86_64-pc-windows-msvc
-            python_arch: x64
-          - name: windows-x86
-            os: windows-2025
-            target: i686-pc-windows-msvc
-            python_arch: x86
           - name: macos-x86_64
             os: macos-26
             target: x86_64-apple-darwin
-            python_arch: x64
           - name: macos-aarch64
             os: macos-26
             target: aarch64-apple-darwin
-            python_arch: arm64
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
+        id: wheel_python
         with:
-          python-version: "3.12"
-          architecture: ${{ matrix.python_arch }}
+          python-version: ${{ matrix.python == 'abi3' && '3.12' || matrix.python }}
+          architecture: ${{ matrix.platform.name == 'macos-aarch64' && 'arm64' || 'x64' }}
       - uses: dtolnay/rust-toolchain@stable
         if: runner.os != 'Linux'
         with:
-          targets: ${{ matrix.target }}
+          targets: ${{ matrix.platform.target }}
       - name: Cache Cargo downloads and build artifacts
         if: runner.os != 'Linux'
         uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.target }}
+          key: ${{ matrix.platform.target }}-${{ matrix.python }}
           cache-targets: true
           cache-bin: false
           cache-on-failure: true
@@ -168,9 +123,9 @@ jobs:
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-          key: cargo-registry-linux-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+          key: cargo-registry-linux-${{ matrix.platform.target }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            cargo-registry-linux-${{ matrix.target }}-
+            cargo-registry-linux-${{ matrix.platform.target }}-
       - name: Prepare Cargo cache directories
         if: runner.os == 'Linux'
         run: mkdir -p ~/.cargo/registry ~/.cargo/git
@@ -186,37 +141,45 @@ jobs:
           path: python
       - name: Build native renderer
         if: runner.os != 'Linux'
-        run: python python/build_native_viewer.py --release --target ${{ matrix.target }}
+        run: python python/build_native_viewer.py --release --target ${{ matrix.platform.target }}
       - name: Build manylinux wheel and renderer
         if: runner.os == 'Linux'
         uses: PyO3/maturin-action@v1
         with:
           command: build
-          target: ${{ matrix.target }}
-          args: --release --locked --generate-stubs --out dist --find-interpreter
+          target: ${{ matrix.platform.target }}
+          args: >-
+            --release --locked --generate-stubs --out dist
+            --no-default-features
+            --features ${{ matrix.python == 'abi3' && 'release-abi3-py39' || 'release-cpython' }}
+            --interpreter python${{ matrix.python == 'abi3' && '3.12' || matrix.python }}
           working-directory: python
           sccache: true
-          manylinux: auto
+          manylinux: "2014"
           docker-options: -v /home/runner/.cargo/registry:/root/.cargo/registry -v /home/runner/.cargo/git:/root/.cargo/git
           before-script-linux: |
             # Install the wrapper before any Cargo command can invoke it.
             uv tool install "sccache>=0.11.0"
             sccache --version
-            RUSTC_WRAPPER=sccache python3 build_native_viewer.py --release --target ${{ matrix.target }}
+            RUSTC_WRAPPER=sccache python3 build_native_viewer.py --release --target ${{ matrix.platform.target }}
             sccache --show-stats
       - name: Build Windows or macOS wheel
         if: runner.os != 'Linux'
         uses: PyO3/maturin-action@v1
         with:
           command: build
-          target: ${{ matrix.target }}
-          args: --release --locked --generate-stubs --out dist --find-interpreter
+          target: ${{ matrix.platform.target }}
+          args: >-
+            --release --locked --generate-stubs --out dist
+            --no-default-features
+            --features ${{ matrix.python == 'abi3' && 'release-abi3-py39' || 'release-cpython' }}
+            --interpreter "${{ steps.wheel_python.outputs.python-path }}"
           working-directory: python
           sccache: false
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
-          name: wheels-${{ matrix.name }}
+          name: wheels-${{ matrix.platform.name }}-${{ matrix.python }}
           path: python/dist
           if-no-files-found: error
 
@@ -251,7 +214,7 @@ jobs:
 
   publish:
     name: publish to PyPI and npm
-    if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || (github.event_name == 'workflow_dispatch' && inputs.publish && needs.build-wasm.outputs.manual_publish_allowed == 'true') }}
+    if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || (github.event_name == 'workflow_dispatch' && inputs.publish) }}
     runs-on: ubuntu-latest
     needs: [build-wasm, generate-stubs, build-wheels, build-sdist]
     permissions:

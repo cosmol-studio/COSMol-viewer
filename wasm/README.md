@@ -23,12 +23,12 @@ it. `Scene` and `Animation` are reusable handles over the existing core models,
 not compressed payload strings.
 
 ```js
-import init, { Viewer, Scene, Animation } from "@cosmol-studio/cosmol-viewer";
+import init, { Viewer, Scene, Animation, Sphere } from "@cosmol-studio/cosmol-viewer";
 
 await init();
 const scene = Scene.new();
-scene.addSphere("atom", new Float32Array([0, 0, 0]), 1.0);
-const viewer = await Viewer.render(scene, 800, 600);
+scene.set("atom", Sphere.new(new Float32Array([0, 0, 0]), 1.0));
+const viewer = await Viewer.open(scene, 800, 600);
 
 scene.setScale(1.2);
 viewer.update(scene);
@@ -48,14 +48,14 @@ animation.free();
 scene.free();
 ```
 
-- `render` / `play` create a canvas in `document.body`. `close()` destroys the
+- `open` / `play` create a canvas in `document.body`. `close()` destroys the
   renderer and removes that canvas; `free()` releases the binding handle.
-- `renderInto(canvasId, scene)` / `playInto(canvasId, animation)` use an existing
+- `openInto(canvasId, scene)` / `playInto(canvasId, animation)` use an existing
   canvas without changing its size. `close()` leaves caller-owned canvases intact.
-- Borrowed scenes/animations remain usable after render, update, or addFrame.
+- Borrowed scenes/animations remain usable after open, update, or addFrame.
   Frames and the static scene capture snapshots, matching the core API.
 - Cloned binding handles share state; `scene.cloneScene()` explicitly makes an
-  independent scene. Render/update snapshot state and prepare GPU data internally.
+  independent scene. Open/update snapshot state and prepare GPU data internally.
 - `update` and camera logging queue typed requests and return without blocking.
   Native IPC and browser queues enter the same core `App` message handler.
   Browser queues wake the renderer instead of polling continuously.
@@ -66,7 +66,16 @@ scene.free();
 - Coordinates use `Float32Array`; RGB colors use `Uint8Array`; loop counts use
   `bigint`. Async failures reject, and synchronous failures throw.
 - Scene also supports CK-backed molecular/protein displays through `select`,
-  `show`, `showWithId` and `recenterOn`, in addition to positioned primitives.
+  `add`, `set` and `recenterOn`, in addition to positioned primitives.
+
+`Scene.add(item, style?)` and `Scene.set(name, item, style?)` accept `Sphere`,
+`Stick`, CK objects and selections. `Sphere.new(center, radius)` and
+`Stick.new(start, end, radius)` create reusable positioned shapes; `.color(rgb)`
+and `.opacity(value)` return styled copies. Scenes snapshot shapes on insertion.
+Shapes already carry their material, so passing an extra scientific style fails.
+Omitting the style uses the Rust core defaults: Molecule/its atom selections use
+BallAndStick, Protein/residue selections use Cartoon, molecular bonds use Stick,
+and protein atom selections use Sphere.
 
 ## COSMolKit scientific objects
 
@@ -80,20 +89,22 @@ import * as cv from "@cosmol-studio/cosmol-viewer";
 const mol = ck.Molecule.fromSdf(sdf);
 const oxygen = cv.select(mol).atoms().element(ck.Element.fromSymbol("O"));
 const scene = cv.Scene.new();
-scene.show(mol, cv.select(mol).atoms(), cv.Style.ballAndStick());
-scene.show(mol, oxygen, cv.Style.sphere().scale(1.4));
+scene.add(mol, cv.Style.ballAndStick());
+scene.add(oxygen, cv.Style.sphere().scale(1.4));
 scene.recenterOn(mol);
-const viewer = await cv.Viewer.render(scene, 800, 500);
+const viewer = await cv.Viewer.open(scene, 800, 500);
 ```
 
 `Style.stick()` accepts molecular atoms or bonds; `select(mol).bonds().aromatic()`
-reads CK aromatic flags. For a CK Protein, use `select(protein).residues()` with
-`Style.cartoon().rainbowResidues()`, or atom selections with `Style.sphere()`
-or `Style.surface()`. Protein bond representations are not implemented.
+reads CK aromatic flags. For a CK Protein, pass `protein` directly with
+`Style.cartoon().rainbowResidues()`, `Style.sphere()` or `Style.surface()`.
+Explicit selections are only needed for filtering. Protein bond representations
+are not implemented.
 
-Selections keep the exact original JS object. A different object or changed
-rendering inputs are rejected before scene mutation; select again after an
-in-place edit. Geometry snapshots survive later CK edits and source deletion.
+`add`, `set`, `select` and `recenterOn` share one native import of each live CK
+object. Selections carry their source and can be reused without passing it again.
+Scenes (including clones), selectors and selections retain that import. In-place
+CK edits do not change the cached snapshot; pass a new CK object to import edits.
 No coordinates are generated implicitly. Use `.conformer(id)` when multiple
 3D conformers exist, or `.coordinates2d()` for stored 2D coordinates.
 `Style` builders return independent styles; free temporary handles normally.
@@ -101,7 +112,7 @@ No viewer-defined Molecule/Protein wrapper is needed or exported.
 
 ## Notebook transport is separate
 
-Notebook HTML calls `Viewer.renderNotebook(canvasId, compressedScene)` or
+Notebook HTML calls `Viewer.openNotebook(canvasId, compressedScene)` or
 `Viewer.playNotebook(canvasId, compressedAnimation)`. These internal transport
 endpoints decode Python payloads and enter the same typed render/play paths.
 Notebook updates, camera logging and viewport overlays are encoded one-way `ViewerCommand`
@@ -148,10 +159,10 @@ This build script never publishes packages.
 
 ## Test boundaries
 
-- `build.py --check` runs the generated WASM in Node, verifies exports, ownership,
+- `check.py` runs the generated WASM in Node, verifies exports, ownership,
   snapshots, error paths and exclusions, then checks strict TypeScript.
-- `build.py --check --browser-check` also renders in real headless Chromium:
-  render/update/play, PNG screenshots, and owned/caller-owned canvas cleanup.
+- `check.py --browser` also renders in real headless Chromium:
+  open/update/play, PNG screenshots, and owned/caller-owned canvas cleanup.
 - Python binding tests check registered APIs and generated stubs. Notebook tests
   mock Jupyter/Colab display, decode real Python startup/command payloads in WASM,
   and check pre-initialization errors. They are not a full notebook UI test.
@@ -161,7 +172,8 @@ Install the optional browser test dependencies from the repository root:
 ```sh
 npm install --prefix target/browser-check --no-save playwright@1.58.2
 target/browser-check/node_modules/.bin/playwright install chromium
-python wasm/build.py --check --browser-check
+python wasm/build.py
+python wasm/check.py --browser
 ```
 
 Linux CI uses `playwright install --with-deps chromium`. `PLAYWRIGHT_MODULE` can

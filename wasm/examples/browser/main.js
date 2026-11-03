@@ -60,7 +60,7 @@ async function perform(action) {
 function showLigand() {
     const base = own(cv.Style.ballAndStick());
     const style = tinted ? own(base.color(new Uint8Array([60, 210, 220]))) : base;
-    scene.showWithId("ligand", molecule, atoms, style);
+    scene.set("ligand", molecule, style);
 }
 
 async function showExample(nextMode) {
@@ -84,11 +84,9 @@ async function showExample(nextMode) {
 
     if (mode === "protein") {
         const protein = own(ck.Protein.fromMmcif(await text("6fi1.cif")));
-        const proteinSelector = own(cv.select(protein));
-        const residues = own(proteinSelector.residues());
         const cartoon = own(cv.Style.cartoon());
         const rainbow = own(cartoon.rainbowResidues());
-        scene.showWithId("protein", protein, residues, rainbow);
+        scene.set("protein", protein, rainbow);
         scene.setScale(0.8);
     }
 
@@ -107,7 +105,7 @@ async function showExample(nextMode) {
         }
         viewer = await cv.Viewer.playInto("viewer", animation);
     } else {
-        viewer = await cv.Viewer.renderInto("viewer", scene);
+        viewer = await cv.Viewer.openInto("viewer", scene);
     }
     viewer.showFps(fps.checked);
     viewer.showCameraParameters(camera.checked);
@@ -130,7 +128,7 @@ highlight.addEventListener("change", () => perform(() => {
     if (highlight.checked) {
         const base = own(cv.Style.sphere());
         const style = own(base.scale(0.7));
-        scene.showWithId("oxygen", molecule, oxygens, style);
+        scene.set("oxygen", oxygens, style);
     } else {
         scene.removeShape("oxygen");
     }

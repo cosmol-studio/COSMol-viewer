@@ -1,9 +1,12 @@
-//! Foreign CK objects remain the selection owners; captured data is read-only.
+//! Python owns the foreign handle; all selection and scene behavior is native.
 use crate::external::{External, ExternalType};
-use cosmol_viewer_core::display::input::*;
+use cosmol_viewer_core::selection as native;
 use cosmolkit as ck;
 use pyo3::{exceptions::PyValueError, prelude::*};
-use std::sync::Arc;
+use std::{
+    collections::{HashMap, HashSet},
+    sync::{Arc, Mutex, OnceLock, Weak},
+};
 
 pub struct MoleculeType;
 pub struct ProteinType;
@@ -19,289 +22,260 @@ macro_rules! foreign_type {
 foreign_type!(MoleculeType, "Molecule");
 foreign_type!(ProteinType, "Protein");
 foreign_type!(ElementType, "Element");
+
+fn value_error(e: impl std::fmt::Display) -> PyErr {
+    PyValueError::new_err(e.to_string())
+}
+
 #[derive(FromPyObject)]
 pub(crate) enum ScientificInput<'py> {
     Molecule(External<'py, MoleculeType>),
     Protein(External<'py, ProteinType>),
 }
+
+pub(crate) enum NativeSource {
+    Molecule(ck::Molecule),
+    Protein(ck::Protein),
+}
+pub(crate) struct ImportedSource {
+    owner: Py<PyAny>,
+    pub(crate) native: NativeSource,
+}
+// Weak entries never extend a source's lifetime. Selectors, selections and Scenes
+// retain imports, including the Python owner so its address cannot be reused.
+static IMPORTS: OnceLock<Mutex<HashMap<usize, Weak<ImportedSource>>>> = OnceLock::new();
+#[derive(Clone, Default)]
+pub(crate) struct Sources(HashMap<usize, Arc<ImportedSource>>);
+impl Sources {
+    pub(crate) fn retain(&mut self, source: Arc<ImportedSource>) {
+        self.0.insert(source.owner.as_ptr() as usize, source);
+    }
+}
 impl ScientificInput<'_> {
-    pub(crate) fn object(&self) -> &Bound<'_, PyAny> {
+    fn object(&self) -> &Bound<'_, PyAny> {
         match self {
             Self::Molecule(v) => v.as_bound(),
             Self::Protein(v) => v.as_bound(),
         }
     }
-    pub(crate) fn capture(&self) -> PyResult<SourceInput> {
-        match self {
-            Self::Molecule(v) => molecule(v.as_bound()).map(SourceInput::Molecule),
-            Self::Protein(v) => protein(v.as_bound()).map(SourceInput::Protein),
+    pub(crate) fn import(&self) -> PyResult<Arc<ImportedSource>> {
+        let key = self.object().as_ptr() as usize;
+        let imports = IMPORTS.get_or_init(Default::default);
+        if let Some(source) = imports.lock().unwrap().get(&key).and_then(Weak::upgrade) {
+            return Ok(source);
         }
-    }
-}
-fn value_error(e: impl std::fmt::Display) -> PyErr {
-    PyValueError::new_err(e.to_string())
-}
-fn read<'py>(object: &Bound<'py, PyAny>, name: &str) -> PyResult<Bound<'py, PyAny>> {
-    let value = object.getattr(name)?;
-    if value.is_callable() {
-        value.call0()
-    } else {
-        Ok(value)
-    }
-}
-fn rows<const N: usize>(object: &Bound<'_, PyAny>) -> PyResult<Vec<[f64; N]>> {
-    let rows: Vec<Vec<f64>> = object.call_method0("tolist")?.extract()?;
-    rows.into_iter()
-        .map(|row| {
-            if row.iter().any(|&v| !(v as f32).is_finite()) {
-                return Err(value_error("coordinates must fit finite f32 values"));
+        // Do not hold the cache lock while calling foreign Python code.
+        let native = match self {
+            Self::Molecule(value) => {
+                let archive = value.as_bound().call_method0("to_transfer_binary")?;
+                let archive = archive.cast::<pyo3::types::PyBytes>()?;
+                NativeSource::Molecule(
+                    ck::Molecule::from_transfer_binary(archive.as_bytes()).map_err(value_error)?,
+                )
             }
-            row.try_into()
-                .map_err(|_| value_error("incorrect coordinate dimensions"))
-        })
-        .collect()
-}
-fn molecule(source: &Bound<'_, PyAny>) -> PyResult<MoleculeInput> {
-    let elements = read(source, "atoms")?
-        .try_iter()?
-        .map(|a| {
-            let n = read(&a?, "atomic_number")?.extract::<u8>()?;
-            ck::Element::from_atomic_number(n).ok_or_else(|| value_error("invalid atomic number"))
-        })
-        .collect::<PyResult<Vec<_>>>()?;
-    let bonds = read(source, "bonds")?
-        .try_iter()?
-        .map(|b| {
-            let b = b?;
-            let code = read(&b, "order_code")?.extract()?;
-            Ok(BondInput {
-                begin: read(&b, "begin")?.extract()?,
-                end: read(&b, "end")?.extract()?,
-                order: ck::BondOrder::from_rdkit_code(code)
-                    .ok_or_else(|| value_error("invalid bond order"))?,
-                aromatic: read(&b, "is_aromatic")?.extract()?,
-            })
-        })
-        .collect::<PyResult<Vec<_>>>()?;
-    let conformers = read(source, "conformers_3d")?
-        .try_iter()?
-        .map(|c| {
-            let c = c?;
-            Ok(ConformerInput {
-                id: read(&c, "id")?.extract()?,
-                coordinates: rows(&read(&c, "coordinates")?)?,
-            })
-        })
-        .collect::<PyResult<Vec<_>>>()?;
-    let xy = read(source, "coordinates_2d")?;
-    let coordinates_2d = if xy.is_none() { None } else { Some(rows(&xy)?) };
-    let atom_weights = (0..elements.len())
-        .map(|i| {
+            Self::Protein(value) => {
+                let archive = value.as_bound().call_method0("to_transfer_binary")?;
+                let archive = archive.cast::<pyo3::types::PyBytes>()?;
+                NativeSource::Protein(
+                    ck::Protein::from_transfer_binary(archive.as_bytes()).map_err(value_error)?,
+                )
+            }
+        };
+        let source = Arc::new(ImportedSource {
+            owner: self.object().clone().unbind(),
+            native,
+        });
+        let mut cache = imports.lock().unwrap();
+        cache.retain(|_, value| value.strong_count() > 0);
+        // A foreign call may release the GIL; share any concurrent successful import.
+        Ok(cache.entry(key).or_default().upgrade().unwrap_or_else(|| {
+            cache.insert(key, Arc::downgrade(&source));
             source
-                .call_method1("atom_property_double", (i, "WEIGHT"))?
-                .extract()
-        })
-        .collect::<PyResult<Vec<_>>>()?;
-    let fields: Vec<(String, String)> =
-        read(&read(source, "properties")?, "sdf_data_fields")?.extract()?;
-    let field = |key: &str| {
-        fields
-            .iter()
-            .rev()
-            .find(|(k, _)| k.eq_ignore_ascii_case(key))
-            .map(|(_, v)| v.clone())
-    };
-    Ok(MoleculeInput {
-        elements,
-        bonds,
-        conformers,
-        coordinates_2d,
-        atom_weights,
-        dummy_weights: field("DUMMY_WEIGHTS"),
-        dummy_indices: field("DUMMY_ATOM_INDICES"),
-    })
-}
-fn protein(source: &Bound<'_, PyAny>) -> PyResult<ProteinInput> {
-    let mut chains = Vec::new();
-    for chain in read(source, "chains")?.try_iter()? {
-        let mut residues = Vec::new();
-        for residue in read(&chain?, "residues")?.try_iter()? {
-            let residue = residue?;
-            let name: String = read(&residue, "name")?.extract()?;
-            let row = read(&residue, "row")?;
-            let src = read(&row, "source")?;
-            let seq = read(&src, "seq_id")?;
-            let seq_id = if seq.is_none() {
-                None
-            } else {
-                Some((
-                    read(&seq, "seq_num")?.extract()?,
-                    read(&seq, "ins_code")?.extract()?,
-                ))
-            };
-            let mut atoms = Vec::new();
-            for atom in read(&residue, "atoms")?.try_iter()? {
-                let atom = atom?;
-                let row = read(&atom, "row")?;
-                let p: [f64; 3] = read(&atom, "position")?.extract()?;
-                if p.iter().any(|&v| !(v as f32).is_finite()) {
-                    return Err(value_error("coordinates must fit finite f32 values"));
-                }
-                let altloc = read(&row, "altloc")?;
-                atoms.push(ProteinAtomInput {
-                    id: ck::BioAtomId::new(read(&atom, "id")?.extract()?),
-                    name: read(&read(&atom, "name")?, "as_str")?
-                        .extract::<String>()?
-                        .trim()
-                        .to_owned(),
-                    position: p.map(|v| v as f32).into(),
-                    source_position: p,
-                    atomic_number: read(&read(&atom, "element")?, "atomic_number")?.extract()?,
-                    alt_loc: if altloc.is_none() {
-                        None
-                    } else {
-                        Some(read(&altloc, "value")?.extract()?)
-                    },
-                    occupancy: read(&row, "occupancy")?.extract()?,
-                    b_factor: read(&row, "b_iso")?.extract()?,
-                });
-            }
-            residues.push(ProteinResidueInput {
-                id: ck::BioResidueId::new(read(&residue, "id")?.extract()?),
-                residue_type: ck::find_residue_info(&name).code,
-                name,
-                atoms,
-                seq_id,
-                label_seq_id: read(&src, "label_seq_id")?.extract()?,
-            });
-        }
-        chains.push(residues);
+        }))
     }
-    let mmcif = source
-        .py()
-        .import("cosmolkit")?
-        .getattr("BioCoordinateFormat")?
-        .getattr("Mmcif")?;
-    let format = read(source, "input_format")?;
-    let pdb = source
-        .py()
-        .import("cosmolkit")?
-        .getattr("BioCoordinateFormat")?
-        .getattr("Pdb")?;
-    let input_format = if format.eq(&mmcif)? {
-        ck::BioCoordinateFormat::Mmcif
-    } else if format.eq(&pdb)? {
-        ck::BioCoordinateFormat::Pdb
-    } else {
-        return Err(value_error("expected a PDB or mmCIF protein source"));
-    };
-    Ok(ProteinInput {
-        chains,
-        input_format,
-    })
 }
 
-struct Snapshot {
-    owner: Py<PyAny>,
-    input: SourceInput,
-}
 #[derive(Clone)]
 #[pyclass(module = "cosmol_viewer", from_py_object)]
 pub struct Selector {
-    snapshot: Arc<Snapshot>,
+    source: Arc<ImportedSource>,
+}
+#[derive(Clone)]
+enum Ids {
+    MoleculeAtoms(Vec<ck::AtomId>),
+    MoleculeBonds(Vec<ck::BondId>),
+    ProteinAtoms(Vec<ck::BioAtomId>),
+    ProteinResidues(Vec<ck::BioResidueId>),
+}
+pub(crate) enum NativeSelection<'a> {
+    MoleculeAtoms(native::MoleculeAtomSelection<'a>),
+    MoleculeBonds(native::MoleculeBondSelection<'a>),
+    ProteinAtoms(native::ProteinAtomSelection<'a>),
+    ProteinResidues(native::ProteinResidueSelection<'a>),
 }
 #[derive(Clone)]
 #[pyclass(module = "cosmol_viewer", from_py_object)]
 pub struct Selection {
-    snapshot: Arc<Snapshot>,
-    kind: EntityKind,
-    ids: Vec<usize>,
+    pub(crate) source: Arc<ImportedSource>,
+    ids: Ids,
 }
-/// Select entities from an actual CK object without changing its data.
+/// Import a CK object once and select directly from its native Rust snapshot.
+/// Live selectors, selections and Scenes share the import. To import edited data
+/// while an old snapshot is still in use, pass a new CK object (for example a copy).
 #[pyfunction]
 pub(crate) fn select(source: ScientificInput<'_>) -> PyResult<Selector> {
-    let input = source.capture()?;
     Ok(Selector {
-        snapshot: Arc::new(Snapshot {
-            owner: source.object().clone().unbind(),
-            input,
-        }),
+        source: source.import()?,
     })
-}
-impl Selector {
-    fn entities(&self, kind: EntityKind) -> PyResult<Selection> {
-        Ok(Selection {
-            snapshot: self.snapshot.clone(),
-            kind,
-            ids: self.snapshot.input.ids(kind).map_err(value_error)?,
-        })
-    }
 }
 #[pymethods]
 impl Selector {
     pub fn atoms(&self) -> PyResult<Selection> {
-        self.entities(EntityKind::Atoms)
+        let ids = match &self.source.native {
+            NativeSource::Molecule(mol) => {
+                Ids::MoleculeAtoms(native::select(mol).atoms().ids().to_vec())
+            }
+            NativeSource::Protein(protein) => {
+                Ids::ProteinAtoms(native::select(protein).atoms().ids().to_vec())
+            }
+        };
+        Ok(Selection {
+            source: self.source.clone(),
+            ids,
+        })
     }
     pub fn bonds(&self) -> PyResult<Selection> {
-        self.entities(EntityKind::Bonds)
+        let NativeSource::Molecule(mol) = &self.source.native else {
+            return Err(value_error("protein selections cannot contain bonds"));
+        };
+        Ok(Selection {
+            source: self.source.clone(),
+            ids: Ids::MoleculeBonds(native::select(mol).bonds().ids().to_vec()),
+        })
     }
     pub fn residues(&self) -> PyResult<Selection> {
-        self.entities(EntityKind::Residues)
+        let NativeSource::Protein(protein) = &self.source.native else {
+            return Err(value_error("molecule selections cannot contain residues"));
+        };
+        Ok(Selection {
+            source: self.source.clone(),
+            ids: Ids::ProteinResidues(native::select(protein).residues().ids().to_vec()),
+        })
+    }
+}
+// Reborrow an owned selection from its retained native source. Filtering cannot
+// introduce IDs or rebind them to a different source; the core owns selection order.
+fn subset<'a, S, I: Copy + Eq + std::hash::Hash>(
+    selection: native::Selection<'a, S, I>,
+    ids: &[I],
+) -> native::Selection<'a, S, I> {
+    let ids: HashSet<_> = ids.iter().copied().collect();
+    selection.filter(|id| ids.contains(id))
+}
+impl Selection {
+    pub(crate) fn native(&self) -> NativeSelection<'_> {
+        match (&self.source.native, &self.ids) {
+            (NativeSource::Molecule(mol), Ids::MoleculeAtoms(ids)) => {
+                NativeSelection::MoleculeAtoms(subset(native::select(mol).atoms(), ids))
+            }
+            (NativeSource::Molecule(mol), Ids::MoleculeBonds(ids)) => {
+                NativeSelection::MoleculeBonds(subset(native::select(mol).bonds(), ids))
+            }
+            (NativeSource::Protein(protein), Ids::ProteinAtoms(ids)) => {
+                NativeSelection::ProteinAtoms(subset(native::select(protein).atoms(), ids))
+            }
+            (NativeSource::Protein(protein), Ids::ProteinResidues(ids)) => {
+                NativeSelection::ProteinResidues(subset(native::select(protein).residues(), ids))
+            }
+            _ => unreachable!("selection kind is constructed from its native source"),
+        }
     }
 }
 #[pymethods]
 impl Selection {
-    /// Return a filtered selection; the original selection is reusable.
+    /// Return a filtered native selection; the original selection is reusable.
     pub(crate) fn element(&self, element: External<'_, ElementType>) -> PyResult<Self> {
-        let n = read(element.as_bound(), "atomic_number")?.extract()?;
-        let e = ck::Element::from_atomic_number(n).ok_or_else(|| value_error("invalid element"))?;
-        let mut output = self.clone();
-        output
-            .snapshot
-            .input
-            .filter_element(output.kind, &mut output.ids, e)
-            .map_err(value_error)?;
-        Ok(output)
+        let n = element.as_bound().getattr("atomic_number")?.extract()?;
+        let element =
+            ck::Element::from_atomic_number(n).ok_or_else(|| value_error("invalid element"))?;
+        let ids = match self.native() {
+            NativeSelection::MoleculeAtoms(s) => {
+                Ids::MoleculeAtoms(s.element(element).ids().to_vec())
+            }
+            NativeSelection::ProteinAtoms(s) => {
+                Ids::ProteinAtoms(s.element(element).ids().to_vec())
+            }
+            _ => return Err(value_error("element filtering requires an atom selection")),
+        };
+        Ok(Self {
+            source: self.source.clone(),
+            ids,
+        })
     }
     pub fn aromatic(&self) -> PyResult<Self> {
-        let mut output = self.clone();
-        output
-            .snapshot
-            .input
-            .filter_aromatic(output.kind, &mut output.ids)
-            .map_err(value_error)?;
-        Ok(output)
+        let NativeSelection::MoleculeBonds(selection) = self.native() else {
+            return Err(value_error(
+                "aromatic filtering requires a molecule bond selection",
+            ));
+        };
+        Ok(Self {
+            source: self.source.clone(),
+            ids: Ids::MoleculeBonds(selection.aromatic().ids().to_vec()),
+        })
     }
     #[getter]
     pub fn ids(&self) -> Vec<usize> {
-        self.ids.clone()
+        match &self.ids {
+            Ids::MoleculeAtoms(ids) => ids.iter().map(|id| id.index()).collect(),
+            Ids::MoleculeBonds(ids) => ids.iter().map(|id| id.index()).collect(),
+            Ids::ProteinAtoms(ids) => ids.iter().map(|id| id.index()).collect(),
+            Ids::ProteinResidues(ids) => ids.iter().map(|id| id.index()).collect(),
+        }
     }
     fn __len__(&self) -> usize {
-        self.ids.len()
+        match &self.ids {
+            Ids::MoleculeAtoms(ids) => ids.len(),
+            Ids::MoleculeBonds(ids) => ids.len(),
+            Ids::ProteinAtoms(ids) => ids.len(),
+            Ids::ProteinResidues(ids) => ids.len(),
+        }
     }
 }
-impl Selection {
-    pub(crate) fn project(
-        &self,
-        source: ScientificInput<'_>,
-        style: cosmol_viewer_core::styles::Representation,
-    ) -> PyResult<cosmol_viewer_core::display::Display> {
-        if !source
-            .object()
-            .is(self.snapshot.owner.bind(source.object().py()))
-        {
-            return Err(value_error(
-                "selection belongs to a different source object",
-            ));
+
+/// Typed binding input; all projection/default-selection policy lives in core Rust.
+#[derive(FromPyObject)]
+pub(crate) enum SceneInput<'py> {
+    Shape(crate::input::ShapeInput),
+    Selection(Selection),
+    Source(ScientificInput<'py>),
+}
+impl SceneInput<'_> {
+    pub(crate) fn with_native(
+        self,
+        operation: impl FnOnce(&dyn cosmol_viewer_core::display::SceneItem) -> PyResult<()>,
+    ) -> PyResult<Option<Arc<ImportedSource>>> {
+        match self {
+            Self::Shape(shape) => {
+                operation(&cosmol_viewer_core::utils::Shape::from(shape))?;
+                Ok(None)
+            }
+            Self::Selection(selection) => {
+                match selection.native() {
+                    NativeSelection::MoleculeAtoms(s) => operation(&s),
+                    NativeSelection::MoleculeBonds(s) => operation(&s),
+                    NativeSelection::ProteinAtoms(s) => operation(&s),
+                    NativeSelection::ProteinResidues(s) => operation(&s),
+                }?;
+                Ok(Some(selection.source))
+            }
+            Self::Source(source) => {
+                let source = source.import()?;
+                match &source.native {
+                    NativeSource::Molecule(mol) => operation(mol),
+                    NativeSource::Protein(protein) => operation(protein),
+                }?;
+                Ok(Some(source))
+            }
         }
-        if source.capture()? != self.snapshot.input {
-            return Err(value_error(
-                "source rendering data changed since selection; create a new selection",
-            ));
-        }
-        self.snapshot
-            .input
-            .project(self.kind, &self.ids, style)
-            .map_err(value_error)
     }
 }

@@ -37,10 +37,10 @@ All implementations share the same Rust rendering engine, ensuring consistent pe
 ## Quick concepts
 
 - **Scene**: container for shapes (molecules, proteins, spheres, etc.).
-- **Viewer.render(scene, ...)**: create an interactive viewer in a native window or notebook canvas.
+- **Viewer.open(scene, ...)**: create an interactive viewer in a native window or notebook canvas.
 - **scene.save_image(path, ...)** / **scene.to_png(...)** / **scene.display(...)**: render the scene directly to a static PNG at any requested resolution. This is independent of notebook JavaScript or browser canvas readback.
 - **scene.set_camera_view(...)** / **scene.rotate_camera(...)**: set the reproducible camera used by both static exports and newly created viewers.
-- **viewer.update(scene)**: push incremental changes after `Viewer.render()` (real-time / streaming use-cases).
+- **viewer.update(scene)**: push incremental changes after `Viewer.open()` (real-time / streaming use-cases).
 - **Animation**: An Animation object containing frames and settings.
 - **Animation(interval, loops, interpolate)**: stores precomputed frames and playback settings.
 - **Viewer.play(animation, width, height)**: *recommended* for precomputed animations and demonstrations. The viewer takes care of playback timing and looping.
@@ -76,7 +76,7 @@ scene = Scene()
 
 scene.set_scale(1.0)
 
-scene.show_with_id("molecule", mol, select(mol).atoms(), BallAndStick())
+scene.set("molecule", mol)
 scene.recenter_on(mol)
 
 scene.set_camera_view(azimuth=35, elevation=20, distance=32, fov=18)
@@ -98,7 +98,7 @@ For an interactive native window:
 ```python
 from cosmol_viewer import Viewer
 
-viewer = Viewer.render(scene, width=800, height=500)
+viewer = Viewer.open(scene, width=800, height=500)
 
 viewer.keep_alive()
 ```
@@ -125,29 +125,39 @@ rendering:
 scene.set_transparent_background()
 scene.set_zoom_disabled()
 scene.set_auto_rotate()
-viewer = Viewer.render(scene, width=800, height=500)
+viewer = Viewer.open(scene, width=800, height=500)
 ```
 
 For static exports, omit `background` to use the scene background, pass a color
 such as `"#ffffff"` or `[255, 255, 255]`, or use `"transparent"` for a PNG with
 a transparent background.
 
+Use `scene.add(item)` to append content and `scene.set(name, item)` to create or
+replace named content. Both accept positioned shapes, CK objects and selections.
+The optional style defaults to BallAndStick for molecules and Cartoon for proteins.
+For selections, molecule atoms use BallAndStick, bonds use Stick, protein atoms
+use Sphere, and residues use Cartoon. Shapes retain their own material and reject
+an additional scientific style. Rust supplies explicit styles as `(item, style)`;
+Python and JavaScript use `add(item, style)` or `set(name, item, style)`.
+
 ### 2. Animation playback with `Viewer.play`
 
-Scientific objects stay in CK. Selections reject a different source object or
-changed rendering inputs; select again after an in-place edit. Coordinates must
+Scientific objects stay in CK. Pass an entire object for ordinary rendering;
+use `select` only for subsets. Python/JS import a source once while a selection or
+Scene retains it. To display edited data while that import is alive, pass a new
+CK object, for example a copy. Coordinates must
 already exist. For extra molecular representations use `SphereStyle` or
 `StickStyle`; `Sphere`/`Stick` remain positioned primitives.
 
 ```python
-from cosmol_viewer import SphereStyle
+from cosmol_viewer import SphereStyle, select
 oxygen = select(mol).atoms().element(ck.Element.O)
-scene.show(mol, oxygen, SphereStyle().scale(1.4))
+scene.add(oxygen, SphereStyle().scale(1.4))
 ```
 
 ```python
 import cosmolkit as ck
-from cosmol_viewer import Scene, Viewer, BallAndStick, Animation, select
+from cosmol_viewer import Scene, Viewer, BallAndStick, Animation
 
 anim = Animation(interval=0.05, loops=-1, interpolate=False)
 for i in range(1, 10):
@@ -155,7 +165,7 @@ for i in range(1, 10):
         mol = ck.Molecule.from_sdf(f.read())
 
     scene = Scene()
-    scene.show(mol, select(mol).atoms(), BallAndStick())
+    scene.add(mol)
     anim.add_frame(scene)
 
 Viewer.play(anim, width=800, height=500)  # loops=-1 for infinite repeat
@@ -171,10 +181,10 @@ mmcif_data = open("protein.cif", "r", encoding="utf-8").read()
 protein = ck.Protein.from_mmcif(mmcif_data)
 
 scene = Scene()
-scene.show_with_id("protein", protein, select(protein).residues(), Cartoon().rainbow_residues())
+scene.set("protein", protein, Cartoon().rainbow_residues())
 scene.recenter_on(protein)
 
-viewer = Viewer.render(scene, width=800, height=500)
+viewer = Viewer.open(scene, width=800, height=500)
 ```
 
 `ck.Protein.from_mmcif()` and `ck.Protein.from_pdb()` create the scientific

@@ -7,10 +7,10 @@ repository.workspace = true
 homepage.workspace = true
 license.workspace = true
 publish = false
-include = ["Cargo.toml", "src/**", "build.py", "README.md", "DEV.md", "BINDING_CONTRACT.md", "tests/**", "pkg/notebook.js", "pkg/cosmol_viewer_wasm.js", "pkg/cosmol_viewer_wasm_bg.wasm"]
+include = ["Cargo.toml", "src/**", "js/**", "build.py", "check.py", "README.md", "DEV.md", "BINDING_CONTRACT.md", "tests/**", "pkg/cosmol_viewer_wasm.js", "pkg/cosmol_viewer_wasm_bg.wasm"]
 
 [dependencies]
-cosmolkit.workspace = true
+cosmolkit = { workspace = true, features = ["cap-serialization"] }
 cosmol_viewer_core.workspace = true
 serde_json.workspace = true
 serde.workspace = true
@@ -60,7 +60,7 @@ js_bridge = [
 crate-type = ["rlib", "cdylib"]
 
 [package.metadata.javascript.dependencies]
-"@cosmol-studio/cosmolkit" = "^0.6.0"
+"@cosmol-studio/cosmolkit" = "0.6.2-rc.1"
 
 [package.metadata.wasm-pack.profile.dev]
 wasm-opt = ['-O']

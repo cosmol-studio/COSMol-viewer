@@ -1,12 +1,14 @@
-//! Checked references into a separate CK WASM module; no shared Rust pointers.
-use cosmol_viewer_core::display::{Display, input::*};
-use cosmol_viewer_core::styles::Representation;
+//! Import foreign CK objects once; selection and projection run in core Rust.
+use cosmol_viewer_core::selection as native;
 use cosmolkit as ck;
-use serde::de::DeserializeOwned;
-use std::{cell::RefCell, rc::Rc};
-use wasm_bindgen::{JsCast, prelude::*};
+use std::{
+    cell::RefCell,
+    collections::HashSet,
+    rc::{Rc, Weak},
+};
+use wasm_bindgen::{JsCast, convert::TryFromJsValue, prelude::*};
 
-#[wasm_bindgen(module = "@cosmol-studio/cosmolkit")]
+#[wasm_bindgen]
 extern "C" {
     #[wasm_bindgen(js_name=Molecule,typescript_type="import(\"@cosmol-studio/cosmolkit\").Molecule")]
     pub type CkMolecule;
@@ -14,6 +16,102 @@ extern "C" {
     pub type CkProtein;
     #[wasm_bindgen(js_name=Element,typescript_type="import(\"@cosmol-studio/cosmolkit\").Element")]
     pub type CkElement;
+}
+
+// Only the npm entry point supplies CK constructors. Notebook transport uses
+// serialized core scenes and never loads CK JavaScript or calls these adapters.
+struct CkTypes {
+    molecule: js_sys::Function,
+    protein: js_sys::Function,
+    element: js_sys::Function,
+}
+thread_local! {
+    static CK_TYPES: RefCell<Option<CkTypes>> = const { RefCell::new(None) };
+}
+#[wasm_bindgen(js_name = __setCkTypes)]
+pub fn set_ck_types(
+    molecule: js_sys::Function,
+    protein: js_sys::Function,
+    element: js_sys::Function,
+) {
+    CK_TYPES.with(|types| {
+        *types.borrow_mut() = Some(CkTypes {
+            molecule,
+            protein,
+            element,
+        })
+    });
+}
+
+struct ViewerTypes {
+    selection: js_sys::Function,
+    sphere: js_sys::Function,
+    stick: js_sys::Function,
+    style: js_sys::Function,
+}
+thread_local! { static VIEWER_TYPES: RefCell<Option<ViewerTypes>> = const { RefCell::new(None) }; }
+#[wasm_bindgen(js_name = __setViewerTypes)]
+pub fn set_viewer_types(
+    selection: js_sys::Function,
+    sphere: js_sys::Function,
+    stick: js_sys::Function,
+    style: js_sys::Function,
+) {
+    VIEWER_TYPES.with(|types| {
+        *types.borrow_mut() = Some(ViewerTypes {
+            selection,
+            sphere,
+            stick,
+            style,
+        })
+    });
+}
+fn viewer_instance(
+    value: &JsValue,
+    constructor: impl FnOnce(&ViewerTypes) -> &js_sys::Function,
+) -> Result<bool, JsValue> {
+    VIEWER_TYPES.with(|types| {
+        let types = types.borrow();
+        let types = types
+            .as_ref()
+            .ok_or_else(|| error("Initialize through the viewer npm entry point"))?;
+        let class = constructor(types);
+        let has_instance = js_sys::Reflect::get(class, &js_sys::Symbol::has_instance())?
+            .dyn_into::<js_sys::Function>()?;
+        Ok(has_instance.call1(class, value)?.as_bool().unwrap_or(false))
+    })
+}
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(typescript_type = "Style")]
+    pub type StyleInput;
+}
+impl StyleInput {
+    pub(crate) fn representation(
+        &self,
+    ) -> Result<cosmol_viewer_core::styles::Representation, JsValue> {
+        if !viewer_instance(self.as_ref(), |types| &types.style)? {
+            return Err(error("expected Style"));
+        }
+        let style = crate::styles::Style::try_from_js_value(call(self.as_ref(), "cloneStyle")?)
+            .map_err(|_| error("expected live Style"))?;
+        Ok(style.inner)
+    }
+}
+fn ck_instance(
+    value: &JsValue,
+    constructor: impl FnOnce(&CkTypes) -> &js_sys::Function,
+) -> Result<bool, JsValue> {
+    CK_TYPES.with(|types| {
+        let types = types.borrow();
+        let types = types.as_ref().ok_or_else(|| {
+            error("CK object APIs require the @cosmol-studio/cosmol-viewer npm entry point")
+        })?;
+        let class = constructor(types);
+        let has_instance = js_sys::Reflect::get(class, &js_sys::Symbol::has_instance())?
+            .dyn_into::<js_sys::Function>()?;
+        Ok(has_instance.call1(class, value)?.as_bool().unwrap_or(false))
+    })
 }
 #[wasm_bindgen]
 extern "C" {
@@ -23,307 +121,258 @@ extern "C" {
     )]
     pub type ScientificInput;
 }
+
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(
+        typescript_type = "import(\"@cosmol-studio/cosmolkit\").Molecule | import(\"@cosmol-studio/cosmolkit\").Protein | Selection | Sphere | Stick"
+    )]
+    pub type SceneInput;
+}
 fn error(e: impl std::fmt::Display) -> JsValue {
     js_sys::TypeError::new(&e.to_string()).into()
 }
-fn decode<T: DeserializeOwned>(value: JsValue) -> Result<T, JsValue> {
-    serde_wasm_bindgen::from_value(value).map_err(error)
+fn call(value: &JsValue, name: &str) -> Result<JsValue, JsValue> {
+    js_sys::Reflect::get(value, &name.into())?
+        .dyn_into::<js_sys::Function>()?
+        .call0(value)
 }
-/// Drop temporary CK getter handles even if a later foreign call throws.
-#[derive(Default)]
-struct Reader {
-    owned: RefCell<Vec<JsValue>>,
+pub(crate) enum NativeSource {
+    Molecule(ck::Molecule),
+    Protein(ck::Protein),
 }
-impl Reader {
-    fn own(&self, v: JsValue) -> JsValue {
-        if v.is_object() && js_sys::Reflect::get(&v, &"free".into()).is_ok_and(|f| f.is_function())
-        {
-            self.owned.borrow_mut().push(v.clone());
-        }
-        v
-    }
-    fn get(&self, object: &JsValue, name: &str) -> Result<JsValue, JsValue> {
-        let v = js_sys::Reflect::get(object, &name.into())?;
-        let v = if let Some(f) = v.dyn_ref::<js_sys::Function>() {
-            f.call0(object)?
-        } else {
-            v
-        };
-        Ok(self.own(v))
-    }
-    fn list(&self, v: JsValue) -> Result<Vec<JsValue>, JsValue> {
-        let iter = js_sys::try_iter(&v)?.ok_or_else(|| error("expected a CK entity sequence"))?;
-        iter.map(|v| v.map(|v| self.own(v))).collect()
-    }
-    fn call(&self, object: &JsValue, name: &str, args: &js_sys::Array) -> Result<JsValue, JsValue> {
-        let f = js_sys::Reflect::get(object, &name.into())?
-            .dyn_into::<js_sys::Function>()
-            .map_err(|_| error("expected CK method"))?;
-        Ok(self.own(f.apply(object, args)?))
-    }
+pub(crate) struct ImportedSource {
+    owner: JsValue,
+    pub(crate) native: NativeSource,
 }
-impl Drop for Reader {
-    fn drop(&mut self) {
-        for value in self.owned.get_mut().drain(..).rev() {
-            if let Ok(f) = js_sys::Reflect::get(&value, &"free".into())
-                .and_then(|f| f.dyn_into::<js_sys::Function>())
-            {
-                let _ = f.call0(&value);
-            }
-        }
-    }
+thread_local! {
+    static IMPORTS: RefCell<Vec<Weak<ImportedSource>>> = const { RefCell::new(Vec::new()) };
 }
 impl ScientificInput {
-    pub(crate) fn capture(&self) -> Result<SourceInput, JsValue> {
-        let reader = Reader::default();
-        if self.is_instance_of::<CkMolecule>() {
-            molecule(&reader, self.as_ref()).map(SourceInput::Molecule)
-        } else if self.is_instance_of::<CkProtein>() {
-            protein(&reader, self.as_ref()).map(SourceInput::Protein)
-        } else {
-            Err(error("expected a cosmolkit.Molecule or cosmolkit.Protein"))
-        }
+    pub(crate) fn import(&self) -> Result<Rc<ImportedSource>, JsValue> {
+        import(self.as_ref())
     }
 }
-fn molecule(r: &Reader, source: &JsValue) -> Result<MoleculeInput, JsValue> {
-    let elements = r
-        .list(r.get(source, "atoms")?)?
-        .iter()
-        .map(|a| {
-            let n: u8 = decode(r.get(a, "atomicNumber")?)?;
-            ck::Element::from_atomic_number(n).ok_or_else(|| error("invalid element"))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let bonds = r
-        .list(r.get(source, "bonds")?)?
-        .iter()
-        .map(|b| {
-            let code: i64 = decode(r.get(b, "orderCode")?)?;
-            Ok(BondInput {
-                begin: decode(r.get(b, "begin")?)?,
-                end: decode(r.get(b, "end")?)?,
-                order: ck::BondOrder::from_rdkit_code(code)
-                    .ok_or_else(|| error("invalid bond order"))?,
-                aromatic: decode(r.get(b, "isAromatic")?)?,
-            })
-        })
-        .collect::<Result<Vec<_>, JsValue>>()?;
-    let conformers = r
-        .list(r.get(source, "conformers3d")?)?
-        .iter()
-        .map(|c| {
-            Ok(ConformerInput {
-                id: decode(r.get(c, "id")?)?,
-                coordinates: decode(r.get(c, "coordinates")?)?,
-            })
-        })
-        .collect::<Result<Vec<_>, JsValue>>()?;
-    let coordinates_2d = decode(r.get(source, "coordinates2d")?)?;
-    let atom_weights = (0..elements.len())
-        .map(|i| {
-            let args = js_sys::Array::of2(&JsValue::from_f64(i as f64), &"WEIGHT".into());
-            decode(r.call(source, "atomPropertyDouble", &args)?)
-        })
-        .collect::<Result<Vec<_>, JsValue>>()?;
-    let properties = r.get(source, "properties")?;
-    let fields: Vec<(String, String)> = decode(r.get(&properties, "sdfDataFields")?)?;
-    let field = |name: &str| {
-        fields
+fn import(value: &JsValue) -> Result<Rc<ImportedSource>, JsValue> {
+    let existing = IMPORTS.with(|imports| {
+        imports
+            .borrow()
             .iter()
-            .rev()
-            .find(|(k, _)| k.eq_ignore_ascii_case(name))
-            .map(|(_, v)| v.clone())
-    };
-    let input = MoleculeInput {
-        elements,
-        bonds,
-        conformers,
-        coordinates_2d,
-        atom_weights,
-        dummy_weights: field("DUMMY_WEIGHTS"),
-        dummy_indices: field("DUMMY_ATOM_INDICES"),
-    };
-    for c in &input.conformers {
-        for p in &c.coordinates {
-            if p.iter().any(|&v| !(v as f32).is_finite()) {
-                return Err(error("coordinates must fit finite f32 values"));
-            }
-        }
+            .filter_map(Weak::upgrade)
+            .find(|source| js_sys::Object::is(&source.owner, value))
+    });
+    if let Some(source) = existing {
+        return Ok(source);
     }
-    if let Some(xy) = &input.coordinates_2d {
-        if xy.iter().flatten().any(|&v| !(v as f32).is_finite()) {
-            return Err(error("coordinates must fit finite f32 values"));
-        }
+    let molecule = ck_instance(value, |types| &types.molecule)?;
+    if !molecule && !ck_instance(value, |types| &types.protein)? {
+        return Err(error("expected a cosmolkit.Molecule or cosmolkit.Protein"));
     }
-    Ok(input)
+    let bytes = call(value, "toTransferBinary")?
+        .dyn_into::<js_sys::Uint8Array>()?
+        .to_vec();
+    let native = if molecule {
+        NativeSource::Molecule(ck::Molecule::from_transfer_binary(&bytes).map_err(error)?)
+    } else {
+        NativeSource::Protein(ck::Protein::from_transfer_binary(&bytes).map_err(error)?)
+    };
+    let source = Rc::new(ImportedSource {
+        owner: value.clone(),
+        native,
+    });
+    IMPORTS.with(|imports| {
+        let mut imports = imports.borrow_mut();
+        imports.retain(|entry| entry.strong_count() > 0);
+        imports.push(Rc::downgrade(&source));
+    });
+    Ok(source)
 }
-fn protein(r: &Reader, source: &JsValue) -> Result<ProteinInput, JsValue> {
-    let mut chains = Vec::new();
-    for chain in r.list(r.get(source, "chains")?)? {
-        let mut residues = Vec::new();
-        for residue in r.list(r.get(&chain, "residues")?)? {
-            let name: String = decode(r.get(&residue, "name")?)?;
-            let row = r.get(&residue, "row")?;
-            let src = r.get(&row, "source")?;
-            let seq = r.get(&src, "seqId")?;
-            let seq_id = if seq.is_null() || seq.is_undefined() {
-                None
-            } else {
-                Some((
-                    decode(r.get(&seq, "seqNum")?)?,
-                    decode(r.get(&seq, "insCode")?)?,
-                ))
-            };
-            let mut atoms = Vec::new();
-            for atom in r.list(r.get(&residue, "atoms")?)? {
-                let row = r.get(&atom, "row")?;
-                let p: [f64; 3] = decode(r.get(&atom, "position")?)?;
-                if p.iter().any(|&v| !(v as f32).is_finite()) {
-                    return Err(error("coordinates must fit finite f32 values"));
-                }
-                let altloc = r.get(&row, "altloc")?;
-                let atomname = r.get(&atom, "name")?;
-                atoms.push(ProteinAtomInput {
-                    id: ck::BioAtomId::new(decode(r.get(&atom, "id")?)?),
-                    name: decode::<String>(r.get(&atomname, "asStr")?)?
-                        .trim()
-                        .to_owned(),
-                    position: p.map(|v| v as f32).into(),
-                    source_position: p,
-                    atomic_number: decode(r.get(&r.get(&atom, "element")?, "atomicNumber")?)?,
-                    alt_loc: if altloc.is_undefined() || altloc.is_null() {
-                        None
-                    } else {
-                        Some(decode(r.get(&altloc, "value")?)?)
-                    },
-                    occupancy: decode(r.get(&row, "occupancy")?)?,
-                    b_factor: decode(r.get(&row, "bIso")?)?,
-                });
-            }
-            residues.push(ProteinResidueInput {
-                id: ck::BioResidueId::new(decode(r.get(&residue, "id")?)?),
-                residue_type: ck::find_residue_info(&name).code,
-                name,
-                atoms,
-                seq_id,
-                label_seq_id: decode(r.get(&src, "labelSeqId")?)?,
-            });
-        }
-        chains.push(residues);
-    }
-    let input_format = match decode::<u32>(r.get(source, "inputFormat")?)? {
-        2 => ck::BioCoordinateFormat::Pdb,
-        3 => ck::BioCoordinateFormat::Mmcif,
-        _ => return Err(error("expected a PDB or mmCIF protein source")),
-    };
-    Ok(ProteinInput {
-        chains,
-        input_format,
-    })
+#[derive(Clone)]
+enum Ids {
+    MoleculeAtoms(Vec<ck::AtomId>),
+    MoleculeBonds(Vec<ck::BondId>),
+    ProteinAtoms(Vec<ck::BioAtomId>),
+    ProteinResidues(Vec<ck::BioResidueId>),
 }
-struct Snapshot {
-    owner: JsValue,
-    input: SourceInput,
+enum NativeSelection<'a> {
+    MoleculeAtoms(native::MoleculeAtomSelection<'a>),
+    MoleculeBonds(native::MoleculeBondSelection<'a>),
+    ProteinAtoms(native::ProteinAtomSelection<'a>),
+    ProteinResidues(native::ProteinResidueSelection<'a>),
 }
 #[wasm_bindgen]
 pub struct Selector {
-    snapshot: Rc<Snapshot>,
+    source: Rc<ImportedSource>,
 }
+#[derive(Clone)]
 #[wasm_bindgen]
 pub struct Selection {
-    snapshot: Rc<Snapshot>,
-    kind: EntityKind,
-    ids: Vec<usize>,
+    source: Rc<ImportedSource>,
+    ids: Ids,
 }
 impl crate::input::NativeOutput for Selector {}
 impl crate::input::NativeOutput for Selection {}
 #[wasm_bindgen]
 pub fn select(source: &ScientificInput) -> Result<Selector, JsValue> {
     Ok(Selector {
-        snapshot: Rc::new(Snapshot {
-            owner: AsRef::<JsValue>::as_ref(source).clone(),
-            input: source.capture()?,
-        }),
+        source: source.import()?,
     })
-}
-impl Selector {
-    fn entities(&self, kind: EntityKind) -> Result<Selection, JsValue> {
-        Ok(Selection {
-            snapshot: self.snapshot.clone(),
-            kind,
-            ids: self.snapshot.input.ids(kind).map_err(error)?,
-        })
-    }
 }
 #[cosmol_viewer_derive::checked_wasm]
 impl Selector {
-    pub fn atoms(&self) -> Result<Selection, JsValue> {
-        self.entities(EntityKind::Atoms)
+    pub fn atoms(&self) -> Selection {
+        let ids = match &self.source.native {
+            NativeSource::Molecule(mol) => {
+                Ids::MoleculeAtoms(native::select(mol).atoms().ids().to_vec())
+            }
+            NativeSource::Protein(protein) => {
+                Ids::ProteinAtoms(native::select(protein).atoms().ids().to_vec())
+            }
+        };
+        Selection {
+            source: self.source.clone(),
+            ids,
+        }
     }
     pub fn bonds(&self) -> Result<Selection, JsValue> {
-        self.entities(EntityKind::Bonds)
+        let NativeSource::Molecule(mol) = &self.source.native else {
+            return Err(error("protein selections cannot contain bonds"));
+        };
+        Ok(Selection {
+            source: self.source.clone(),
+            ids: Ids::MoleculeBonds(native::select(mol).bonds().ids().to_vec()),
+        })
     }
     pub fn residues(&self) -> Result<Selection, JsValue> {
-        self.entities(EntityKind::Residues)
+        let NativeSource::Protein(protein) = &self.source.native else {
+            return Err(error("molecule selections cannot contain residues"));
+        };
+        Ok(Selection {
+            source: self.source.clone(),
+            ids: Ids::ProteinResidues(native::select(protein).residues().ids().to_vec()),
+        })
+    }
+}
+fn subset<'a, S, I: Copy + Eq + std::hash::Hash>(
+    selection: native::Selection<'a, S, I>,
+    ids: &[I],
+) -> native::Selection<'a, S, I> {
+    let ids: HashSet<_> = ids.iter().copied().collect();
+    selection.filter(|id| ids.contains(id))
+}
+impl Selection {
+    fn native(&self) -> NativeSelection<'_> {
+        match (&self.source.native, &self.ids) {
+            (NativeSource::Molecule(mol), Ids::MoleculeAtoms(ids)) => {
+                NativeSelection::MoleculeAtoms(subset(native::select(mol).atoms(), ids))
+            }
+            (NativeSource::Molecule(mol), Ids::MoleculeBonds(ids)) => {
+                NativeSelection::MoleculeBonds(subset(native::select(mol).bonds(), ids))
+            }
+            (NativeSource::Protein(protein), Ids::ProteinAtoms(ids)) => {
+                NativeSelection::ProteinAtoms(subset(native::select(protein).atoms(), ids))
+            }
+            (NativeSource::Protein(protein), Ids::ProteinResidues(ids)) => {
+                NativeSelection::ProteinResidues(subset(native::select(protein).residues(), ids))
+            }
+            _ => unreachable!("selection kind belongs to its native source"),
+        }
     }
 }
 #[cosmol_viewer_derive::checked_wasm]
 impl Selection {
+    /// Copy the selection handle while sharing the same imported source.
+    pub fn clone_selection(&self) -> Self {
+        self.clone()
+    }
     pub fn element(&self, element: &CkElement) -> Result<Self, JsValue> {
-        if !element.is_instance_of::<CkElement>() {
+        if !ck_instance(element.as_ref(), |types| &types.element)? {
             return Err(error("expected cosmolkit.Element"));
         }
-        let r = Reader::default();
-        let number = decode(r.get(element.as_ref(), "atomicNumber")?)?;
+        let number: u8 = serde_wasm_bindgen::from_value(js_sys::Reflect::get(
+            element.as_ref(),
+            &"atomicNumber".into(),
+        )?)
+        .map_err(error)?;
         let element =
             ck::Element::from_atomic_number(number).ok_or_else(|| error("invalid element"))?;
-        let mut ids = self.ids.clone();
-        self.snapshot
-            .input
-            .filter_element(self.kind, &mut ids, element)
-            .map_err(error)?;
+        let ids = match self.native() {
+            NativeSelection::MoleculeAtoms(s) => {
+                Ids::MoleculeAtoms(s.element(element).ids().to_vec())
+            }
+            NativeSelection::ProteinAtoms(s) => {
+                Ids::ProteinAtoms(s.element(element).ids().to_vec())
+            }
+            _ => return Err(error("element filtering requires an atom selection")),
+        };
         Ok(Self {
-            snapshot: self.snapshot.clone(),
-            kind: self.kind,
+            source: self.source.clone(),
             ids,
         })
     }
     pub fn aromatic(&self) -> Result<Self, JsValue> {
-        let mut ids = self.ids.clone();
-        self.snapshot
-            .input
-            .filter_aromatic(self.kind, &mut ids)
-            .map_err(error)?;
+        let NativeSelection::MoleculeBonds(selection) = self.native() else {
+            return Err(error(
+                "aromatic filtering requires a molecule bond selection",
+            ));
+        };
         Ok(Self {
-            snapshot: self.snapshot.clone(),
-            kind: self.kind,
-            ids,
+            source: self.source.clone(),
+            ids: Ids::MoleculeBonds(selection.aromatic().ids().to_vec()),
         })
     }
     pub fn ids(&self) -> Vec<usize> {
-        self.ids.clone()
+        match &self.ids {
+            Ids::MoleculeAtoms(ids) => ids.iter().map(|id| id.index()).collect(),
+            Ids::MoleculeBonds(ids) => ids.iter().map(|id| id.index()).collect(),
+            Ids::ProteinAtoms(ids) => ids.iter().map(|id| id.index()).collect(),
+            Ids::ProteinResidues(ids) => ids.iter().map(|id| id.index()).collect(),
+        }
     }
     pub fn len(&self) -> usize {
-        self.ids.len()
+        match &self.ids {
+            Ids::MoleculeAtoms(ids) => ids.len(),
+            Ids::MoleculeBonds(ids) => ids.len(),
+            Ids::ProteinAtoms(ids) => ids.len(),
+            Ids::ProteinResidues(ids) => ids.len(),
+        }
     }
 }
-impl Selection {
-    pub(crate) fn project(
+impl SceneInput {
+    pub(crate) fn with_native(
         &self,
-        source: &ScientificInput,
-        style: Representation,
-    ) -> Result<Display, JsValue> {
-        if !js_sys::Object::is(source.as_ref(), &self.snapshot.owner) {
-            return Err(error("selection belongs to a different source object"));
+        operation: impl FnOnce(&dyn cosmol_viewer_core::display::SceneItem) -> Result<(), JsValue>,
+    ) -> Result<Option<Rc<ImportedSource>>, JsValue> {
+        let value: &JsValue = self.as_ref();
+        if viewer_instance(value, |types| &types.sphere)? {
+            let shape = crate::shapes::Sphere::try_from_js_value(call(value, "cloneShape")?)
+                .map_err(|_| error("expected live Sphere"))?;
+            operation(&shape.inner)?;
+            Ok(None)
+        } else if viewer_instance(value, |types| &types.stick)? {
+            let shape = crate::shapes::Stick::try_from_js_value(call(value, "cloneShape")?)
+                .map_err(|_| error("expected live Stick"))?;
+            operation(&shape.inner)?;
+            Ok(None)
+        } else if viewer_instance(value, |types| &types.selection)? {
+            // Official wasm-bindgen conversion consumes its argument. Convert an
+            // explicit clone so callers can reuse the original selection handle.
+            let selection = Selection::try_from_js_value(call(value, "cloneSelection")?)
+                .map_err(|_| error("expected a live Selection"))?;
+            match selection.native() {
+                NativeSelection::MoleculeAtoms(s) => operation(&s),
+                NativeSelection::MoleculeBonds(s) => operation(&s),
+                NativeSelection::ProteinAtoms(s) => operation(&s),
+                NativeSelection::ProteinResidues(s) => operation(&s),
+            }?;
+            Ok(Some(selection.source))
+        } else {
+            let source = import(value)?;
+            match &source.native {
+                NativeSource::Molecule(mol) => operation(mol),
+                NativeSource::Protein(protein) => operation(protein),
+            }?;
+            Ok(Some(source))
         }
-        if source.capture()? != self.snapshot.input {
-            return Err(error(
-                "source rendering data changed since selection; create a new selection",
-            ));
-        }
-        self.snapshot
-            .input
-            .project(self.kind, &self.ids, style)
-            .map_err(|e| JsValue::from(js_sys::Error::new(&e.to_string())))
     }
 }

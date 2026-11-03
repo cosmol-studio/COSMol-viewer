@@ -10,15 +10,15 @@ WebAssembly packages.
 
 .. code-block:: rust
 
-   use cosmol_viewer::{ImageRenderer, Scene, shapes::Molecule};
+   use cosmol_viewer::{ImageRenderer, Scene};
+   use cosmolkit::Molecule;
 
    fn main() -> Result<(), Box<dyn std::error::Error>> {
-       let molecule = Molecule::from_sdf(include_str!("molecule.sdf"))?
-           .centered()
-           .enable_outline(0.04);
+       let molecule = Molecule::from_sdf(include_str!("molecule.sdf"))?;
 
        let mut scene = Scene::new();
-       scene.add_shape_with_id("molecule", molecule);
+       scene.set("molecule", &molecule)?;
+       scene.recenter_on(&molecule)?;
        ImageRenderer::save_png(&scene, "molecule.png", 1200, 900)?;
        Ok(())
    }
@@ -26,3 +26,7 @@ WebAssembly packages.
 The complete generated Rust reference is published on
 `docs.rs <https://docs.rs/cosmol_viewer/latest/cosmol_viewer/>`_. Rust examples
 are maintained in the repository's ``cosmol_viewer/examples`` directory.
+
+``scene.add(&molecule)?`` uses the default style. To choose one explicitly, pass
+an object/style tuple: ``scene.add((&protein, Surface::default()))?``.
+Positioned shapes use the same methods: ``scene.set("marker", sphere)?``.

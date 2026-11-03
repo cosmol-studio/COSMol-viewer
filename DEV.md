@@ -75,7 +75,8 @@ Local policy and workflow checks (without publishing):
 ```sh
 python -m unittest discover -s tools -p 'test_*.py' -v
 python tools/publish_policy.py
-python wasm/build.py --check --browser-check
+python wasm/build.py
+python wasm/check.py --browser
 python python/build.py --check
 python python/build_native_viewer.py
 maturin build --locked --generate-stubs --manifest-path python/Cargo.toml --out target/release-check/wheels

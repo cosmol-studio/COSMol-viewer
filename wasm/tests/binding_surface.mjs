@@ -19,29 +19,29 @@ test("CK selections project molecules and proteins without viewer chemistry wrap
     const balls = binding.Style.ballAndStick();
     const spheres = binding.Style.sphere();
     const scaled = spheres.scale(1.4);
-    scene.showWithId("mol", source, atoms, balls);
+    scene.set("mol", atoms, balls);
     const saved = scene.toJson();
-    scene.show(source, oxygen, scaled);
+    scene.add(oxygen, scaled);
     scene.recenterOn(source);
     assert.equal(scene.shapeCount(), 2);
     assert.deepEqual(JSON.parse(scene.toJson()).scene_center, [1, 0, 2]);
-    const other = source.copy();
     const before = scene.toJson();
-    assert.throws(() => scene.showWithId("mol", other, atoms, balls), /different source/);
+    assert.throws(() => scene.set("mol", atoms, binding.Style.cartoon()), /support/);
     assert.equal(scene.toJson(), before);
     source.setAtomPosition_(0, [9, 9, 9]);
-    assert.throws(() => scene.showWithId("mol", source, atoms, balls), /changed/);
-    assert.equal(scene.toJson(), before);
     const fresh = binding.select(source).atoms();
-    scene.showWithId("mol", source, fresh, balls);
+    scene.set("mol", fresh, balls);
+    assert.equal(scene.toJson(), before);
+    const other = source.copy();
+    scene.set("mol", other, balls);
     assert.notEqual(scene.toJson(), saved);
     const unpositioned = ck.Molecule.fromSmiles("CO");
     const unpositionedAtoms = binding.select(unpositioned).atoms();
-    assert.throws(() => scene.show(unpositioned, unpositionedAtoms, balls), /no stored coordinates/);
+    assert.throws(() => scene.add(unpositionedAtoms, balls), /no stored coordinates/);
     assert.equal(unpositioned.coordinates2d, undefined);
     assert.throws(() => binding.select({}), TypeError);
     assert.throws(() => atoms.element({atomicNumber: 8}), TypeError);
-    assert.throws(() => selector.residues(), /selection/);
+    assert.throws(() => selector.residues(), /residues/);
     assert.throws(() => spheres.scale(0), RangeError);
     assert.throws(() => spheres.opacity(NaN), RangeError);
     assert.throws(() => spheres.scale("1.4"), TypeError);
@@ -53,12 +53,12 @@ test("CK selections project molecules and proteins without viewer chemistry wrap
     const residues = binding.select(protein).residues();
     const cartoon = binding.Style.cartoon();
     const rainbow = cartoon.rainbowResidues();
-    scene.showWithId("protein", protein, residues, rainbow);
+    scene.set("protein", residues, rainbow);
     const proteinOxygens = binding.select(protein).atoms().element(oxygenElement);
-    scene.show(protein, proteinOxygens, spheres);
+    scene.add(proteinOxygens, spheres);
     const proteinBefore = scene.toJson();
     protein.translate_([1, 0, 0]);
-    assert.throws(() => scene.showWithId("protein", protein, residues, cartoon), /changed/);
+    scene.set("protein", residues, rainbow);
     assert.equal(scene.toJson(), proteinBefore);
     for (const handle of [proteinOxygens, rainbow, cartoon, residues, protein,
         unpositionedAtoms, unpositioned, fresh, other, scaled, spheres, balls, scene,
@@ -67,8 +67,48 @@ test("CK selections project molecules and proteins without viewer chemistry wrap
 
 const pkg = process.env.COSMOL_VIEWER_WASM_PKG;
 assert.ok(pkg, "COSMOL_VIEWER_WASM_PKG must point at the generated package");
-const binding = await import(pathToFileURL(join(pkg, "cosmol_viewer_wasm.js")));
+const binding = await import(pathToFileURL(join(pkg, "index.js")));
 binding.initSync({ module: readFileSync(join(pkg, "cosmol_viewer_wasm_bg.wasm")) });
+
+test("add, set, select and cloned scenes share one CK transfer per source", async () => {
+    const ckPath = join(pkg, "node_modules/@cosmol-studio/cosmolkit");
+    const ck = await import(pathToFileURL(join(ckPath, "cosmolkit_wasm.js")));
+    const protein = ck.Protein.fromMmcif(readFileSync(new URL("../../cosmol_viewer/examples/6fi1.cif", import.meta.url), "utf8"));
+    const mol = ck.Molecule.fromSmiles("CO").withAdded3dConformer([[0, 0, 0], [2, 0, 0]]);
+    let proteinTransfers = 0, moleculeTransfers = 0;
+    const proteinTransfer = protein.toTransferBinary.bind(protein);
+    const moleculeTransfer = mol.toTransferBinary.bind(mol);
+    protein.toTransferBinary = () => { proteinTransfers++; return proteinTransfer(); };
+    mol.toTransferBinary = () => { moleculeTransfers++; return moleculeTransfer(); };
+    const scene = binding.Scene.new();
+    const cartoon = binding.Style.cartoon();
+    const surface = binding.Style.surface();
+    const balls = binding.Style.ballAndStick();
+    scene.add(protein);
+    scene.add(protein, surface);
+    scene.set("ligand", mol);
+    const proteinSelector = binding.select(protein);
+    const residues = proteinSelector.residues();
+    const moleculeSelector = binding.select(mol);
+    const atoms = moleculeSelector.atoms();
+    scene.set("protein", residues, cartoon);
+    scene.set("ligand", atoms, balls);
+    // Passing a selection must not consume it.
+    scene.add(residues, cartoon);
+    assert.ok(residues.len() > 0);
+    const clone = scene.cloneScene();
+    scene.free();
+    clone.add(protein, cartoon);
+    clone.add(mol, balls);
+    clone.recenterOn(protein);
+    assert.equal(proteinTransfers, 1);
+    assert.equal(moleculeTransfers, 1);
+    const before = clone.toJson();
+    assert.throws(() => clone.set("protein", mol, cartoon), /support/);
+    assert.throws(() => clone.add({}, cartoon), TypeError);
+    assert.equal(clone.toJson(), before);
+    for (const value of [clone, residues, atoms, proteinSelector, moleculeSelector, cartoon, surface, balls, protein, mol]) value.free();
+});
 
 test("generated browser API has the declared names and native-only restrictions", () => {
     const handle = binding.Viewer.new();
@@ -105,9 +145,9 @@ test("async browser initialization reports a missing DOM canvas", async () => {
     const handle = binding.Viewer.new();
     const scene = binding.Scene.new();
     const animation = binding.Animation.new(0.1, 1n, false);
-    await assert.rejects(binding.Viewer.renderInto("missing-canvas", scene), /Canvas not found/);
+    await assert.rejects(binding.Viewer.openInto("missing-canvas", scene), /Canvas not found/);
     await assert.rejects(binding.Viewer.playInto("missing-canvas", animation), /Canvas not found/);
-    await assert.rejects(binding.Viewer.render(scene, 100, 100), /document is unavailable/);
+    await assert.rejects(binding.Viewer.open(scene, 100, 100), /document is unavailable/);
     await assert.rejects(binding.Viewer.play(animation, 100, 100), /document is unavailable/);
     // Async failures must neither consume nor invalidate borrowed JS objects.
     assert.equal(scene.shapeCount(), 0);
@@ -119,9 +159,9 @@ test("async browser initialization reports a missing DOM canvas", async () => {
     assert.throws(() => handle.showCameraParameters(true), /before app initialization/);
     assert.equal(typeof handle.setCameraParameterLogging, "undefined");
     assert.equal(scene.shapeCount(), 0);
-    await assert.rejects(binding.Viewer.renderNotebook("missing-canvas", "invalid"), /decode failed/);
+    await assert.rejects(binding.Viewer.openNotebook("missing-canvas", "invalid"), /decode failed/);
     await assert.rejects(binding.Viewer.playNotebook("missing-canvas", "CMV99:R:AAAA"), /unsupported payload version/);
-    await assert.rejects(binding.Viewer.renderNotebook("missing-canvas", "CMV1:AAAA"), /unsupported payload version/);
+    await assert.rejects(binding.Viewer.openNotebook("missing-canvas", "CMV1:AAAA"), /unsupported payload version/);
     assert.throws(() => handle.dispatch("CMV2:X:AAAA"), /unsupported payload encoding/);
     scene.free();
     animation.free();
@@ -130,8 +170,8 @@ test("async browser initialization reports a missing DOM canvas", async () => {
 
 test("JS creates and modifies real Scene/Animation state without transport payloads", () => {
     const scene = binding.Scene.new();
-    scene.addSphere("sphere", new Float32Array([0, 0, 0]), 1);
-    scene.addStick("stick", new Float32Array([0, 0, 0]), new Float32Array([1, 0, 0]), 0.1);
+    scene.set("sphere", binding.Sphere.new(new Float32Array([0, 0, 0]), 1));
+    scene.set("stick", binding.Stick.new(new Float32Array([0, 0, 0]), new Float32Array([1, 0, 0]), 0.1));
     scene.setBackgroundColor(new Uint8Array([0, 0, 0]));
     scene.setTransparentBackground(true);
     scene.setAutoRotate(true, 20);
@@ -179,7 +219,7 @@ test("checked JS values reject coercion and leave native state unchanged", async
     for (const invalid of ["2", true, null, undefined, {}, [2]]) {
         assert.throws(() => scene.setScale(invalid), TypeError);
         assert.throws(() => animation.setInterval(invalid), TypeError);
-        await assert.rejects(binding.Viewer.render(scene, invalid, 100), TypeError);
+        await assert.rejects(binding.Viewer.open(scene, invalid, 100), TypeError);
     }
     for (const invalid of [0, 1, "false", null, undefined]) {
         assert.throws(() => scene.setTransparentBackground(invalid), TypeError);
@@ -195,7 +235,7 @@ test("checked JS values reject coercion and leave native state unchanged", async
     for (const invalid of [[0, 0, 0], new Float64Array([0, 0, 0]), "0,0,0"]) {
         assert.throws(() => scene.recenter(invalid), TypeError);
     }
-    assert.throws(() => scene.addSphere(12, new Float32Array([0, 0, 0]), 1), TypeError);
+    assert.throws(() => scene.set(12, binding.Sphere.new(new Float32Array([0, 0, 0]), 1)), TypeError);
     assert.throws(() => scene.setAutoRotate(true, "2"), TypeError);
     assert.throws(() => scene.recenter(new Float32Array([0, 0, 0, 1])), /three coordinates/);
     assert.equal(scene.toJson(), beforeScene);
@@ -203,4 +243,29 @@ test("checked JS values reject coercion and leave native state unchanged", async
     assert.throws(() => animation.addFrame({}), /Scene/);
     animation.free();
     scene.free();
+});
+
+test("default styles, reusable shapes and named replacement share add/set", async () => {
+    const ck = await import(pathToFileURL(join(pkg, "node_modules/@cosmol-studio/cosmolkit/cosmolkit_wasm.js")));
+    const mol = ck.Molecule.fromSmiles("CO").withAdded3dConformer([[0,0,0], [1,0,0]]);
+    const scene = binding.Scene.new(), explicit = binding.Scene.new();
+    const style = binding.Style.ballAndStick();
+    scene.set("item", mol);
+    explicit.set("item", mol, style);
+    assert.equal(scene.toJson(), explicit.toJson());
+    const sphere = binding.Sphere.new(new Float32Array([0,0,0]), 1);
+    const stick = binding.Stick.new(new Float32Array([0,0,0]), new Float32Array([1,0,0]), 0.2);
+    scene.set("item", sphere);
+    const before = scene.toJson();
+    assert.throws(() => scene.set("item", sphere, style), /already carry/);
+    assert.equal(scene.toJson(), before);
+    scene.set("item", stick);
+    scene.add(sphere);
+    scene.add(sphere, undefined);
+    scene.add(stick, null);
+    assert.equal(scene.shapeCount(), 4);
+    assert.throws(() => binding.Sphere.new(new Float32Array([0,0]), 1));
+    assert.throws(() => binding.Stick.new(new Float32Array([0,0,0]), new Float32Array([1,0,0]), -1));
+    for (const name of ["addSphere", "addStick"]) assert.equal(scene[name], undefined);
+    for (const value of [scene, explicit, sphere, stick, style, mol]) value.free();
 });

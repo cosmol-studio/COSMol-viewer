@@ -7,44 +7,36 @@ Molecules
 SDF Input
 ---------
 
-The viewer accepts an SDF string and uses COSMolKit for parsing:
+Load scientific data with COSMolKit, then pass the molecule directly to a scene:
 
 .. code-block:: python
 
-   from cosmol_viewer import Molecule
+   from cosmolkit import Molecule
+   from cosmol_viewer import Scene, BallAndStick, StickStyle, SphereStyle
 
    sdf = open("ligand.sdf", encoding="utf-8").read()
-   molecule = Molecule.from_sdf(sdf).centered()
+   molecule = Molecule.from_sdf(sdf)
+   scene = Scene()
+   scene.add(molecule)
+   scene.recenter_on(molecule)
 
 COSMolKit Integration
 ---------------------
 
-Convert an existing Python ``cosmolkit.Molecule`` without crossing through a
-temporary SDF file. Stored 3D coordinates are preferred; stored 2D coordinates
-are used next, and 2D coordinates are generated if neither is available. The
-first stored 3D conformer is used regardless of its ID. Conversion leaves the
-source molecule unchanged.
-
-The input must be a ``cosmolkit.Molecule``. Chemistry errors propagate from
-COSMolKit; malformed, mismatched or non-finite coordinates raise ``ValueError``
-instead of being truncated or replaced by a generated layout.
-
-.. code-block:: python
-
-   import cosmolkit as ck
-   from cosmol_viewer import Molecule
-
-   source = ck.mol_from_smiles("CC(=O)Nc1ccc(O)cc1").with_2d_coordinates()
-   molecule = Molecule.from_cosmolkit(source).centered()
+The viewer imports each live ``cosmolkit.Molecule`` once through its transfer
+binary. Scene operations and selections share that immutable native snapshot.
+Stored coordinates are required: generate coordinates explicitly in COSMolKit
+when needed. Multiple 3D conformers require an explicit style ``conformer(id)``.
+To display changes while an old import is still live, pass a new CK object.
 
 Representations
 ---------------
 
 .. code-block:: python
 
-   ball_and_stick = Molecule.from_sdf(sdf).ball_and_stick()
-   sticks = Molecule.from_sdf(sdf).stick()
-   space_filling = Molecule.from_sdf(sdf).sphere()
+   scene.set("molecule", molecule)  # default BallAndStick
+   scene.set("molecule", molecule, StickStyle())
+   scene.set("molecule", molecule, SphereStyle())
 
 The stick representation retains double and triple bond separation and renders
 aromatic bonds as a single stick with an inner aromatic line.
@@ -58,18 +50,13 @@ aromatic bonds as a single stick with an inner aromatic line.
 Materials and Outlines
 ----------------------
 
-All shapes support ``color()``, ``opacity()``, ``roughness()``, and
-``metallic()``. Molecules additionally support an imposter-based outline:
+Scientific styles support ``color()``, ``opacity()``, ``roughness()``, and
+``metallic()``. Apply outlines to the representation:
 
 .. code-block:: python
 
-   molecule = (
-       Molecule.from_sdf(sdf)
-       .centered()
-       .roughness(0.55)
-       .metallic(0.0)
-       .enable_outline(color="#101010", width=0.04)
-   )
+   style = BallAndStick().roughness(0.55).metallic(0.0).outline("#101010", 0.04)
+   scene.set("molecule", molecule, style)
 
-``roughness`` and ``metallic`` use values from 0 to 1. Use
-``disable_outline()`` or ``set_outline(False)`` to remove the outline.
+``roughness`` and ``metallic`` use values from 0 to 1. Scientific data stays in
+COSMolKit; display styles do not change molecule coordinates or chemistry.

@@ -24,6 +24,21 @@ fn carbon_oxygen() -> ck::Molecule {
     molecule("CO", vec![[1.0, 2.0, 3.0], [2.2, 2.0, 3.0]])
 }
 
+#[test]
+fn filtered_ids_keep_native_source_ownership_and_projection() {
+    let source = carbon_oxygen();
+    let other = source.clone();
+    let oxygen = select(&source).atoms().filter(|id| id.index() == 1);
+    assert_eq!(oxygen.ids(), &[ck::AtomId::new(1)]);
+    assert!(oxygen.belongs_to(&source));
+    assert!(!oxygen.belongs_to(&other));
+    let mut scene = Scene::new();
+    scene.set("oxygen", (&oxygen, Sphere::default())).unwrap();
+    let groups = scene.get_instances_grouped();
+    assert_eq!(groups.spheres.len(), 1);
+    assert_eq!(groups.spheres[0].position, [2.2, 2.0, 3.0]);
+}
+
 const PROTEIN_PDB: &str = concat!(
     "ATOM      1  N   ALA A   1      11.104  13.207   9.900  1.00 20.00           N\n",
     "ATOM      2  CA  ALA A   1      12.210  13.912  10.555  1.00 20.00           C\n",
@@ -41,16 +56,12 @@ fn independent_displays_use_selected_entities_and_do_not_mutate_source() {
     let before: Vec<_> = source.conformers_3d()[0].coordinates().to_vec();
     let mut scene = Scene::new();
     scene
-        .show(&source, &select(&source).atoms(), BallAndStick::default())
+        .add((&select(&source).atoms(), BallAndStick::default()))
         .unwrap();
     let first = serde_json::to_value(&scene).unwrap();
     let oxygen = select(&source).atoms().element(ck::Element::O);
     scene
-        .show(
-            &source,
-            &oxygen,
-            Sphere::default().scale(1.4).color("#00FF00"),
-        )
+        .add((&oxygen, Sphere::default().scale(1.4).color("#00FF00")))
         .unwrap();
     assert_eq!(scene.unnamed_shapes.len(), 2);
     assert_eq!(
@@ -69,41 +80,17 @@ fn independent_displays_use_selected_entities_and_do_not_mutate_source() {
 #[test]
 fn failure_is_atomic_for_named_and_unnamed_displays() {
     let source = carbon_oxygen();
-    let other = carbon_oxygen();
     let mut scene = Scene::new();
     scene
-        .show_with_id(
-            "keep",
-            &source,
-            &select(&source).atoms(),
-            BallAndStick::default(),
-        )
+        .set("keep", (&select(&source).atoms(), BallAndStick::default()))
         .unwrap();
     let before = serde_json::to_value(&scene).unwrap();
     assert!(matches!(
-        scene.show(&other, &select(&source).atoms(), BallAndStick::default()),
-        Err(DisplayError::SourceMismatch)
-    ));
-    assert!(matches!(
-        scene.show_with_id(
-            "keep",
-            &other,
-            &select(&source).atoms(),
-            BallAndStick::default()
-        ),
-        Err(DisplayError::SourceMismatch)
-    ));
-    assert!(matches!(
-        scene.show_with_id(
-            "keep",
-            &source,
-            &select(&source).atoms(),
-            Cartoon::default()
-        ),
+        scene.set("keep", (&select(&source).atoms(), Cartoon::default())),
         Err(DisplayError::IncompatibleStyle { .. })
     ));
     assert!(matches!(
-        scene.show(&source, &select(&source).bonds(), Sphere::default()),
+        scene.add((&select(&source).bonds(), Sphere::default())),
         Err(DisplayError::IncompatibleStyle { .. })
     ));
     assert_eq!(serde_json::to_value(&scene).unwrap(), before);
@@ -114,10 +101,10 @@ fn empty_compatible_selections_do_not_require_coordinates() {
     let source = ck::Molecule::new();
     let mut scene = Scene::new();
     scene
-        .show(&source, &select(&source).atoms(), BallAndStick::default())
+        .add((&select(&source).atoms(), BallAndStick::default()))
         .unwrap();
     scene
-        .show(&source, &select(&source).bonds(), Stick::default())
+        .add((&select(&source).bonds(), Stick::default()))
         .unwrap();
     let groups = scene.get_instances_grouped();
     assert!(groups.spheres.is_empty() && groups.sticks.is_empty());
@@ -129,7 +116,7 @@ fn missing_coordinates_are_an_error_not_an_implicit_chemical_operation() {
     let source = ck::Molecule::from_smiles("CCO").unwrap();
     let mut scene = Scene::new();
     assert!(matches!(
-        scene.show(&source, &select(&source).atoms(), BallAndStick::default()),
+        scene.add((&select(&source).atoms(), BallAndStick::default())),
         Err(DisplayError::MissingCoordinates)
     ));
     assert!(scene.unnamed_shapes.is_empty());
@@ -154,31 +141,28 @@ fn coordinate_choices_use_ids_and_preserve_dimension() {
     .unwrap();
     let mut scene = Scene::new();
     assert!(matches!(
-        scene.show(&source, &select(&source).atoms(), BallAndStick::default()),
+        scene.add((&select(&source).atoms(), BallAndStick::default())),
         Err(DisplayError::AmbiguousCoordinates(2))
     ));
     assert!(matches!(
-        scene.show(
-            &source,
+        scene.add((
             &select(&source).atoms(),
             BallAndStick::default().coordinates(Coordinates::ThreeD { id: 1 })
-        ),
+        )),
         Err(DisplayError::MissingConformer(1))
     ));
     assert!(scene.unnamed_shapes.is_empty());
     scene
-        .show(
-            &source,
+        .add((
             &select(&source).atoms(),
             Sphere::default().coordinates(Coordinates::ThreeD { id: 42 }),
-        )
+        ))
         .unwrap();
     scene
-        .show(
-            &source,
+        .add((
             &select(&source).atoms(),
             Sphere::default().coordinates(Coordinates::TwoD),
-        )
+        ))
         .unwrap();
     let groups = scene.get_instances_grouped();
     assert_eq!(groups.spheres[0].position, [4.0; 3]);
@@ -190,11 +174,12 @@ fn centering_and_scaling_change_visual_data_only() {
     let source = carbon_oxygen();
     let mut scene = Scene::new();
     scene
-        .show_with_id(
+        .set(
             "ligand",
-            &source,
-            &select(&source).atoms(),
-            BallAndStick::default().outline("#EEEEEE", 0.02),
+            (
+                &select(&source).atoms(),
+                BallAndStick::default().outline("#EEEEEE", 0.02),
+            ),
         )
         .unwrap();
     scene.recenter_on(&source).unwrap();
@@ -216,7 +201,7 @@ fn scientific_sources_can_be_dropped_after_show_and_transport_contains_only_geom
     {
         let source = carbon_oxygen();
         scene
-            .show(&source, &select(&source).atoms(), BallAndStick::default())
+            .add((&select(&source).atoms(), BallAndStick::default()))
             .unwrap();
     }
     let json = serde_json::to_string(&scene).unwrap();
@@ -243,18 +228,16 @@ fn protein_cartoon_and_atom_displays_share_one_ck_source() {
     let before: Vec<_> = source.atoms().map(|a| a.position()).collect();
     let mut scene = Scene::new();
     scene
-        .show(
-            &source,
+        .add((
             &select(&source).residues(),
             Cartoon::default().rainbow_residues(),
-        )
+        ))
         .unwrap();
     scene
-        .show(
-            &source,
+        .add((
             &select(&source).atoms().element(ck::Element::O),
             Sphere::default(),
-        )
+        ))
         .unwrap();
     assert_eq!(scene.unnamed_shapes.len(), 2);
     assert_eq!(scene.get_instances_grouped().spheres.len(), 2);
@@ -273,18 +256,13 @@ fn surface_errors_do_not_replace_a_previous_display() {
     let source = ck::Protein::from_pdb(PROTEIN_PDB).unwrap();
     let mut scene = Scene::new();
     scene
-        .show_with_id(
-            "protein",
-            &source,
-            &select(&source).residues(),
-            Cartoon::default(),
-        )
+        .set("protein", (&select(&source).residues(), Cartoon::default()))
         .unwrap();
     let before = serde_json::to_value(&scene).unwrap();
     let mut invalid = Surface::default();
     invalid.grid_spacing = 0.0;
     assert!(matches!(
-        scene.show_with_id("protein", &source, &select(&source).atoms(), invalid),
+        scene.set("protein", (&select(&source).atoms(), invalid)),
         Err(DisplayError::Surface(_))
     ));
     assert_eq!(serde_json::to_value(&scene).unwrap(), before);
@@ -296,9 +274,7 @@ fn protein_surface_produces_finite_render_geometry() {
     let mut scene = Scene::new();
     let mut style = Surface::default().color("#DCE8F2").opacity(0.9);
     style.sharp_boundaries = false;
-    scene
-        .show(&source, &select(&source).atoms(), style)
-        .unwrap();
+    scene.add((&select(&source).atoms(), style)).unwrap();
     let meshes = scene._get_meshes();
     assert!(!meshes[0].vertices.is_empty());
     assert!(meshes[0].vertices.iter().all(|v| v.is_finite()));
@@ -311,7 +287,7 @@ fn zero_length_neighbor_bond_does_not_hide_valid_bond() {
     let source = molecule("COC", vec![[1.0, 0.0, 0.0], [0.0; 3], [0.0; 3]]);
     let mut scene = Scene::new();
     scene
-        .show(&source, &select(&source).atoms(), BallAndStick::default())
+        .add((&select(&source).atoms(), BallAndStick::default()))
         .unwrap();
     let groups = scene.get_instances_grouped();
     assert_eq!(groups.sticks.len(), 2);
@@ -337,7 +313,7 @@ fn stick_style_preserves_double_and_triple_order_spacing() {
     );
     let mut scene = Scene::new();
     scene
-        .show(&source, &select(&source).bonds(), Stick::default())
+        .add((&select(&source).bonds(), Stick::default()))
         .unwrap();
     let groups = scene.get_instances_grouped();
     // two double, one single and one triple bond, each colored in two halves.
@@ -365,11 +341,7 @@ fn aromatic_ring_keeps_inner_lines_and_bond_selection_has_no_unselected_bonds() 
     let source = molecule("c1ccccc1CO", xyz);
     let mut scene = Scene::new();
     scene
-        .show(
-            &source,
-            &select(&source).bonds().aromatic(),
-            Stick::default(),
-        )
+        .add((&select(&source).bonds().aromatic(), Stick::default()))
         .unwrap();
     let groups = scene.get_instances_grouped();
     assert_eq!(groups.sticks.len(), 24);
@@ -383,10 +355,10 @@ fn interpolation_operates_on_visual_geometry() {
     let mut first = Scene::new();
     let mut second = Scene::new();
     first
-        .show_with_id("mol", &a, &select(&a).atoms(), BallAndStick::default())
+        .set("mol", (&select(&a).atoms(), BallAndStick::default()))
         .unwrap();
     second
-        .show_with_id("mol", &b, &select(&b).atoms(), BallAndStick::default())
+        .set("mol", (&select(&b).atoms(), BallAndStick::default()))
         .unwrap();
     let midway = first.interpolate(&second, 0.5, RustLogger);
     assert_eq!(
@@ -418,11 +390,10 @@ fn source_properties_color_original_atom_ids_not_selection_offsets() {
         .unwrap();
         let mut scene = Scene::new();
         scene
-            .show(
-                &source,
+            .add((
                 &select(&source).atoms().element(ck::Element::O),
                 Sphere::default(),
-            )
+            ))
             .unwrap();
         let groups = scene.get_instances_grouped();
         assert_eq!(groups.spheres.len(), 1);
@@ -435,7 +406,7 @@ fn oversized_f64_coordinates_are_rejected_before_scene_mutation() {
     let source = molecule("CO", vec![[f64::MAX, 0.0, 0.0], [0.0; 3]]);
     let mut scene = Scene::new();
     assert!(matches!(
-        scene.show(&source, &select(&source).atoms(), BallAndStick::default()),
+        scene.add((&select(&source).atoms(), BallAndStick::default())),
         Err(DisplayError::InvalidCoordinates)
     ));
     assert!(scene.unnamed_shapes.is_empty());
@@ -472,19 +443,15 @@ fn changing_protein_mesh_topology_keeps_discrete_animation_playback() {
     let mut first = Scene::new();
     let mut second = Scene::new();
     first
-        .show_with_id(
+        .set(
             "protein",
-            &first_source,
-            &select(&first_source).residues(),
-            Cartoon::default(),
+            (&select(&first_source).residues(), Cartoon::default()),
         )
         .unwrap();
     second
-        .show_with_id(
+        .set(
             "protein",
-            &second_source,
-            &select(&second_source).residues(),
-            Cartoon::default(),
+            (&select(&second_source).residues(), Cartoon::default()),
         )
         .unwrap();
     assert_ne!(
@@ -581,4 +548,90 @@ fn recenter_on_empty_molecule_uses_origin_without_generating_coordinates() {
     scene.recenter_on(&empty).unwrap();
     assert_eq!(scene.scene_center, [0.0; 3]);
     assert!(empty.coordinates_2d().is_none() && empty.conformers_3d().is_empty());
+}
+
+#[test]
+fn whole_objects_use_the_same_core_projection_as_explicit_selections() {
+    let mol = carbon_oxygen();
+    let protein = ck::Protein::from_pdb(PROTEIN_PDB).unwrap();
+    let mut whole = Scene::new();
+    let mut selected = Scene::new();
+    whole.add((&mol, BallAndStick::default())).unwrap();
+    selected
+        .add((&select(&mol).atoms(), BallAndStick::default()))
+        .unwrap();
+    whole
+        .set("protein", (&protein, Cartoon::default()))
+        .unwrap();
+    selected
+        .set(
+            "protein",
+            (&select(&protein).residues(), Cartoon::default()),
+        )
+        .unwrap();
+    whole.add((&protein, Surface::default())).unwrap();
+    selected
+        .add((&select(&protein).atoms(), Surface::default()))
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(&whole).unwrap(),
+        serde_json::to_value(&selected).unwrap()
+    );
+    let before = serde_json::to_value(&whole).unwrap();
+    assert!(whole.set("protein", (&mol, Cartoon::default())).is_err());
+    assert_eq!(serde_json::to_value(&whole).unwrap(), before);
+}
+
+#[test]
+fn default_styles_match_explicit_styles_for_objects_and_selections() {
+    fn same(
+        item: impl cosmol_viewer_core::display::SceneItem,
+        style: impl Into<cosmol_viewer_core::styles::Representation> + Copy,
+    ) {
+        let mut default = Scene::new();
+        let mut explicit = Scene::new();
+        default.add(&item).unwrap();
+        explicit.add((&item, style)).unwrap();
+        assert_eq!(
+            serde_json::to_value(default).unwrap(),
+            serde_json::to_value(explicit).unwrap()
+        );
+    }
+    let mol = carbon_oxygen();
+    let protein = ck::Protein::from_pdb(PROTEIN_PDB).unwrap();
+    same(&mol, BallAndStick::default());
+    same(select(&mol).atoms(), BallAndStick::default());
+    same(
+        select(&mol).bonds(),
+        cosmol_viewer_core::styles::Stick::default(),
+    );
+    same(&protein, Cartoon::default());
+    same(select(&protein).residues(), Cartoon::default());
+    same(
+        select(&protein).atoms(),
+        cosmol_viewer_core::styles::Sphere::default(),
+    );
+}
+
+#[test]
+fn shapes_and_scientific_objects_share_named_content_and_atomic_validation() {
+    use cosmol_viewer_core::shapes::{Sphere, Stick};
+    let mut scene = Scene::new();
+    scene.set("item", Sphere::new([0.0; 3], 1.0)).unwrap();
+    scene.set("item", &carbon_oxygen()).unwrap();
+    scene
+        .set("item", Stick::new([0.0; 3], [1.0; 3], 0.2))
+        .unwrap();
+    let before = serde_json::to_value(&scene).unwrap();
+    assert!(
+        scene
+            .set("item", (Sphere::new([0.0; 3], 1.0), Cartoon::default()))
+            .is_err()
+    );
+    assert!(scene.set("item", Sphere::new([0.0; 3], -1.0)).is_err());
+    assert!(scene.add(Stick::new([f32::NAN; 3], [1.0; 3], 0.2)).is_err());
+    assert_eq!(serde_json::to_value(&scene).unwrap(), before);
+    scene.add(Sphere::new([0.0; 3], 1.0)).unwrap();
+    assert_eq!(scene.named_shapes.len(), 1);
+    assert_eq!(scene.unnamed_shapes.len(), 1);
 }

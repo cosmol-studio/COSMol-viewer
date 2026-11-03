@@ -532,11 +532,11 @@ impl NativeGuiViewer {
         })
     }
 
-    pub fn render(scene: &Scene, width: f32, height: f32) -> Result<Self, RenderError> {
-        Self::render_with_quality(scene, width, height, RenderQuality::Medium)
+    pub fn open(scene: &Scene, width: f32, height: f32) -> Result<Self, RenderError> {
+        Self::open_with_quality(scene, width, height, RenderQuality::Medium)
     }
 
-    pub fn render_with_quality(
+    pub fn open_with_quality(
         scene: &Scene,
         width: f32,
         height: f32,
@@ -546,7 +546,7 @@ impl NativeGuiViewer {
     }
 
     /// Renders a scene in a dedicated executable without registering the producer.
-    pub fn render_with_executable(
+    pub fn open_with_executable(
         scene: &Scene,
         width: f32,
         height: f32,

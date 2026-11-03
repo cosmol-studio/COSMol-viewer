@@ -1,6 +1,8 @@
-use crate::input::{ColorInput, ShapeInput};
+use crate::input::ColorInput;
+use crate::selection::NativeSource;
 use cosmol_viewer_core::scene::{Scene as _Scene, default_light_color};
 use pyo3::prelude::*;
+
 #[derive(Clone)]
 #[pyclass(module = "cosmol_viewer", from_py_object)]
 #[doc = r#"
@@ -12,7 +14,7 @@ background color. Static image export is also a scene-level operation via
 ``scene.save_image(...)`` and ``scene.to_png(...)``; it does not depend on a
 ``Viewer`` instance or the current notebook/browser/window size.
 
-Positioned shapes include ``Sphere`` and ``Stick``. Use ``show`` with CK
+Positioned shapes include ``Sphere`` and ``Stick``. Use ``add`` or ``set`` with CK
 objects, selections and styles for molecular/protein displays.
 Shapes can optionally be assigned a string ``id`` so they can be updated or removed later.
 
@@ -24,101 +26,73 @@ Examples
 "#]
 pub struct Scene {
     pub(crate) inner: _Scene,
+    pub(crate) sources: crate::selection::Sources,
 }
 
 #[pymethods]
 impl Scene {
-    /// Add a CK source selection with an independent rendering style.
-    pub(crate) fn show(
+    /// Add a positioned shape, CK object or source-bound selection.
+    /// Omitted styles use the core defaults: molecules use BallAndStick, proteins use Cartoon.
+    /// Selections use BallAndStick (molecule atoms), Stick (bonds), Sphere (protein atoms),
+    /// or Cartoon (residues). Shapes already carry their own style.
+    /// The native source import is shared by selections and Scenes.
+    #[pyo3(signature = (item, style=None))]
+    pub(crate) fn add(
         &mut self,
-        source: crate::selection::ScientificInput<'_>,
-        selection: &crate::selection::Selection,
-        style: crate::styles::StyleInput,
+        item: crate::selection::SceneInput<'_>,
+        style: Option<crate::styles::StyleInput>,
     ) -> PyResult<()> {
-        let display = selection.project(source, style.representation())?;
-        self.inner
-            .add_shape(cosmol_viewer_core::utils::Shape::Display(display));
+        let source = item.with_native(|item| {
+            match style {
+                Some(style) => self.inner.add((item, style.representation())),
+                None => self.inner.add(item),
+            }
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
+        })?;
+        if let Some(source) = source {
+            self.sources.retain(source);
+        }
         Ok(())
     }
-    /// Replace a named display only after source/selection validation succeeds.
-    pub(crate) fn show_with_id(
+    /// Create or replace named content; failed projections preserve the old content.
+    #[pyo3(signature = (name, item, style=None))]
+    pub(crate) fn set(
         &mut self,
-        id: &str,
-        source: crate::selection::ScientificInput<'_>,
-        selection: &crate::selection::Selection,
-        style: crate::styles::StyleInput,
+        name: &str,
+        item: crate::selection::SceneInput<'_>,
+        style: Option<crate::styles::StyleInput>,
     ) -> PyResult<()> {
-        let display = selection.project(source, style.representation())?;
-        self.inner
-            .add_shape_with_id(id, cosmol_viewer_core::utils::Shape::Display(display));
+        let source = item.with_native(|item| {
+            match style {
+                Some(style) => self.inner.set(name, (item, style.representation())),
+                None => self.inner.set(name, item),
+            }
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
+        })?;
+        if let Some(source) = source {
+            self.sources.retain(source);
+        }
         Ok(())
     }
     pub(crate) fn recenter_on(
         &mut self,
         source: crate::selection::ScientificInput<'_>,
     ) -> PyResult<()> {
-        let center = source
-            .capture()?
-            .center()
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-        self.inner.recenter(center);
+        let source = source.import()?;
+        match &source.native {
+            NativeSource::Molecule(molecule) => self.inner.recenter_on(molecule),
+            NativeSource::Protein(protein) => self.inner.recenter_on(protein),
+        }
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        self.sources.retain(source);
         Ok(())
     }
     #[new]
     pub fn new() -> Self {
         Self {
             inner: _Scene::new(),
+            sources: Default::default(),
         }
-    }
-
-    #[doc = r#"
-Add a shape to the scene without assigning an explicit ID.
-
-Parameters
-----------
-shape : Sphere or Stick
-    A shape instance to add to the scene.
-"#]
-    pub fn add_shape(&mut self, shape: ShapeInput) -> PyResult<()> {
-        self.inner
-            .add_shape(cosmol_viewer_core::utils::Shape::from(shape));
-        Ok(())
-    }
-
-    #[doc = r#"
-Add a shape to the scene with a specific ID.
-
-Parameters
-----------
-id : str
-    A unique string identifier for the shape.
-shape : Sphere or Stick
-    A shape instance to add to the scene.
-
-Notes
------
-If a shape with the same ID already exists, it is replaced.
-"#]
-    pub fn add_shape_with_id(&mut self, id: &str, shape: ShapeInput) -> PyResult<()> {
-        self.inner
-            .add_shape_with_id(id, cosmol_viewer_core::utils::Shape::from(shape));
-        Ok(())
-    }
-
-    #[doc = r#"
-Replace an existing shape in the scene by its ID.
-
-Parameters
-----------
-id : str
-    The ID of the shape to replace.
-shape : Sphere or Stick
-    The new shape object.
-"#]
-    pub fn replace_shape(&mut self, id: &str, shape: ShapeInput) -> PyResult<()> {
-        self.inner
-            .replace_shape(id, cosmol_viewer_core::utils::Shape::from(shape))
-            .map_err(|error| pyo3::exceptions::PyKeyError::new_err(error.to_string()))
     }
 
     #[doc = r#"

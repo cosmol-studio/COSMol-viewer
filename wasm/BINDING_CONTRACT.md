@@ -10,9 +10,14 @@ Rust source in build scripts, or patch generated code for individual methods.
 ## Ownership
 
 - `scene.rs` projects core scene state; `animation.rs` owns animation snapshots.
-- `selection.rs` declares checked external CK class references and reads public
-  CK members into shared core rendering inputs. Foreign references refer to a
+- `selection.rs` declares checked external CK class references and imports each
+  source through CK transfer binary into a native CK Molecule or Protein. Foreign references refer to a
   separate WASM instance: never interpret them as local Rust/native pointers.
+  CK constructor imports belong only to `js/index.js`, the npm entry point, which
+  registers them after WASM initialization. The generated JS has no runtime CK
+  import. Notebook embeds that generated JS directly and uses serialized scenes
+  and commands; it does not register CK types or use the CK object adapters.
+- `shapes.rs` projects positioned Sphere/Stick handles, validated by the core.
 - `styles.rs` projects display settings through `Style` factories and builders.
 - `viewer.rs` owns the browser renderer lifecycle and typed request dispatch.
 - `notebook.rs` decodes notebook inputs into those same typed operations.
@@ -20,7 +25,7 @@ Rust source in build scripts, or patch generated code for individual methods.
 - `input.rs` owns generic checked conversions and primitive wire associations.
 - `crates/derive/src/checked_wasm.rs` generates adapters from native methods. It
   does not enumerate business types, methods, errors or defaults.
-- `build.py` only builds, packages and invokes checks. It must not enumerate
+- `build.py` only builds and packages; `check.py` runs tests. Neither may enumerate
   business types/methods or grow when an ordinary method is added.
 
 Add APIs in the owning Rust module with concrete parameter/return types inside
@@ -29,6 +34,19 @@ Existing static `.new()` factories remain factories. Private helpers live in
 unexported impl blocks. Binding
 attributes are enabled only for browser WASM, so Python's bridge and native
 model tests do not acquire a JavaScript runtime dependency.
+
+`Scene.add` and `Scene.set` use direct wasm-bindgen declarations for the external
+scene-item union and optional Style handle. Their string name uses the same
+`Ts<CheckedValue::Wire>` / `input::read` conversion. This allows the official
+extractor to emit an optional native-class argument without consuming user handles.
+The npm entry point registers viewer constructors as well as CK constructors;
+union inputs are checked against them, then official wasm-bindgen conversion
+reads an explicit cloned handle. No native pointer is interpreted manually.
+
+All content enters the same core `Scene::add`/`set`: shapes carry their material,
+whole objects and selections may omit their style. Defaults are exclusively core
+policy (molecule atoms: BallAndStick; molecular bonds: Stick; protein atoms: Sphere;
+proteins/residues: Cartoon). Passing a scientific style for a shape fails atomically.
 
 ## Values and ownership
 
@@ -40,7 +58,7 @@ mutex is held over an await.
 
 ## Checked input and typed output
 
-Every owned value argument crosses the ABI as `Ts<CheckedValue::Wire>`, preserving
+Primitive and structured value arguments cross the ABI as `Ts<CheckedValue::Wire>`, preserving
 its original JS representation until shared `input::read` validates it. Serde
 checks scalar types and integer ranges. String/boolean-to-number coercion,
 fractional integers and integer overflow fail with TypeError. Float values keep
@@ -61,15 +79,22 @@ External CK references declare the actual dependency type once with
 `typescript_type = "import(...).Type"`; runtime checks use the real imported CK
 constructors. The scientific-source union checks both imported classes.
 These are checked foreign types, not arbitrary annotation overrides or TS
-fragments inserted by build tooling. Temporary CK getter handles are released
-after reads, including error paths. Generated declarations retain the dependency
+fragments inserted by build tooling. Selections are borrowed through an explicit
+clone and official wasm-bindgen conversion, never by interpreting raw pointers. Generated declarations retain the dependency
 imports. The dependency lives in Cargo package metadata; build tooling projects
 that metadata without an API inventory.
 
-Selectors retain the original JS object. `show` checks object identity and
-compares current rendering inputs with the captured input snapshot before any
-scene mutation. This O(source size) check detects changed rendering data; it is
-not a version token and does not track unrelated properties or edit history.
+Selectors, selections and Scenes retain shared native imports and the original JS
+owner. A weak registry reuses an import across `add`, `set`, `select` and
+`recenterOn`; changing style never retransfers a source. `cloneScene` retains the
+same imports. After all owners are gone, a later use imports the source again.
+There is no property traversal or mutation heuristic. Source edits do not change
+a live import; pass a new CK object to import edited data while the old one lives.
+
+`add(item, style)` and `set(name, item, style)` accept whole Molecule/Protein
+objects or source-bound selections. Core Scene methods own defaults, validation
+and insertion. Cartoon uses a whole protein's residues; other representations
+use its atoms. `Viewer.open` / `openInto` create the interactive browser view.
 Missing coordinates require explicit CK generation, and multiple conformers
 require an explicit style choice. Completed displays contain geometry snapshots.
 
@@ -90,10 +115,11 @@ Notebook payload strings are internal transport endpoints, not replacements
 for typed Scene/Animation parameters. Native-only APIs remain absent in JS.
 The core registry audits semantic availability across languages; it does not
 generate signatures or supply a second implementation.
-The official ES module imports the CK dependency for those constructor checks.
-The build also bundles `notebook.js` with esbuild so injected Blob modules resolve
-without bare imports or external network fetches. It uses the same viewer WASM
-and methods; the bundle does not change individual generated APIs.
+The npm entry point imports CK constructors and registers them for instance
+checks. The official generated ES module has no runtime CK import and is embedded
+directly by Python, as before the CK JavaScript adapters were introduced.
+Both entry paths use the same Viewer WASM. There is no Notebook JS bundle and
+the Notebook sender/receiver protocol does not carry CK JavaScript objects.
 
 ## Verification
 

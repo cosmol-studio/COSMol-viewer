@@ -1,8 +1,9 @@
 [project]
 name = "cosmol-viewer"
-version = "0.6.0rc1"
+version = "0.6.2rc1"
+requires-python = ">=3.9"
 description = "Molecular visualization tools"
-dependencies = ["cosmolkit>=0.6,<0.7"]
+dependencies = ["cosmolkit==0.6.2rc1"]
 authors = [{name = "95028", email = "wjt@cosmol.org"}]
 readme = "README.md"
 
@@ -12,6 +13,7 @@ build-backend = "build_backend"
 backend-path = ["."]
 
 [tool.maturin]
+features = ["release-abi3-py39"]
 name = "cosmol_viewer"
 python-packages = ["cosmol_viewer_native"]
 include = [

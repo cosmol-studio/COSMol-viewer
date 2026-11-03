@@ -6,10 +6,10 @@ use crate::{Animation, Scene, Viewer, protocol::ViewerCommand, utils::decode_pay
 )]
 impl Viewer {
     /// Internal notebook startup: payload is not the public JS scene API.
-    pub async fn render_notebook(canvas_id: String, payload: String) -> Result<Self, String> {
+    pub async fn open_notebook(canvas_id: String, payload: String) -> Result<Self, String> {
         let scene: cosmol_viewer_core::scene::Scene =
             decode_payload(&payload).map_err(|error| error.to_string())?;
-        Self::render_into(canvas_id, &Scene::from(scene)).await
+        Self::open_into(canvas_id, &Scene::from(scene)).await
     }
     /// Internal notebook animation startup, accepting the versioned transport envelope.
     pub async fn play_notebook(canvas_id: String, payload: String) -> Result<Self, String> {

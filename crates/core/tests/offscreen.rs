@@ -23,11 +23,12 @@ fn renders_repeatedly_with_background_alpha_and_png_encoding() {
     .unwrap();
     let mut scene = Scene::new();
     scene
-        .show_with_id(
+        .set(
             "molecule",
-            &molecule,
-            &select(&molecule).atoms(),
-            BallAndStick::default().outline("#050505", 0.04),
+            (
+                &select(&molecule).atoms(),
+                BallAndStick::default().outline("#050505", 0.04),
+            ),
         )
         .unwrap();
     scene.recenter_on(&molecule).unwrap();
@@ -69,12 +70,16 @@ fn renders_repeatedly_with_background_alpha_and_png_encoding() {
 fn translucent_scene() -> Scene {
     let mut scene = Scene::new();
     scene.set_depth_cue(false);
-    scene.add_shape(
-        Sphere::new([0.0, 0.0, 0.0], 0.9)
-            .color("#AABBE3")
-            .opacity(0.45),
-    );
-    scene.add_shape(Sphere::new([0.3, 0.0, -0.65], 0.55).color("#7292C7"));
+    scene
+        .add(
+            Sphere::new([0.0, 0.0, 0.0], 0.9)
+                .color("#AABBE3")
+                .opacity(0.45),
+        )
+        .unwrap();
+    scene
+        .add(Sphere::new([0.3, 0.0, -0.65], 0.55).color("#7292C7"))
+        .unwrap();
     scene
 }
 
@@ -200,18 +205,18 @@ fn renders_ck_protein_ligand_after_geometry_only_transport() {
     .unwrap();
     let mut scene = Scene::new();
     scene
-        .show(
-            &protein,
+        .add((
             &select(&protein).residues(),
             cosmol_viewer_core::styles::Cartoon::default().rainbow_residues(),
-        )
+        ))
         .unwrap();
     scene
-        .show_with_id(
+        .set(
             "ligand",
-            &ligand,
-            &select(&ligand).atoms(),
-            BallAndStick::default().outline("#EEEEEE", 0.02),
+            (
+                &select(&ligand).atoms(),
+                BallAndStick::default().outline("#EEEEEE", 0.02),
+            ),
         )
         .unwrap();
     scene.recenter_on(&ligand).unwrap();

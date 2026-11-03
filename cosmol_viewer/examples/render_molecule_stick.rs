@@ -1,6 +1,5 @@
-use cosmol_viewer::{Scene, Viewer, select, styles::Stick};
+use cosmol_viewer::{ImageRenderer, Scene, Viewer, styles::Stick};
 use cosmolkit::Molecule;
-use std::path::Path;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     cosmol_viewer_core::register_render();
@@ -9,20 +8,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut scene = Scene::new();
 
-    scene.show_with_id(
-        "mol",
-        &mol,
-        &select(&mol).atoms(),
-        Stick::default().outline("#050505", 0.04),
-    )?;
+    scene.set("mol", (&mol, Stick::default().outline("#050505", 0.04)))?;
     scene.recenter_on(&mol)?;
     scene.set_camera_view(35.0, 20.0, 0.0, 32.0, [0.0, 0.0, 0.0], 18.0);
 
-    let viewer = Viewer::render(&scene, 800.0, 500.0)?;
+    ImageRenderer::save_png(&scene, "render_molecule_stick.png", 1200, 900)?;
 
-    let img = viewer.take_screenshot()?;
-
-    img.save(Path::new("screenshot_stick.png"))?;
+    let viewer = Viewer::open(&scene, 800.0, 500.0)?;
 
     viewer.keep_alive()?;
 

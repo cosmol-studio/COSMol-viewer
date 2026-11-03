@@ -1,6 +1,6 @@
 //! Visual projections of CK values. Only geometry crosses the renderer transport.
 //! Native scenes retain shared CK value snapshots; subsequent scientific edits
-//! never retarget a display. Each show call creates an independent projection.
+//! never retarget a display. Each add call creates an independent projection.
 //!
 //! Scientific construction belongs exclusively to CK; old viewer chemical
 //! wrappers have been removed, rather than retained as compatibility aliases:
@@ -22,6 +22,10 @@ use std::sync::Arc;
 
 #[derive(Debug, thiserror::Error)]
 pub enum DisplayError {
+    #[error("positioned shapes already carry their style; omit the representation argument")]
+    ShapeStyle,
+    #[error("radius must be finite and positive")]
+    InvalidRadius,
     #[error("selection is not available for this source/entity kind")]
     InvalidSelection,
     #[error("unknown atomic number {0}")]
@@ -125,7 +129,85 @@ impl Display {
 
 /// Native projection extension point used by Scene; callers need not import it.
 pub trait ProjectSource<I> {
+    fn default_style() -> Representation {
+        crate::styles::BallAndStick::default().into()
+    }
     fn project(&self, ids: &[I], style: Representation) -> Result<Display, DisplayError>;
+}
+
+/// Scene content, optionally paired with an explicit scientific representation.
+/// Defaults and geometry validation are shared by every language binding.
+pub trait SceneItem {
+    fn to_shape(&self, style: Option<Representation>) -> Result<crate::utils::Shape, DisplayError>;
+}
+impl<T: SceneItem + ?Sized> SceneItem for &T {
+    fn to_shape(&self, style: Option<Representation>) -> Result<crate::utils::Shape, DisplayError> {
+        (**self).to_shape(style)
+    }
+}
+impl<T: SceneItem, S: Into<Representation> + Copy> SceneItem for (T, S) {
+    fn to_shape(&self, style: Option<Representation>) -> Result<crate::utils::Shape, DisplayError> {
+        self.0
+            .to_shape(Some(style.unwrap_or_else(|| self.1.into())))
+    }
+}
+impl SceneItem for ck::Molecule {
+    fn to_shape(&self, style: Option<Representation>) -> Result<crate::utils::Shape, DisplayError> {
+        crate::selection::select(self).atoms().to_shape(style)
+    }
+}
+impl SceneItem for ck::Protein {
+    fn to_shape(&self, style: Option<Representation>) -> Result<crate::utils::Shape, DisplayError> {
+        let style = style.unwrap_or_else(|| crate::styles::Cartoon::default().into());
+        match style {
+            Representation::Cartoon(_) => crate::selection::select(self)
+                .residues()
+                .to_shape(Some(style)),
+            _ => crate::selection::select(self).atoms().to_shape(Some(style)),
+        }
+    }
+}
+impl<S: ProjectSource<I> + ?Sized, I> SceneItem for crate::selection::Selection<'_, S, I> {
+    fn to_shape(&self, style: Option<Representation>) -> Result<crate::utils::Shape, DisplayError> {
+        self.source()
+            .project(self.ids(), style.unwrap_or_else(S::default_style))
+            .map(crate::utils::Shape::Display)
+    }
+}
+impl SceneItem for crate::utils::Shape {
+    fn to_shape(&self, style: Option<Representation>) -> Result<crate::utils::Shape, DisplayError> {
+        if style.is_some() {
+            return Err(DisplayError::ShapeStyle);
+        }
+        match self {
+            Self::Sphere(s) => validate_geometry(&s.center, s.radius)?,
+            Self::Stick(s) => {
+                validate_geometry(&s.start, s.thickness_radius)?;
+                validate_geometry(&s.end, s.thickness_radius)?;
+            }
+            _ => {}
+        }
+        Ok(self.clone())
+    }
+}
+fn validate_geometry(position: &[f32; 3], radius: f32) -> Result<(), DisplayError> {
+    if !position.iter().all(|v| v.is_finite()) {
+        return Err(DisplayError::InvalidCoordinates);
+    }
+    if !radius.is_finite() || radius <= 0.0 {
+        return Err(DisplayError::InvalidRadius);
+    }
+    Ok(())
+}
+impl SceneItem for crate::shapes::Sphere {
+    fn to_shape(&self, style: Option<Representation>) -> Result<crate::utils::Shape, DisplayError> {
+        crate::utils::Shape::Sphere(*self).to_shape(style)
+    }
+}
+impl SceneItem for crate::shapes::Stick {
+    fn to_shape(&self, style: Option<Representation>) -> Result<crate::utils::Shape, DisplayError> {
+        crate::utils::Shape::Stick(*self).to_shape(style)
+    }
 }
 
 /// A scientific object that supplies a geometric center for scene framing.
@@ -172,6 +254,9 @@ impl ProjectSource<ck::AtomId> for ck::Molecule {
 }
 
 impl ProjectSource<ck::BondId> for ck::Molecule {
+    fn default_style() -> Representation {
+        crate::styles::Stick::default().into()
+    }
     fn project(&self, ids: &[ck::BondId], style: Representation) -> Result<Display, DisplayError> {
         let (instances, center) =
             molecular::project_bonds(&input::MoleculeInput::from(self), ids, style)?;
@@ -185,6 +270,9 @@ impl ProjectSource<ck::BondId> for ck::Molecule {
 }
 
 impl ProjectSource<ck::BioResidueId> for ck::Protein {
+    fn default_style() -> Representation {
+        crate::styles::Cartoon::default().into()
+    }
     fn project(
         &self,
         ids: &[ck::BioResidueId],
@@ -202,6 +290,9 @@ impl ProjectSource<ck::BioResidueId> for ck::Protein {
 }
 
 impl ProjectSource<ck::BioAtomId> for ck::Protein {
+    fn default_style() -> Representation {
+        crate::styles::Sphere::default().into()
+    }
     fn project(
         &self,
         ids: &[ck::BioAtomId],

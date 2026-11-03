@@ -6,7 +6,8 @@ A plain JavaScript example installing both Viewer and COSMolKit through
 From the repository root:
 
 ```sh
-python wasm/build.py --check
+python wasm/build.py
+python wasm/check.py
 cd wasm/examples/browser
 npm install
 npm start
@@ -34,7 +35,7 @@ The page demonstrates:
 - **Protein + ligand:** CK Protein and Molecule objects in the same scene, with
   a residue cartoon and molecular ball-and-stick display.
 - **Animation:** 32 scene snapshots played with `Animation` and `Viewer.playInto`.
-- Named display replacement with `showWithId`, followed by `viewer.update(scene)`.
+- Named display replacement with `set`, followed by `viewer.update(scene)`.
 - `scene.recenterOn(molecule)`, FPS/camera overlays and PNG screenshots.
 
 The scientific inputs reuse `cosmol_viewer/examples/6fi1.cif` and

@@ -18,7 +18,7 @@ def run_viewer(mode):
     from cosmolkit import Protein
 
     scene = Scene()
-    scene.add_shape_with_id("sphere", Sphere([0.0, 0.0, 0.0], 1.0))
+    scene.set("sphere", Sphere([0.0, 0.0, 0.0], 1.0))
     # Native IPC must preserve modified CK residue codes through render and update.
     protein = Protein.from_pdb("""\
 ATOM      1  N   HYP A   1      11.104  13.207   9.900  1.00 20.00           N
@@ -27,13 +27,13 @@ ATOM      3  C   HYP A   1      13.470  13.079  10.413  1.00 20.00           C
 ATOM      4  O   HYP A   1      14.000  12.500  11.000  1.00 20.00           O
 END
 """)
-    scene.show_with_id("protein", protein, select(protein).residues(), Cartoon())
+    scene.set("protein", select(protein).residues(), Cartoon())
     if mode == "play":
         animation = Animation(0.05, -1, False)
         animation.add_frame(scene)
         viewer = Viewer.play(animation, 100.0, 100.0)
     else:
-        viewer = Viewer.render(scene, 100.0, 100.0)
+        viewer = Viewer.open(scene, 100.0, 100.0)
     # Let a static renderer become idle; IPC commands must wake it without polling.
     time.sleep(0.2)
     viewer.update(scene)

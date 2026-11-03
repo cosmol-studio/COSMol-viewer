@@ -1,5 +1,4 @@
-use cosmol_viewer::{BallAndStick, Scene, Viewer, cosmolkit, select};
-use std::path::Path;
+use cosmol_viewer::{BallAndStick, ImageRenderer, Scene, Viewer, cosmolkit};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     cosmol_viewer_core::register_render();
@@ -11,18 +10,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut scene = Scene::new();
     scene.set_scale(0.8);
-    scene.show_with_id(
+    scene.set(
         "mol",
-        &mol,
-        &select(&mol).atoms(),
-        BallAndStick::default().outline("#050505", 0.04),
+        (&mol, BallAndStick::default().outline("#050505", 0.04)),
     )?;
     scene.recenter_on(&mol)?;
 
-    let viewer = Viewer::render(&scene, 800.0, 500.0)?;
-    let screenshot = viewer.take_screenshot()?;
-    screenshot.save(Path::new("screenshot.png"))?;
+    ImageRenderer::save_png(&scene, "render_molecule_from_cosmolkit.png", 1200, 900)?;
 
+    let viewer = Viewer::open(&scene, 800.0, 500.0)?;
     viewer.keep_alive()?;
 
     Ok(())

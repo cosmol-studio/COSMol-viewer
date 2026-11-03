@@ -22,8 +22,8 @@ Spheres and sticks can annotate molecular scenes or build custom geometry.
    )
 
    scene = Scene()
-   scene.add_shape(marker)
-   scene.add_shape(axis)
+   scene.add(marker)
+   scene.add(axis)
 
 ``Sphere.set_center()`` and ``Sphere.set_radius()`` update sphere geometry.
 ``Stick.set_start()``, ``Stick.set_end()``, and ``Stick.set_thickness()`` update

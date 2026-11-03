@@ -44,7 +44,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 (b * 256.0) as u8,
             ]);
 
-            scene.add_shape_with_id(*id, sphere);
+            scene.set(*id, sphere)?;
         }
 
         animation.add_frame(scene);

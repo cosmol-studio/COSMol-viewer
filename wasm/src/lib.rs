@@ -10,6 +10,8 @@ mod scene;
 #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
 mod selection;
 #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
+mod shapes;
+#[cfg(all(feature = "wasm", target_arch = "wasm32"))]
 mod styles;
 pub mod utils;
 #[cfg(feature = "wasm")]

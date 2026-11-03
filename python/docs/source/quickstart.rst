@@ -8,13 +8,15 @@ Render an SDF molecule to a reproducible PNG:
 
 .. code-block:: python
 
-   from cosmol_viewer import Molecule, Scene
+   from cosmolkit import Molecule
+   from cosmol_viewer import Scene
 
    sdf = open("molecule.sdf", encoding="utf-8").read()
-   molecule = Molecule.from_sdf(sdf).centered().enable_outline(width=0.04)
+   molecule = Molecule.from_sdf(sdf)
 
    scene = Scene()
-   scene.add_shape_with_id("molecule", molecule)
+   scene.set("molecule", molecule)
+   scene.recenter_on(molecule)
    scene.set_camera_view(
        azimuth=35,
        elevation=20,
@@ -36,8 +38,10 @@ desktop or notebook WebAssembly backend:
 
    from cosmol_viewer import Viewer
 
-   viewer = Viewer.render(scene, width=800, height=500)
+   viewer = Viewer.open(scene, width=800, height=500)
 
-Shape methods such as ``centered()``, ``stick()``, ``color()``, and
-``opacity()`` update the Python shape and return it, allowing method chaining.
-Scene methods mutate the scene in place.
+``add(item)`` appends content; ``set(name, item)`` creates or replaces named
+content. Shapes carry their own material. Molecules default to BallAndStick and
+proteins to Cartoon; pass a style as the optional final argument to override it.
+Scene methods mutate the scene in place. Native scripts can call
+``viewer.keep_alive()`` to wait for the interactive window.

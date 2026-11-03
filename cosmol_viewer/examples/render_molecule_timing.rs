@@ -1,4 +1,4 @@
-use cosmol_viewer::{BallAndStick, Scene, Viewer, select};
+use cosmol_viewer::{Scene, Viewer};
 use cosmolkit::Molecule;
 use std::time::Instant;
 
@@ -9,10 +9,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mol = Molecule::from_sdf(include_str!("6fi1_ligand.sdf"))?;
     let mut scene = Scene::new();
-    scene.show_with_id("mol", &mol, &select(&mol).atoms(), BallAndStick::default())?;
+    scene.set("mol", &mol)?;
     scene.recenter_on(&mol)?;
 
-    let viewer = Viewer::render(&scene, 800.0, 500.0)?;
+    let viewer = Viewer::open(&scene, 800.0, 500.0)?;
     let t_after_render = Instant::now();
 
     // Trigger one real scene change before the first update.

@@ -95,6 +95,12 @@ impl<'a, S: ?Sized, I> Selection<'a, S, I> {
         &self.ids
     }
 
+    /// Keep selected IDs matching a predicate, preserving source ownership and order.
+    pub fn filter(mut self, predicate: impl FnMut(&I) -> bool) -> Self {
+        self.ids.retain(predicate);
+        self
+    }
+
     /// Number of selected entities.
     pub fn len(&self) -> usize {
         self.ids.len()

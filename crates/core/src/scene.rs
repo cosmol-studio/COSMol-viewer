@@ -147,49 +147,30 @@ impl Scene {
         Self::default()
     }
 
-    /// Add an independent visual projection of a CK source and its selection.
-    /// Validation and geometry generation finish before this scene is changed.
-    /// The scene retains a shared CK snapshot, not a second editable model.
-    pub fn show<S: ?Sized, I>(
+    /// Add an entire scientific object or a source-bound selection.
+    /// Projection completes before the scene is changed.
+    pub fn add<T: crate::display::SceneItem>(
         &mut self,
-        source: &S,
-        selection: &crate::selection::Selection<'_, S, I>,
-        style: impl Into<crate::styles::Representation>,
-    ) -> Result<(), crate::display::DisplayError>
-    where
-        S: crate::display::ProjectSource<I>,
-    {
-        use crate::display::DisplayError;
-        if !selection.belongs_to(source) {
-            return Err(DisplayError::SourceMismatch);
-        }
-        let display = source.project(selection.ids(), style.into())?;
-        self.unnamed_shapes.push(Shape::Display(display));
+        item: T,
+    ) -> Result<(), crate::display::DisplayError> {
+        let shape = item.to_shape(None)?;
+        self.unnamed_shapes.push(shape);
         Ok(())
     }
 
-    /// Add or replace a named display. Failed projections leave the old one intact.
-    pub fn show_with_id<S: ?Sized, I>(
+    /// Create or replace named content. Failed projections preserve the old content.
+    pub fn set<T: crate::display::SceneItem>(
         &mut self,
-        id: impl Into<String>,
-        source: &S,
-        selection: &crate::selection::Selection<'_, S, I>,
-        style: impl Into<crate::styles::Representation>,
-    ) -> Result<(), crate::display::DisplayError>
-    where
-        S: crate::display::ProjectSource<I>,
-    {
-        use crate::display::DisplayError;
-        if !selection.belongs_to(source) {
-            return Err(DisplayError::SourceMismatch);
-        }
-        let display = source.project(selection.ids(), style.into())?;
-        self.named_shapes.insert(id.into(), Shape::Display(display));
+        name: impl Into<String>,
+        item: T,
+    ) -> Result<(), crate::display::DisplayError> {
+        let shape = item.to_shape(None)?;
+        self.named_shapes.insert(name.into(), shape);
         Ok(())
     }
 
     /// Frame a scientific object without translating its coordinates.
-    /// Works before or after `show`, independently of display IDs and styles.
+    /// Works before or after `add`, independently of display IDs and styles.
     /// Missing or ambiguous coordinates leave the current scene center unchanged.
     pub fn recenter_on<S: crate::display::CenterSource + ?Sized>(
         &mut self,
@@ -209,24 +190,6 @@ impl Scene {
 
     pub fn set_scale(&mut self, scale: f32) {
         self.scale = scale;
-    }
-
-    pub fn add_shape_with_id<S: Into<Shape>>(&mut self, id: impl Into<String>, shape: S) {
-        self.named_shapes.insert(id.into(), shape.into());
-    }
-
-    pub fn add_shape<S: Into<Shape>>(&mut self, shape: S) {
-        self.unnamed_shapes.push(shape.into());
-    }
-
-    pub fn replace_shape<S: Into<Shape>>(&mut self, id: &str, shape: S) -> Result<(), SceneError> {
-        let shape = shape.into();
-        if let Some(existing_shape) = self.named_shapes.get_mut(id) {
-            *existing_shape = shape;
-            Ok(())
-        } else {
-            Err(SceneError::ShapeNotFound(id.to_string()))
-        }
     }
 
     pub fn remove_shape(&mut self, id: &str) -> Result<(), SceneError> {

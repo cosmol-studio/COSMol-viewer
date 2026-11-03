@@ -2,10 +2,7 @@
 #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
 use wasm_bindgen::prelude::wasm_bindgen;
 
-use cosmol_viewer_core::{
-    scene::Scene as CoreScene,
-    shapes::{Sphere, Stick},
-};
+use cosmol_viewer_core::scene::Scene as CoreScene;
 use std::sync::{Arc, Mutex};
 
 /// Reusable scene state. Cloned binding handles refer to the same scene.
@@ -13,6 +10,8 @@ use std::sync::{Arc, Mutex};
 #[cfg_attr(all(feature = "wasm", target_arch = "wasm32"), wasm_bindgen)]
 pub struct Scene {
     state: Arc<Mutex<CoreScene>>,
+    #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
+    sources: std::rc::Rc<std::cell::RefCell<Vec<std::rc::Rc<crate::selection::ImportedSource>>>>,
 }
 
 #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
@@ -24,44 +23,21 @@ impl crate::input::NativeOutput for Scene {}
 )]
 impl Scene {
     #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
-    pub fn show(
-        &self,
-        source: &crate::selection::ScientificInput,
-        selection: &crate::selection::Selection,
-        style: &crate::styles::Style,
-    ) -> Result<(), wasm_bindgen::JsValue> {
-        let display = selection.project(source, style.inner)?;
-        self.state
-            .lock()
-            .unwrap()
-            .add_shape(cosmol_viewer_core::utils::Shape::Display(display));
-        Ok(())
-    }
-    #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
-    pub fn show_with_id(
-        &self,
-        id: String,
-        source: &crate::selection::ScientificInput,
-        selection: &crate::selection::Selection,
-        style: &crate::styles::Style,
-    ) -> Result<(), wasm_bindgen::JsValue> {
-        let display = selection.project(source, style.inner)?;
-        self.state
-            .lock()
-            .unwrap()
-            .add_shape_with_id(id, cosmol_viewer_core::utils::Shape::Display(display));
-        Ok(())
-    }
-    #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
     pub fn recenter_on(
         &self,
         source: &crate::selection::ScientificInput,
     ) -> Result<(), wasm_bindgen::JsValue> {
-        let center = source
-            .capture()?
-            .center()
-            .map_err(|e| js_sys::Error::new(&e.to_string()))?;
-        self.state.lock().unwrap().recenter(center);
+        let source = source.import()?;
+        match &source.native {
+            crate::selection::NativeSource::Molecule(mol) => {
+                self.state.lock().unwrap().recenter_on(mol)
+            }
+            crate::selection::NativeSource::Protein(protein) => {
+                self.state.lock().unwrap().recenter_on(protein)
+            }
+        }
+        .map_err(|e| js_sys::Error::new(&e.to_string()))?;
+        self.retain_source(source);
         Ok(())
     }
     pub fn new() -> Self {
@@ -69,7 +45,12 @@ impl Scene {
     }
     /// Explicitly copy scene display state into an independent scene.
     pub fn clone_scene(&self) -> Self {
-        self.snapshot().into()
+        let copy: Self = self.snapshot().into();
+        #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
+        copy.sources
+            .borrow_mut()
+            .extend(self.sources.borrow().iter().cloned());
+        copy
     }
     pub fn recenter(&self, center: Vec<f32>) -> Result<(), String> {
         self.state.lock().unwrap().recenter(vector3(center)?);
@@ -179,29 +160,6 @@ impl Scene {
         self.state.lock().unwrap().set_light_color(rgb(color)?);
         Ok(())
     }
-    /// Add or replace a named sphere directly in this scene.
-    pub fn add_sphere(&self, id: String, center: Vec<f32>, radius: f32) -> Result<(), String> {
-        if !radius.is_finite() || radius <= 0.0 {
-            return Err("Radius must be finite and positive".into());
-        }
-        let shape = Sphere::new(vector3(center)?, radius);
-        self.state.lock().unwrap().add_shape_with_id(id, shape);
-        Ok(())
-    }
-    pub fn add_stick(
-        &self,
-        id: String,
-        start: Vec<f32>,
-        end: Vec<f32>,
-        radius: f32,
-    ) -> Result<(), String> {
-        if !radius.is_finite() || radius <= 0.0 {
-            return Err("Radius must be finite and positive".into());
-        }
-        let shape = Stick::new(vector3(start)?, vector3(end)?, radius);
-        self.state.lock().unwrap().add_shape_with_id(id, shape);
-        Ok(())
-    }
     pub fn remove_shape(&self, id: String) -> Result<(), String> {
         self.state
             .lock()
@@ -225,6 +183,16 @@ impl Scene {
 }
 
 impl Scene {
+    #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
+    fn retain_source(&self, source: std::rc::Rc<crate::selection::ImportedSource>) {
+        let mut sources = self.sources.borrow_mut();
+        if !sources
+            .iter()
+            .any(|item| std::rc::Rc::ptr_eq(item, &source))
+        {
+            sources.push(source);
+        }
+    }
     pub(crate) fn snapshot(&self) -> CoreScene {
         self.state.lock().unwrap().clone()
     }
@@ -238,6 +206,8 @@ impl From<CoreScene> for Scene {
     fn from(scene: CoreScene) -> Self {
         Self {
             state: Arc::new(Mutex::new(scene)),
+            #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
+            sources: Default::default(),
         }
     }
 }
@@ -247,7 +217,7 @@ impl Default for Scene {
     }
 }
 
-fn vector3(values: Vec<f32>) -> Result<[f32; 3], String> {
+pub(crate) fn vector3(values: Vec<f32>) -> Result<[f32; 3], String> {
     let values: [f32; 3] = values
         .try_into()
         .map_err(|_| "Expected three coordinates".to_string())?;
@@ -256,8 +226,70 @@ fn vector3(values: Vec<f32>) -> Result<[f32; 3], String> {
     }
     Ok(values)
 }
-fn rgb(values: Vec<u8>) -> Result<[u8; 3], String> {
+pub(crate) fn rgb(values: Vec<u8>) -> Result<[u8; 3], String> {
     values
         .try_into()
         .map_err(|_| "Expected three RGB components".into())
+}
+
+#[cfg(all(feature = "wasm", target_arch = "wasm32"))]
+#[wasm_bindgen]
+impl Scene {
+    #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
+    pub fn add(
+        &self,
+        item: &crate::selection::SceneInput,
+        style: Option<crate::selection::StyleInput>,
+    ) -> Result<(), wasm_bindgen::JsValue> {
+        let style = style.as_ref().map(|s| s.representation()).transpose()?;
+        let source = item.with_native(|item| {
+            match style {
+                Some(style) => self.state.lock().unwrap().add((item, style)),
+                None => self.state.lock().unwrap().add(item),
+            }
+            .map_err(|e| wasm_bindgen::JsValue::from(js_sys::Error::new(&e.to_string())))
+        })?;
+        if let Some(source) = source {
+            self.retain_source(source);
+        }
+        Ok(())
+    }
+    #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
+    pub fn set(
+        &self,
+        name: tsify::Ts<<String as crate::input::CheckedValue>::Wire>,
+        item: &crate::selection::SceneInput,
+        style: Option<crate::selection::StyleInput>,
+    ) -> Result<(), wasm_bindgen::JsValue> {
+        let name = crate::input::read::<String>(name)?;
+        let style = style.as_ref().map(|s| s.representation()).transpose()?;
+        let source = item.with_native(|item| {
+            match style {
+                Some(style) => self.state.lock().unwrap().set(name, (item, style)),
+                None => self.state.lock().unwrap().set(name, item),
+            }
+            .map_err(|e| wasm_bindgen::JsValue::from(js_sys::Error::new(&e.to_string())))
+        })?;
+        if let Some(source) = source {
+            self.retain_source(source);
+        }
+        Ok(())
+    }
+}
+
+#[cfg(not(all(feature = "wasm", target_arch = "wasm32")))]
+impl Scene {
+    pub fn add(
+        &self,
+        item: impl cosmol_viewer_core::display::SceneItem,
+    ) -> Result<(), cosmol_viewer_core::display::DisplayError> {
+        self.state.lock().unwrap().add(item)
+    }
+    pub fn set(
+        &self,
+        name: impl Into<String>,
+        item: impl cosmol_viewer_core::display::SceneItem,
+    ) -> Result<(), cosmol_viewer_core::display::DisplayError> {
+        self.state.lock().unwrap().set(name, item)
+    }
 }

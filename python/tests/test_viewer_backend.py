@@ -59,14 +59,14 @@ ATOM      3  C   MSE A   1      13.470  13.079  10.413  1.00 20.00           C
 ATOM      4  O   MSE A   1      14.000  12.500  11.000  1.00 20.00           O
 END
 """)
-    scene.show_with_id("protein", protein, select(protein).residues(), Cartoon())
+    scene.set("protein", select(protein).residues(), Cartoon())
     animation = Animation(interval=0.1, loops=1, interpolate=False)
     animation.add_frame(scene)
 
     if mode in {"plain", "terminal", "unsupported"}:
         # Missing renderer errors must stay recoverable and must not open a GUI.
         os.environ["COSMOL_VIEWER_NATIVE_PATH"] = str(Path(__file__).with_name("missing-native-viewer"))
-        for create, item in ((Viewer.render, scene), (Viewer.play, animation)):
+        for create, item in ((Viewer.open, scene), (Viewer.play, animation)):
             try:
                 create(item, 100.0, 100.0)
             except (RuntimeError, ValueError) as error:
@@ -78,8 +78,8 @@ END
         return
 
     assert Viewer.get_environment() == {"colab": "Colab", "jupyter": "Jupyter"}[mode]
-    viewer = Viewer.render(scene, 100.0, 100.0)
-    assert any("Viewer.renderNotebook(canvas.id" in item.data for item in displays)
+    viewer = Viewer.open(scene, 100.0, 100.0)
+    assert any("Viewer.openNotebook(canvas.id" in item.data for item in displays)
     display_count = len(displays)
     output = io.StringIO()
     with contextlib.redirect_stdout(output):
@@ -195,7 +195,7 @@ for (const payload of payloads) {
     );
 }
 for (const payload of startups.scene_payload) {
-    await assert.rejects(mod.Viewer.renderNotebook('missing-canvas', payload),
+    await assert.rejects(mod.Viewer.openNotebook('missing-canvas', payload),
         error => String(error).includes('Canvas not found'));
 }
 for (const payload of startups.animation_payload) {
@@ -206,7 +206,7 @@ app.free();
 """
     result = subprocess.run(
         [node, "--input-type=module", "-e", script,
-         str(pkg / "notebook.js"),
+         str(pkg / "cosmol_viewer_wasm.js"),
          str(pkg / "cosmol_viewer_wasm_bg.wasm")],
         input=json.dumps({"contract": json.loads(__import__("cosmol_viewer").binding_contract_json()),
                           "startups": startups, "payloads": payloads}),

@@ -1,3 +1,4 @@
+use cosmol_viewer_core::shapes::{Sphere, Stick};
 use cosmol_viewer_wasm::{Animation, Scene};
 use serde_json::{Value, from_str};
 
@@ -8,7 +9,7 @@ fn state(scene: &Scene) -> Value {
 #[test]
 fn scene_handles_share_state_but_explicit_copies_are_independent() {
     let scene = Scene::new();
-    scene.add_sphere("atom".into(), vec![0.0; 3], 1.0).unwrap();
+    scene.set("atom", Sphere::new([0.0; 3], 1.0)).unwrap();
     let handle = scene.clone();
     let copy = scene.clone_scene();
     handle.set_scale(2.0).unwrap();
@@ -42,13 +43,14 @@ fn animation_borrows_reusable_scenes_and_captures_snapshots() {
 #[test]
 fn invalid_geometry_and_vectors_leave_the_scene_usable() {
     let scene = Scene::new();
-    assert!(scene.add_sphere("bad".into(), vec![0.0; 2], 1.0).is_err());
-    assert!(scene.add_sphere("bad".into(), vec![f32::NAN; 3], 1.0).is_err());
-    assert!(scene.add_sphere("bad".into(), vec![0.0; 3], -1.0).is_err());
+    assert!(scene.set("bad", Sphere::new([f32::NAN; 3], 1.0)).is_err());
+    assert!(scene.set("bad", Sphere::new([0.0; 3], -1.0)).is_err());
     assert!(scene.set_background_color(vec![255, 0]).is_err());
     assert!(scene.set_scale(0.0).is_err());
     assert!(scene.set_depth_cue_range(0.8, 0.2).is_err());
     assert_eq!(scene.shape_count(), 0);
-    scene.add_stick("bond".into(), vec![0.0; 3], vec![1.0; 3], 0.2).unwrap();
+    scene
+        .set("bond", Stick::new([0.0; 3], [1.0; 3], 0.2))
+        .unwrap();
     assert_eq!(scene.shape_count(), 1);
 }

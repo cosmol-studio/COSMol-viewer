@@ -47,7 +47,7 @@ impl crate::input::NativeOutput for Viewer {}
     cosmol_viewer_derive::checked_wasm
 )]
 impl Viewer {
-    /// Create an uninitialized viewer. Prefer render or play for normal use.
+    /// Create an uninitialized viewer. Prefer open or play for normal use.
     pub fn new() -> Self {
         #[cfg(target_arch = "wasm32")]
         eframe::WebLogger::init(log::LevelFilter::Debug).ok();
@@ -69,7 +69,7 @@ impl Viewer {
     }
 
     /// Create a canvas in document.body and render a typed scene into it.
-    pub async fn render(scene: &Scene, width: f32, height: f32) -> Result<Self, String> {
+    pub async fn open(scene: &Scene, width: f32, height: f32) -> Result<Self, String> {
         #[cfg(target_arch = "wasm32")]
         {
             let canvas = create_canvas(width, height)?;
@@ -89,7 +89,7 @@ impl Viewer {
     }
 
     /// Render into an existing canvas. The caller owns canvas sizing and mounting.
-    pub async fn render_into(canvas_id: String, scene: &Scene) -> Result<Self, String> {
+    pub async fn open_into(canvas_id: String, scene: &Scene) -> Result<Self, String> {
         #[cfg(target_arch = "wasm32")]
         {
             let viewer = Self::new();

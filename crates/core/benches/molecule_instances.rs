@@ -65,7 +65,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let project = |molecule: &Molecule| {
         let mut scene = Scene::new();
         scene
-            .show(molecule, &select(molecule).atoms(), BallAndStick::default())
+            .add((&select(molecule).atoms(), BallAndStick::default()))
             .unwrap();
         scene.get_instances_grouped()
     };
@@ -82,11 +82,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut scene = Scene::new();
     for i in 0..128 {
-        scene.show_with_id(
+        scene.set(
             format!("mol_{i}"),
-            &molecule,
-            &select(&molecule).atoms(),
-            BallAndStick::default(),
+            (&select(&molecule).atoms(), BallAndStick::default()),
         )?;
     }
 

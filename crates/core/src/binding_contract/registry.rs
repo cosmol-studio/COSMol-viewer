@@ -4,11 +4,11 @@ use cosmol_viewer_derive::binding_contract;
 binding_contract! {
     pub static BINDING_CONTRACT = [
         {
-            semantic_id: "Viewer.render", rust: crate::NativeGuiViewer::render,
+            semantic_id: "Viewer.open", rust: crate::NativeGuiViewer::open,
             signature: fn(scene: &crate::scene::Scene, width: f32, height: f32) -> Result<crate::NativeGuiViewer, crate::RenderError>,
             rust_cfg: not(target_arch = "wasm32"), receiver: none, platforms: &[Native],
-            python: Projection::supported("Viewer.render", &[Native, Notebook]),
-            javascript: Projection::supported("Viewer.render", &[Browser]).with_notebook("Viewer.renderNotebook", None),
+            python: Projection::supported("Viewer.open", &[Native, Notebook]),
+            javascript: Projection::supported("Viewer.open", &[Browser]).with_notebook("Viewer.openNotebook", None),
             notes: "Browser initialization is async and receives a typed Scene plus dimensions. Notebook payload startup is a separate internal endpoint.",
         },
         {
@@ -88,7 +88,7 @@ binding_contract! {
             signature: fn(source: &cosmolkit::Molecule) -> crate::selection::Selector<'_, cosmolkit::Molecule>,
             receiver: none, platforms: &[Native, Browser],
             python: Projection::supported("select", &[Native, Notebook]),
-            javascript: Projection::unsupported("CK-backed selection migration is currently Rust-only."),
+            javascript: Projection::supported("select", &[Browser]),
             notes: "Generic Selectable entry point. This checked signature represents Molecule; CK Protein is also supported. Selectors and results borrow the scientific source.",
         },
         {
@@ -100,19 +100,19 @@ binding_contract! {
             notes: "Generic CenterSource entry point; CK Molecule and Protein are supported. Frame the source's all-atom geometric center independently of display IDs or styles; update view state only, never scientific coordinates.",
         },
         {
-            semantic_id: "Scene.show", rust: crate::scene::Scene::show::<cosmolkit::Molecule, cosmolkit::AtomId>,
-            signature: fn(scene: &mut crate::scene::Scene, source: &cosmolkit::Molecule, selection: &crate::selection::MoleculeAtomSelection<'_>, style: crate::styles::Representation) -> Result<(), crate::display::DisplayError>,
+            semantic_id: "Scene.add", rust: crate::scene::Scene::add::<cosmolkit::Molecule>,
+            signature: fn(scene: &mut crate::scene::Scene, source: cosmolkit::Molecule) -> Result<(), crate::display::DisplayError>,
             receiver: mutable, platforms: &[Native, Browser],
-            python: Projection::supported("Scene.show", &[Native, Notebook]),
-            javascript: Projection::supported("Scene.show", &[Browser]),
-            notes: "Generic ProjectSource entry point, checked with molecular atoms; molecular bonds, protein atoms/residues use the same source-validation and atomic insertion path. Retains shared CK snapshots and transports geometry only.",
+            python: Projection::supported("Scene.add", &[Native, Notebook]),
+            javascript: Projection::supported("Scene.add", &[Browser]),
+            notes: "Generic SceneItem entry point accepts whole CK objects or source-bound selections through the same atomic insertion path. Retains shared CK snapshots and transports geometry only.",
         },
         {
-            semantic_id: "Scene.show_with_id", rust: crate::scene::Scene::show_with_id::<cosmolkit::Molecule, cosmolkit::AtomId>,
-            signature: fn(scene: &mut crate::scene::Scene, id: String, source: &cosmolkit::Molecule, selection: &crate::selection::MoleculeAtomSelection<'_>, style: crate::styles::Representation) -> Result<(), crate::display::DisplayError>,
+            semantic_id: "Scene.set", rust: crate::scene::Scene::set::<cosmolkit::Molecule>,
+            signature: fn(scene: &mut crate::scene::Scene, id: String, source: cosmolkit::Molecule) -> Result<(), crate::display::DisplayError>,
             receiver: mutable, platforms: &[Native, Browser],
-            python: Projection::supported("Scene.show_with_id", &[Native, Notebook]),
-            javascript: Projection::supported("Scene.showWithId", &[Browser]),
+            python: Projection::supported("Scene.set", &[Native, Notebook]),
+            javascript: Projection::supported("Scene.set", &[Browser]),
             notes: "Named generic display insertion/replacement. Failure leaves an earlier display with this ID unchanged.",
         },
         {

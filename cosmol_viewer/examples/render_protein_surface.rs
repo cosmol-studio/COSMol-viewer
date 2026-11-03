@@ -1,4 +1,4 @@
-use cosmol_viewer::{Cartoon, RenderQuality, Scene, Surface, Viewer, select};
+use cosmol_viewer::{Cartoon, ImageRenderer, RenderQuality, Scene, Surface, Viewer};
 use cosmolkit::Protein;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -8,22 +8,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut scene = Scene::new();
     scene.set_scale(0.2);
-    scene.show_with_id(
-        "cartoon",
-        &protein,
-        &select(&protein).residues(),
-        Cartoon::default().rainbow_residues(),
-    )?;
-    scene.show(
-        &protein,
-        &select(&protein).atoms(),
-        Surface::default().color("#DCE8F2").opacity(0.9),
-    )?;
+    scene.set("cartoon", (&protein, Cartoon::default().rainbow_residues()))?;
+    scene.add((&protein, Surface::default().color("#DCE8F2").opacity(0.9)))?;
     scene.recenter_on(&protein)?;
     scene.set_background_color("#021529");
     scene.set_depth_cue(true);
 
-    let viewer = Viewer::render_with_quality(&scene, 800.0, 500.0, RenderQuality::High)?;
+    ImageRenderer::save_png(&scene, "render_protein_surface.png", 1200, 900)?;
+
+    let viewer = Viewer::open_with_quality(&scene, 800.0, 500.0, RenderQuality::High)?;
 
     viewer.keep_alive()?;
 

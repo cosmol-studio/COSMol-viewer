@@ -10,6 +10,9 @@ pub struct Style {
 impl crate::input::NativeOutput for Style {}
 #[cosmol_viewer_derive::checked_wasm]
 impl Style {
+    pub fn clone_style(&self) -> Self {
+        Self { inner: self.inner }
+    }
     pub fn ball_and_stick() -> Self {
         Self {
             inner: core::BallAndStick::default().into(),
