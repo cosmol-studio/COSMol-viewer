@@ -7,7 +7,20 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
-from build import ROOT, WASM, command, run
+
+ROOT = Path(__file__).resolve().parent.parent
+WASM = ROOT / "wasm"
+
+
+def command(name: str, variable: str) -> str:
+    executable = os.environ.get(variable) or shutil.which(name)
+    if not executable:
+        raise SystemExit(f"Install {name}, or set {variable} to its executable path")
+    return executable
+
+
+def run(*arguments: str, cwd: Path, env: dict[str, str]) -> None:
+    subprocess.run(arguments, cwd=cwd, env=env, check=True)
 
 
 def validate(pkg: Path, env: dict[str, str], browser: bool) -> None:
@@ -48,7 +61,7 @@ def validate(pkg: Path, env: dict[str, str], browser: bool) -> None:
                 "lib": ["ES2022", "DOM", "ESNext.Disposable"],
                 "paths": {
                     **{name: [str(pkg / "node_modules" / name)] for name in dependencies},
-                    "cosmol-viewer-generated": [str(pkg / "cosmol_viewer_wasm.d.ts")],
+                    "cosmol-viewer-generated": [str(pkg / "index.d.ts")],
                     "cosmol-viewer-converters": [str(converters / "converters.d.ts")],
                 },
             },

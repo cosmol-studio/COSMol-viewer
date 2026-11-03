@@ -1,6 +1,7 @@
 """Exercise the shared publish policy without uploading packages."""
 import importlib.util
 import os
+import re
 from pathlib import Path
 import tempfile
 import unittest
@@ -54,19 +55,43 @@ class PublishPolicyTests(unittest.TestCase):
                 "GITHUB_EVENT_NAME": "workflow_dispatch", "PUBLISH_REQUESTED": "true", "GITHUB_OUTPUT": str(output)
             }, clear=True):
                 publish_policy.main()
-            self.assertEqual(output.read_text(encoding="utf-8"), "manual_publish_allowed=true\n")
+            self.assertEqual(output.read_text(encoding="utf-8"), "manual_publish_allowed=true\nconda_label=rc\n")
 
     def test_publish_job_waits_for_all_artifacts_and_has_one_guard(self):
         workflow = (ROOT / ".github/workflows/publish.yml").read_text(encoding="utf-8")
-        condition = "if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || (github.event_name == 'workflow_dispatch' && inputs.publish && needs.build-wasm.outputs.manual_publish_allowed == 'true') }}"
+        condition = "if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || (github.event_name == 'workflow_dispatch' && inputs.publish && needs.generate-stubs.outputs.manual_publish_allowed == 'true') }}"
         self.assertEqual(workflow.count(condition), 1)
-        self.assertIn("needs: [build-wasm, generate-stubs, build-wheels, build-sdist]", workflow)
+        publish = workflow.split("\n    publish:", 1)[1]
+        needs = publish.split("        needs:\n", 1)[1].split("\n\n", 1)[0]
+        self.assertEqual(set(line.strip()[2:] for line in needs.splitlines()),
+                         {"build-wasm", "generate-stubs", "build-wheels", "build-sdist"})
         self.assertIn("python tools/publish_policy.py", workflow)
         self.assertIn("pattern: wheels-*", workflow)
         self.assertIn("merge-multiple: true", workflow)
         self.assertIn("name: sdist", workflow)
         self.assertIn("npm pack --dry-run --json", workflow)
         self.assertIn("fail-fast: false", workflow)
+
+    def test_five_platform_jobs_reuse_stubs_and_renderer(self):
+        workflow = (ROOT / ".github/workflows/publish.yml").read_text(encoding="utf-8")
+        wheels = workflow.split("\n    build-wheels:", 1)[1].split("\n    build-sdist:", 1)[0]
+        matrix = wheels.split("            matrix:\n", 1)[1].split("\n        steps:", 1)[0]
+        self.assertEqual(re.findall(r"- name: (\S+)", matrix),
+                         ["linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-aarch64", "windows-x86_64"])
+        self.assertNotIn("matrix.python", workflow)
+        self.assertNotIn("--generate-stubs", workflow)
+        self.assertNotIn("sccache: false", wheels)
+        self.assertEqual(wheels.count("build_native_viewer.py"), 2)  # Host or manylinux, once per platform.
+        self.assertEqual(wheels.count("before-script-linux:"), 1)
+        self.assertIn("--interpreter python3.11 python3.12 python3.13", wheels)
+        stubs = workflow.split("\n    generate-stubs:", 1)[1].split("\n    build-wasm:", 1)[0]
+        self.assertIn("needs: [build-wasm]", stubs)
+        self.assertIn("name: wasm-pkg", stubs)
+        self.assertNotIn("touch ", stubs)
+        self.assertNotIn("skip-existing", workflow)
+        self.assertNotIn("NPM_TOKEN", workflow)
+        self.assertIn("id-token: write", workflow)
+        self.assertIn("python tools/package_wheels.py dist conda-dist", workflow)
 
 if __name__ == "__main__":
     unittest.main()

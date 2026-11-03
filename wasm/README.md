@@ -1,5 +1,7 @@
 # JavaScript / WASM bindings
 
+Before running the commands below, complete the [WASM build and npm package preparation](DEV.md).
+
 Rust declarations own JS names, signatures, documentation and ownership.
 `#[checked_wasm]` generates typed Tsify/Serde input adapters from those declarations;
 structured values share their runtime converters and generated TypeScript types. wasm-pack builds this crate directly and runs the matching official
@@ -22,13 +24,26 @@ The runner exclusively owns the core `App`; viewer handles do not share or lock
 it. `Scene` and `Animation` are reusable handles over the existing core models,
 not compressed payload strings.
 
-```js
-import init, { Viewer, Scene, Animation, Sphere } from "@cosmol-studio/cosmol-viewer";
+Place the rendering surface in your page before running the JavaScript:
 
-await init();
+```html
+<canvas id="molecule-viewer" width="800" height="600"
+        style="width:800px;height:600px"></canvas>
+<canvas id="animation-viewer" width="800" height="600"
+        style="width:800px;height:600px"></canvas>
+```
+
+`Viewer.new(canvasId)` binds a viewer to a canvas without rendering. Call
+`viewer.render(scene)` or `viewer.play(animation)` afterwards. The viewer never
+creates a canvas or chooses a position in the page.
+
+```js
+import { Viewer, Scene, Animation, Sphere } from "@cosmol-studio/cosmol-viewer";
+
 const scene = Scene.new();
 scene.set("atom", Sphere.new(new Float32Array([0, 0, 0]), 1.0));
-const viewer = await Viewer.open(scene, 800, 600);
+const viewer = Viewer.new("molecule-viewer");
+await viewer.render(scene);
 
 scene.setScale(1.2);
 viewer.update(scene);
@@ -38,7 +53,8 @@ const animation = Animation.new(0.1, -1n, true);
 animation.addFrame(scene);
 scene.setScale(1.4);
 animation.addFrame(scene);
-const playing = await Viewer.play(animation, 800, 600);
+const playing = Viewer.new("animation-viewer");
+await playing.play(animation);
 
 viewer.close();
 playing.close();
@@ -48,14 +64,14 @@ animation.free();
 scene.free();
 ```
 
-- `open` / `play` create a canvas in `document.body`. `close()` destroys the
-  renderer and removes that canvas; `free()` releases the binding handle.
-- `openInto(canvasId, scene)` / `playInto(canvasId, animation)` use an existing
-  canvas without changing its size. `close()` leaves caller-owned canvases intact.
-- Borrowed scenes/animations remain usable after open, update, or addFrame.
+- `Viewer.new(canvasId)` binds an existing canvas without starting the renderer.
+  Instance `render(scene)` and `play(animation)` start or replace its content.
+  `render` stops previous animation playback; `close()` leaves the canvas intact.
+  A closed viewer cannot restart. Create a new viewer to reuse the canvas.
+- Borrowed scenes/animations remain usable after render, play, update, or addFrame.
   Frames and the static scene capture snapshots, matching the core API.
 - Cloned binding handles share state; `scene.cloneScene()` explicitly makes an
-  independent scene. Open/update snapshot state and prepare GPU data internally.
+  independent scene. Mount/update snapshot state and prepare GPU data internally.
 - `update` and camera logging queue typed requests and return without blocking.
   Native IPC and browser queues enter the same core `App` message handler.
   Browser queues wake the renderer instead of polling continuously.
@@ -79,8 +95,8 @@ and protein atom selections use Sphere.
 
 ## COSMolKit scientific objects
 
-Initialize the CK and viewer WASM packages separately. For example, in a bundled
-browser application after both default initializers have completed:
+In a browser application, importing the Viewer npm entry initializes both CK
+and Viewer WASM modules automatically:
 
 ```js
 import * as ck from "@cosmol-studio/cosmolkit";
@@ -92,7 +108,8 @@ const scene = cv.Scene.new();
 scene.add(mol, cv.Style.ballAndStick());
 scene.add(oxygen, cv.Style.sphere().scale(1.4));
 scene.recenterOn(mol);
-const viewer = await cv.Viewer.open(scene, 800, 500);
+const viewer = cv.Viewer.new("molecule-viewer");
+await viewer.render(scene);
 ```
 
 `Style.stick()` accepts molecular atoms or bonds; `select(mol).bonds().aromatic()`
@@ -162,7 +179,7 @@ This build script never publishes packages.
 - `check.py` runs the generated WASM in Node, verifies exports, ownership,
   snapshots, error paths and exclusions, then checks strict TypeScript.
 - `check.py --browser` also renders in real headless Chromium:
-  open/update/play, PNG screenshots, and owned/caller-owned canvas cleanup.
+  canvas mounting/update/playback, PNG screenshots, and caller-owned canvas preservation.
 - Python binding tests check registered APIs and generated stubs. Notebook tests
   mock Jupyter/Colab display, decode real Python startup/command payloads in WASM,
   and check pre-initialization errors. They are not a full notebook UI test.
@@ -172,7 +189,6 @@ Install the optional browser test dependencies from the repository root:
 ```sh
 npm install --prefix target/browser-check --no-save playwright@1.58.2
 target/browser-check/node_modules/.bin/playwright install chromium
-python wasm/build.py
 python wasm/check.py --browser
 ```
 

@@ -9,6 +9,10 @@ python/cosmol_viewer_native/cosmol-viewer-native*
 python/**/__pycache__/
 tools/__pycache__/
 python/docs/_build
-./docs/
+/docs/build/
+/docs/node_modules/
+/docs/__pycache__/
+/.venv/
+/dev/
 AGENTS.md
 tmp/

@@ -14,6 +14,7 @@ jobs:
   release:
     name: Create Release
     runs-on: ubuntu-latest
+
     steps:
       - name: Find an unreleased tag on this commit
         id: release_tag
@@ -51,62 +52,109 @@ jobs:
 
       - name: Checkout
         if: steps.release_tag.outputs.tag != ''
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
 
-      - name: Validate versions and read release notes
+      - name: Read release notes from changelog
         if: steps.release_tag.outputs.tag != ''
         env:
           RELEASE_TAG: ${{ steps.release_tag.outputs.tag }}
+        shell: bash
         run: |
-          python - <<'PY'
-          import os
-          import re
-          import tomllib
-          from pathlib import Path
-          from tools.publish_policy import check_versions
-
-          tag = os.environ["RELEASE_TAG"]
-          version = tag.removeprefix("v")
-          workspace = tomllib.loads(Path("Cargo.toml").read_text(encoding="utf-8"))
-          python_project = tomllib.loads(Path("python/pyproject.toml").read_text(encoding="utf-8"))
-          wasm = tomllib.loads(Path("wasm/Cargo.toml").read_text(encoding="utf-8"))
-          rust_version = workspace["workspace"]["package"]["version"]
-          wasm_version = wasm["package"]["version"]
-          if wasm_version == {"workspace": True}:
-              wasm_version = rust_version
-          check_versions(
-              rust_version, python_project["project"]["version"], wasm_version,
-              "push", f"refs/tags/{tag}", False,
-          )
-          changelog = Path("CHANGELOG.md").read_text(encoding="utf-8")
-          def block(name):
-              match = re.search(
-                  rf"^<!-- release-{name}:start -->\n(?P<body>.*?)^<!-- release-{name}:end -->$",
-                  changelog, re.MULTILINE | re.DOTALL,
-              )
-              if match is None:
-                  raise SystemExit(f"CHANGELOG.md has no complete release-{name} block")
-              return match.group("body").strip()
-          header, footer = block("header"), block("footer")
-          if not header:
-              raise SystemExit("CHANGELOG.md has an empty release-header block")
-          match = re.search(
-              rf"^## \[{re.escape(version)}\] - (?P<date>\d{{4}}-\d{{2}}-\d{{2}})\n"
-              rf"(?P<body>.*?)(?=^## \[|^\[[^\]]+\]:|^<!-- release-footer:start -->|\Z)",
-              changelog, re.MULTILINE | re.DOTALL,
-          )
-          if match is None:
-              raise SystemExit(f"CHANGELOG.md has no dated section for {version}")
-          notes = match.group("body").strip()
-          if not notes:
-              raise SystemExit(f"CHANGELOG.md has no release notes for {version}")
-          Path("release-notes.md").write_text(
-              f"{header}\n\n## COSMol Viewer v{version} - {match.group('date')}\n\n{notes}\n\n{footer}\n",
-              encoding="utf-8",
-          )
-          PY
+          set -euo pipefail
+          release_version="${RELEASE_TAG#v}"
+          release_header="$RUNNER_TEMP/release-header.md"
+          release_footer="$RUNNER_TEMP/release-footer.md"
+          version_notes="$RUNNER_TEMP/version-notes.md"
+          release_notes="$RUNNER_TEMP/release-notes.md"
+          if ! awk '
+              $0 == "<!-- release-header:start -->" {
+                found_start = 1
+                copying = 1
+                next
+              }
+              $0 == "<!-- release-header:end -->" {
+                if (copying) {
+                  found_end = 1
+                  exit
+                }
+              }
+              copying {
+                print
+              }
+              END {
+                if (!found_start || !found_end) {
+                  exit 2
+                }
+              }
+            ' CHANGELOG.md > "$release_header"; then
+            echo "CHANGELOG.md has no complete release-header block" >&2
+            exit 1
+          fi
+          if ! grep -q '[^[:space:]]' "$release_header"; then
+            echo "CHANGELOG.md has an empty release-header block" >&2
+            exit 1
+          fi
+          if ! awk '
+              $0 == "<!-- release-footer:start -->" {
+                found_start = 1
+                copying = 1
+                next
+              }
+              $0 == "<!-- release-footer:end -->" {
+                if (copying) {
+                  found_end = 1
+                  exit
+                }
+              }
+              copying {
+                print
+              }
+              END {
+                if (!found_start || !found_end) {
+                  exit 2
+                }
+              }
+            ' CHANGELOG.md > "$release_footer"; then
+            echo "CHANGELOG.md has no complete release-footer block" >&2
+            exit 1
+          fi
+          if ! awk -v version="$release_version" '
+              index($0, "## [" version "]") == 1 {
+                found = 1
+                release_heading = $0
+                sub(/^## \[/, "## COSMol Viewer v", release_heading)
+                sub(/\] - /, " — ", release_heading)
+                print release_heading
+                next
+              }
+              found && /^## \[/ {
+                exit
+              }
+              found {
+                print
+              }
+              END {
+                if (!found) {
+                  exit 2
+                }
+              }
+            ' CHANGELOG.md > "$version_notes"; then
+            echo "CHANGELOG.md has no section for $RELEASE_TAG" >&2
+            exit 1
+          fi
+          if ! grep -q '[^[:space:]]' "$version_notes"; then
+            echo "CHANGELOG.md has no release notes for $RELEASE_TAG" >&2
+            exit 1
+          fi
+          {
+            cat "$release_header"
+            printf '\n'
+            cat "$version_notes"
+            printf '\n'
+            cat "$release_footer"
+          } > "$release_notes"
 
       - name: Create GitHub Release
         if: steps.release_tag.outputs.tag != ''
@@ -122,4 +170,4 @@ jobs:
             *-dev.*|*-rc.*) flags+=(--prerelease --latest=false) ;;
           esac
           gh release create "$RELEASE_TAG" --verify-tag \
-            --title "$RELEASE_TAG" --notes-file release-notes.md "${flags[@]}"
+            --title "$RELEASE_TAG" --notes-file "$RUNNER_TEMP/release-notes.md" "${flags[@]}"

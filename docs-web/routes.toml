@@ -4,6 +4,7 @@ social_image_source = "https://pub-0588ab5197fd48f28b5c91f067adf8f4.r2.dev/cosmo
 
 [[pages]]
 component = "Home"
+docname = "index"
 path = "/"
 binding = "common"
 topic = "home"
@@ -17,31 +18,63 @@ binding = "python"
 topic = "landing"
 status = "ready"
 indexable = true
-docname = "index"
+docname = "python/index"
 
 [[pages]]
 component = "JavaScript"
 path = "/javascript"
 binding = "javascript"
 topic = "landing"
-status = "placeholder"
-indexable = false
-
-[[pages]]
-component = "Benchmarks"
-path = "/benchmarks"
-binding = "common"
-topic = "benchmarks"
-status = "placeholder"
-indexable = false
-
-[[pages]]
-component = "Validation"
-path = "/validation"
-binding = "common"
-topic = "validation"
 status = "ready"
 indexable = true
+docname = "javascript/index"
+source = "sphinx"
+title = "JavaScript / TypeScript | COSMol Viewer"
+label = "Getting started"
+order = 0
+summary = "Initialize the WebAssembly bindings and start using COSMol Viewer."
+
+[[pages]]
+component = "JavaScriptQuickstart"
+path = "/javascript/quickstart"
+binding = "javascript"
+topic = "quickstart"
+status = "ready"
+indexable = true
+docname = "javascript/quickstart"
+source = "sphinx"
+title = "JavaScript Quick Start | COSMol Viewer"
+label = "Quick Start"
+order = 1
+summary = "Load a molecule, open a browser viewer and capture an image."
+
+[[pages]]
+component = "JavaScriptWorkflows"
+path = "/javascript/workflows"
+binding = "javascript"
+topic = "workflows"
+status = "ready"
+indexable = true
+docname = "javascript/workflows"
+source = "sphinx"
+title = "JavaScript Workflows | COSMol Viewer"
+label = "Workflows"
+order = 2
+summary = "Compose scenes, style molecules and proteins, animate and export images."
+
+[[pages]]
+component = "JavaScriptApi"
+path = "/javascript/api"
+binding = "javascript"
+topic = "api"
+status = "ready"
+indexable = true
+docname = "javascript/api"
+source = "sphinx"
+title = "JavaScript / TypeScript API | COSMol Viewer"
+label = "API Reference"
+order = 3
+summary = "Browse signatures extracted from the generated TypeScript declarations."
 
 [[pages]]
 component = "Installation"
@@ -50,7 +83,7 @@ binding = "python"
 topic = "installation"
 status = "ready"
 indexable = true
-docname = "installation"
+docname = "python/installation"
 source = "sphinx"
 title = "Installation | COSMol Viewer"
 legacy_paths = ["/installation"]
@@ -65,7 +98,7 @@ binding = "python"
 topic = "quickstart"
 status = "ready"
 indexable = true
-docname = "quickstart"
+docname = "python/quickstart"
 source = "sphinx"
 title = "Quick Start | COSMol Viewer"
 legacy_paths = ["/quickstart"]
@@ -80,7 +113,7 @@ binding = "python"
 topic = "scenes"
 status = "ready"
 indexable = true
-docname = "scenes"
+docname = "python/scenes"
 source = "sphinx"
 title = "Scenes and Cameras | COSMol Viewer"
 legacy_paths = ["/scenes"]
@@ -95,7 +128,7 @@ binding = "python"
 topic = "molecules"
 status = "ready"
 indexable = true
-docname = "molecules"
+docname = "python/molecules"
 source = "sphinx"
 title = "Molecules | COSMol Viewer"
 legacy_paths = ["/molecules"]
@@ -110,7 +143,7 @@ binding = "python"
 topic = "proteins"
 status = "ready"
 indexable = true
-docname = "proteins"
+docname = "python/proteins"
 source = "sphinx"
 title = "Protein Structures | COSMol Viewer"
 legacy_paths = ["/proteins"]
@@ -125,7 +158,7 @@ binding = "python"
 topic = "geometry"
 status = "ready"
 indexable = true
-docname = "geometry"
+docname = "python/geometry"
 source = "sphinx"
 title = "Geometry | COSMol Viewer"
 legacy_paths = ["/geometry"]
@@ -140,7 +173,7 @@ binding = "python"
 topic = "rendering"
 status = "ready"
 indexable = true
-docname = "rendering"
+docname = "python/rendering"
 source = "sphinx"
 title = "Rendering and Export | COSMol Viewer"
 legacy_paths = ["/rendering"]
@@ -155,7 +188,7 @@ binding = "python"
 topic = "viewer"
 status = "ready"
 indexable = true
-docname = "viewer"
+docname = "python/viewer"
 source = "sphinx"
 title = "Viewers and Animation | COSMol Viewer"
 legacy_paths = ["/viewer"]
@@ -164,28 +197,13 @@ order = 7
 summary = "Open interactive canvases and play molecular trajectories."
 
 [[pages]]
-component = "Rust"
-path = "/python/rust"
-binding = "python"
-topic = "rust"
-status = "ready"
-indexable = true
-docname = "rust"
-source = "sphinx"
-title = "Rust API | COSMol Viewer"
-legacy_paths = ["/rust"]
-label = "Rust API"
-order = 8
-summary = "Use the shared renderer from native Rust applications."
-
-[[pages]]
 component = "Api"
 path = "/python/api"
 binding = "python"
 topic = "api"
 status = "ready"
 indexable = true
-docname = "api"
+docname = "python/api"
 source = "sphinx"
 title = "API Reference | COSMol Viewer"
 legacy_paths = ["/api"]
@@ -215,7 +233,7 @@ binding = "python"
 topic = "genindex"
 status = "ready"
 indexable = false
-docname = "genindex"
+docname = "python/genindex"
 source = "sphinx"
 title = "General Index | COSMol Viewer"
 legacy_paths = ["/genindex"]
@@ -223,15 +241,14 @@ label = "General Index"
 order = 11
 
 [[pages]]
-component = "PyModindex"
-path = "/python/py-modindex"
-binding = "python"
-topic = "py-modindex"
+component = "JavaScriptGenindex"
+path = "/javascript/genindex"
+binding = "javascript"
+topic = "genindex"
 status = "ready"
 indexable = false
-docname = "py-modindex"
+docname = "javascript/genindex"
 source = "sphinx"
-title = "Python Module Index | COSMol Viewer"
-legacy_paths = ["/py-modindex"]
-label = "Python Module Index"
-order = 12
+title = "JavaScript Index | COSMol Viewer"
+label = "General Index"
+order = 4

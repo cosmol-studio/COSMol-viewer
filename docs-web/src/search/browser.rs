@@ -122,7 +122,7 @@ impl SearchUi {
         let message = if query.is_empty() {
             "Enter a topic, class, or method name to search the Python documentation.".to_string()
         } else if count == 0 {
-            format!("No results for “{query}”. Try Scene, surface, or from_sdf.")
+            format!("No results for “{query}”. Try Scene, Cartoon, or save_image.")
         } else {
             format!("{count} results for “{query}”.")
         };

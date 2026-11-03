@@ -3,6 +3,7 @@ name = "cosmol-viewer"
 version = "0.6.2rc1"
 requires-python = ">=3.9"
 description = "Molecular visualization tools"
+license = { file = "../LICENSE" }
 dependencies = ["cosmolkit==0.6.2rc1"]
 authors = [{name = "95028", email = "wjt@cosmol.org"}]
 readme = "README.md"
@@ -16,6 +17,7 @@ backend-path = ["."]
 features = ["release-abi3-py39"]
 name = "cosmol_viewer"
 python-packages = ["cosmol_viewer_native"]
+exclude = ["**/__pycache__/**", "**/*.pyc"]
 include = [
     { path = "cosmol_viewer_native/cosmol-viewer-native*", format = "wheel" },
     { path = "build_backend.py", format = "sdist" },
@@ -26,4 +28,4 @@ include = [
 ]
 
 [project.urls]
-Repository = "https://github.com/COSMol-repl/COSMol-viewer"
+Repository = "https://github.com/cosmol-studio/COSMol-viewer"

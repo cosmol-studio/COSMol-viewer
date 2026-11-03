@@ -15,7 +15,7 @@ pub fn Home() -> Element {
     rsx! {
         Seo {
             title: "COSMol Viewer documentation — Guides and API reference",
-            description: "Learn COSMol Viewer with installation instructions, Python guides, API reference, and rendering and export workflows.",
+            description: "Learn COSMol Viewer with installation instructions, Python and JavaScript guides, API references, and rendering examples.",
 
         }
         document::Script { r#type: "application/ld+json", "{WEBSITE_JSON_LD}" }
@@ -25,23 +25,28 @@ pub fn Home() -> Element {
                     div {
                         p { class: "home-kicker", "THE COSMOL VIEWER HANDBOOK" }
                         h1 { "Documentation" }
-                        p { class: "docs-intro-description", "A practical guide to the Rust-native molecular viewer. Learn the Python API, compose molecular scenes, and find the details you need." }
+                        p { class: "docs-intro-description", "A practical guide to the Rust-native molecular viewer. Use Python or JavaScript / TypeScript to compose molecular scenes, and find the details you need." }
                         div { class: "docs-intro-actions",
-                            Link { class: "docs-primary-action", to: Route::Quickstart { fragment: String::new() }, "Start the quick guide", span { aria_hidden: "true", "→" } }
-                            Link { class: "docs-text-action", to: Route::Api { fragment: String::new() }, "Browse API reference", span { aria_hidden: "true", "→" } }
+                            Link { class: "docs-primary-action", to: Route::Quickstart { fragment: String::new() }, "Python quick start", span { aria_hidden: "true", "→" } }
+                            Link { class: "docs-primary-action", to: Route::JavaScript { fragment: String::new() }, "JavaScript quick start", span { aria_hidden: "true", "→" } }
+                            Link { class: "docs-text-action", to: Route::Api { fragment: String::new() }, "Python API reference", span { aria_hidden: "true", "→" } }
+                            Link { class: "docs-text-action", to: Route::JavaScriptApi { fragment: String::new() }, "JavaScript API reference", span { aria_hidden: "true", "→" } }
                         }
                     }
                     aside { class: "docs-reading-path", aria_label: "Getting started",
-                        p { class: "home-kicker", "NEW TO COSMOL VIEWER?" }
+                        p { class: "home-kicker", "GET STARTED WITH PYTHON" }
                         StartLink { number: "01", title: "Install the package", detail: "Set up your Python environment", to: Route::Installation { fragment: String::new() } }
                         StartLink { number: "02", title: "Render your first molecule", detail: "Follow the quick start", to: Route::Quickstart { fragment: String::new() } }
-                        StartLink { number: "03", title: "Compose a scene", detail: "Learn the core data model", to: Route::Scenes { fragment: String::new() } }
+                        StartLink { number: "03", title: "Compose a scene", detail: "Learn the core data model", to: Route::Molecules { fragment: String::new() } }
                     }
                 }
                 section { class: "docs-guide-section", aria_label: "Explore the documentation",
                     div { class: "docs-section-heading",
                         div { p { class: "home-kicker", "GUIDES & REFERENCE" } h2 { "Find your next step" } }
-                        Link { class: "docs-text-action", to: Route::Python {}, "All Python documentation →" }
+                        div { class: "flex flex-wrap gap-x-5 gap-y-2",
+                            Link { class: "docs-text-action", to: Route::Python {}, "All Python documentation →" }
+                            Link { class: "docs-text-action", to: Route::JavaScript { fragment: String::new() }, "All JavaScript documentation →" }
+                        }
                     }
                     div { class: "docs-topic-grid",
                         TopicGroup { number: "01", title: "Scenes & geometry", description: "Compose molecules, proteins, and annotation geometry.",
@@ -52,22 +57,16 @@ pub fn Home() -> Element {
                         TopicGroup { number: "02", title: "Rendering workflows", description: "Control output, interaction, and molecular animations.",
                             TopicLink { title: "PNG export and notebooks", to: Route::Rendering { fragment: String::new() } }
                             TopicLink { title: "Viewers and animation", to: Route::Viewer { fragment: String::new() } }
-                            TopicLink { title: "Rust API", to: Route::Rust { fragment: String::new() } }
                             TopicLink { title: "Protein structures", to: Route::Proteins { fragment: String::new() } }
                         }
-                        TopicGroup { number: "03", title: "Look up the details", description: "Check signatures, locate symbols, and review evidence.",
+                        TopicGroup { number: "03", title: "Look up the details", description: "Check signatures and locate symbols.",
                             TopicLink { title: "Search documentation", to: Route::SearchPage { q: String::new(), fragment: String::new() } }
                             TopicLink { title: "Python API reference", to: Route::Api { fragment: String::new() } }
+                            TopicLink { title: "JavaScript API reference", to: Route::JavaScriptApi { fragment: String::new() } }
                             TopicLink { title: "General index", to: Route::Genindex { fragment: String::new() } }
-                            TopicLink { title: "Validation evidence", to: Route::Validation {} }
                         }
                     }
-                    div { class: "docs-availability",
-                        span { class: "docs-status-label", "NOT YET AVAILABLE" }
-                        Link { to: Route::JavaScript {}, "JavaScript / WebAssembly documentation" }
-                        span { aria_hidden: "true", "·" }
-                        Link { to: Route::Benchmarks {}, "Benchmark reports" }
-                    }
+
                 }
                 section { class: "docs-related", aria_label: "Related COSMol Viewer websites",
                     div { class: "docs-section-heading",
@@ -77,7 +76,7 @@ pub fn Home() -> Element {
                     div { class: "docs-related-grid",
                         a { class: "docs-external-card docs-external-tools", href: "https://tools.cosmol.org/tools", target: "_blank", rel: "noreferrer",
                             div { class: "docs-external-meta", span { "INTERACTIVE WORKSPACE" } span { "EXTERNAL ↗" } }
-                            h3 { "COSMol Web tools" }
+                            h3 { "COSMolKit Web tools" }
                             p { "Convert molecular formats, render structures, and explore chemistry directly in your browser. A separate workspace for hands-on tasks." }
                             div { class: "docs-external-destination", span { "Open Web tools" } span { "tools.cosmol.org/tools ↗" } }
                         }

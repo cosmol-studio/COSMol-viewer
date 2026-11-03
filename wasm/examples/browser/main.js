@@ -94,6 +94,7 @@ async function showExample(nextMode) {
     scene.recenterOn(molecule);
     scene.setCameraView(-55, 20, 0, 32, new Float32Array([0, 0, 0]), 18);
 
+    viewer = cv.Viewer.new("viewer");
     if (mode === "animation") {
         // Frames share the same CK source and capture independent display state.
         const animation = own(cv.Animation.new(0.06, -1n, true));
@@ -103,9 +104,9 @@ async function showExample(nextMode) {
             animation.addFrame(frame);
             frame.free();
         }
-        viewer = await cv.Viewer.playInto("viewer", animation);
+        await viewer.play(animation);
     } else {
-        viewer = await cv.Viewer.openInto("viewer", scene);
+        await viewer.render(scene);
     }
     viewer.showFps(fps.checked);
     viewer.showCameraParameters(camera.checked);
@@ -152,8 +153,6 @@ screenshot.addEventListener("click", () => perform(async () => {
 window.addEventListener("pagehide", dispose);
 
 try {
-    // CK and Viewer are independent WASM modules and each needs initialization.
-    await Promise.all([ck.default(), cv.default()]);
     await perform(() => showExample("molecule"));
 } catch (error) {
     status.dataset.error = "true";

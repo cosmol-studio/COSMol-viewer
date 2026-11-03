@@ -509,6 +509,24 @@ impl<L: Logger> Canvas<L> {
         painter.galley(origin, galley, egui::Color32::WHITE);
     }
 
+    /// Replace displayed content and stop animation without recreating GL resources.
+    pub fn render_scene(&mut self, scene: &Scene) {
+        self.animation = None;
+        self.interpolate_enabled = false;
+        self.animation_start_time = None;
+        self.auto_rotate_last_time = None;
+        self.last_frame_id = None;
+        self.camera_state = scene.camera_state.unwrap_or(CameraState::default());
+        self.update_scene(scene);
+    }
+
+    /// Start a previously validated nonempty animation on the same renderer.
+    pub fn play_animation(&mut self, animation: Animation) {
+        self.render_scene(&animation.frames[0]);
+        self.interpolate_enabled = animation.interpolate;
+        self.animation = Some(animation);
+    }
+
     pub fn update_scene(&mut self, scene: &Scene) {
         self.diagnostic_activity = true;
         self.auto_rotate = scene.auto_rotate;

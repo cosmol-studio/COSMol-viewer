@@ -5,7 +5,7 @@ authors = ["9028 wjt@cosmol.org"]
 repository = "https://github.com/cosmol-studio/COSMol-viewer"
 homepage = "https://github.com/cosmol-studio/COSMol-viewer"
 keywords = ["molecular", "visualization"]
-license = "MIT OR Apache-2.0"
+license = "MIT"
 description = "Molecular visualization tools by rust"
 
 [workspace]

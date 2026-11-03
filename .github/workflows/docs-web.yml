@@ -1,0 +1,137 @@
+name: Dioxus documentation
+
+on:
+    push:
+        branches: [main]
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+
+concurrency:
+    group: dioxus-documentation
+    cancel-in-progress: false
+
+jobs:
+    build:
+
+        name: Build Dioxus documentation
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+
+            - uses: dtolnay/rust-toolchain@stable
+              with:
+                  targets: wasm32-unknown-unknown
+
+            - name: Restore Rust and Dioxus build cache
+              uses: Swatinem/rust-cache@v2
+              with:
+                  shared-key: docs-web-dioxus-0.7.10
+                  add-job-id-key: false
+                  workspaces: docs-web -> target
+                  cache-targets: true
+                  cache-bin: true
+                  cache-all-crates: true
+                  cache-workspace-crates: true
+                  cache-on-failure: true
+                  cache-directories: |
+                      ~/.local/share/.dx
+
+            - uses: actions/setup-python@v5
+              with:
+                  python-version: "3.11"
+
+            - uses: astral-sh/setup-uv@v6
+
+            - uses: actions/setup-node@v6
+              with:
+                  node-version: "24"
+
+            - uses: taiki-e/install-action@v2
+              with:
+                  tool: wasm-bindgen-cli@0.2.128,wasm-pack
+
+            - name: Sync documentation environment
+              run: uv sync --group dev
+
+            - name: Install TypeDoc
+              run: npm ci --prefix docs --no-audit --no-fund
+
+            - name: Test deployment scripts
+              run: .venv/bin/python -m unittest discover -s docs-web/scripts -p 'test_*.py' -v
+
+            - name: Generate checkout JavaScript type declarations
+              env:
+                  CARGO_TARGET_DIR: ${{ github.workspace }}/target/wasm
+              run: |
+                  wasm-pack build wasm --target web --dev --no-opt --out-dir pkg --out-name cosmol_viewer_wasm --locked
+                  npm install --prefix wasm/pkg --no-save --ignore-scripts --no-audit --no-fund --package-lock=false @cosmol-studio/cosmolkit@0.6.2-rc.1
+
+            - name: Generate Python API type declarations
+              run: |
+                  cargo install pyo3-introspection --version 0.30.1 --locked
+                  .venv/bin/python python/build.py
+
+            - name: Build Sphinx source
+              env:
+                  PYTHONPATH: ${{ github.workspace }}/target/python-bindings/package
+              run: |
+                  .venv/bin/python -m unittest discover -s tools -p 'test_python_docs.py' -v
+                  rm -rf docs/build/html
+                  .venv/bin/python -m sphinx -W --keep-going -E -b html docs/source docs/build/html
+
+            - name: Install cargo-binstall
+              uses: cargo-bins/cargo-binstall@main
+
+            - name: Install Dioxus CLI
+              run: cargo binstall dioxus-cli --version 0.7.10 --no-confirm --disable-strategies compile
+
+            - name: Install search WASM binding generator
+              run: .venv/bin/python docs-web/scripts/build_search_bundle.py --install-tools
+
+            - name: Test Rust search engine
+              run: cargo test --manifest-path docs-web/Cargo.toml --lib --no-default-features --features search-engine --release --target-dir docs-web/target/search-engine
+
+            - name: Build static Dioxus site
+              working-directory: docs-web
+              run: |
+                  public_dir="target/dx/cosmol-viewer-docs-web/release/web/public"
+                  if [ -d "$public_dir" ]; then
+                      mv "$public_dir" "$RUNNER_TEMP/docs-web-public-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+                  fi
+                  dx build --release --server --no-default-features --features server --inject-loading-scripts false --locked
+                  ../.venv/bin/python scripts/render_static.py target/dx/cosmol-viewer-docs-web/release/web/server
+
+            - name: Prepare deployment files
+              run: |
+                  public_dir="docs-web/target/dx/cosmol-viewer-docs-web/release/web/public"
+                  .venv/bin/python docs-web/scripts/prepare_deployment.py "$public_dir" docs/build/html
+                  .venv/bin/python docs-web/scripts/check_ssg_output.py "$public_dir"
+
+            - name: Upload Cloudflare Pages artifact
+              uses: actions/upload-artifact@v4
+              with:
+                  name: docs-web-public
+                  path: docs-web/target/dx/cosmol-viewer-docs-web/release/web/public
+                  include-hidden-files: true
+                  if-no-files-found: error
+
+    deploy:
+        # Manual runs on other branches may build, but must not publish production.
+        if: github.ref == 'refs/heads/main'
+        needs: build
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/download-artifact@v4
+              with:
+                  name: docs-web-public
+                  path: deploy/web/public
+
+            - name: Deploy to Cloudflare Pages
+              uses: cloudflare/wrangler-action@v3
+              with:
+                  apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+                  accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+                  command: pages deploy ./deploy/web/public/ --project-name=cosmol-viewer-docs --branch=main

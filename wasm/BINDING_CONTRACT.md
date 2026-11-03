@@ -94,7 +94,7 @@ a live import; pass a new CK object to import edited data while the old one live
 `add(item, style)` and `set(name, item, style)` accept whole Molecule/Protein
 objects or source-bound selections. Core Scene methods own defaults, validation
 and insertion. Cartoon uses a whole protein's residues; other representations
-use its atoms. `Viewer.open` / `openInto` create the interactive browser view.
+use its atoms. `Viewer.new(canvasId)` binds a caller-provided canvas without rendering. Instance `viewer.render(scene)` and `viewer.play(animation)` start or replace its content.
 Missing coordinates require explicit CK generation, and multiple conformers
 require an explicit style choice. Completed displays contain geometry snapshots.
 
@@ -115,8 +115,10 @@ Notebook payload strings are internal transport endpoints, not replacements
 for typed Scene/Animation parameters. Native-only APIs remain absent in JS.
 The core registry audits semantic availability across languages; it does not
 generate signatures or supply a second implementation.
-The npm entry point imports CK constructors and registers them for instance
-checks. The official generated ES module has no runtime CK import and is embedded
+The npm entry point awaits CK and Viewer initialization at module evaluation,
+then registers their constructors for instance checks. Its `index.d.ts` re-exports
+the official declarations without a default initializer. The official generated
+ES module has no runtime CK import and is embedded
 directly by Python, as before the CK JavaScript adapters were introduced.
 Both entry paths use the same Viewer WASM. There is no Notebook JS bundle and
 the Notebook sender/receiver protocol does not carry CK JavaScript objects.

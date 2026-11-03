@@ -1,0 +1,35 @@
+.cosmol_viewer-project-links {
+  border-top: 1px solid var(--color-background-border);
+  color: var(--color-foreground-secondary);
+  padding: 1rem 0;
+}
+
+.cosmol_viewer-project-links__title {
+  color: var(--color-foreground-primary);
+  font-weight: 700;
+  margin: 0 0 0.5rem;
+}
+
+.cosmol_viewer-project-links__items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1rem;
+}
+
+@media (max-width: 46em) {
+  .cosmol_viewer-project-links {
+    text-align: center;
+  }
+
+  .cosmol_viewer-project-links__items {
+    justify-content: center;
+  }
+}
+/* Shared-guide code examples: the URL selects the language for the whole page. */
+.docs-code-example { margin: 1.25rem 0; scroll-margin-top: 98px; min-width: 0; }
+.docs-code-languages { display: flex; gap: 4px; padding: 6px; background: #0b1727; border: 1px solid #28415f; border-radius: 8px 8px 0 0; }
+.docs-code-example .docs-code-languages a { display: inline-block; padding: 6px 14px; color: #aebacd; border-radius: 5px; font-size: 13px; text-decoration: none; }
+.docs-code-example .docs-code-languages a[aria-current="page"] { background: #21466d; color: #fff; font-weight: 600; }
+.docs-code-example .docs-code-languages a:hover { color: #fff; background: #18334e; }
+.docs-code-example .docs-code-languages a:focus-visible { outline: 2px solid #7ab5ff; outline-offset: 2px; }
+.docs-code-example > div[class*="highlight"] { margin-top: 0; }

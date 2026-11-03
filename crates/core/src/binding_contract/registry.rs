@@ -8,8 +8,8 @@ binding_contract! {
             signature: fn(scene: &crate::scene::Scene, width: f32, height: f32) -> Result<crate::NativeGuiViewer, crate::RenderError>,
             rust_cfg: not(target_arch = "wasm32"), receiver: none, platforms: &[Native],
             python: Projection::supported("Viewer.open", &[Native, Notebook]),
-            javascript: Projection::supported("Viewer.open", &[Browser]).with_notebook("Viewer.openNotebook", None),
-            notes: "Browser initialization is async and receives a typed Scene plus dimensions. Notebook payload startup is a separate internal endpoint.",
+            javascript: Projection::supported("Viewer.render", &[Browser]).with_notebook("Viewer.openNotebook", None),
+            notes: "Browser Viewer.new(canvasId) binds a canvas first; instance render(scene) starts rendering or replaces content. Notebook payload startup is a separate internal endpoint.",
         },
         {
             semantic_id: "Viewer.play", rust: crate::NativeGuiViewer::play,
@@ -17,7 +17,7 @@ binding_contract! {
             rust_cfg: not(target_arch = "wasm32"), receiver: none, platforms: &[Native],
             python: Projection::supported("Viewer.play", &[Native, Notebook]),
             javascript: Projection::supported("Viewer.play", &[Browser]).with_notebook("Viewer.playNotebook", None),
-            notes: "Browser playback is async and borrows a typed Animation. Notebook payload startup is a separate internal endpoint.",
+            notes: "Browser Viewer.new(canvasId) binds a canvas first; instance play(animation) starts or replaces playback. Notebook payload startup is a separate internal endpoint.",
         },
         {
             semantic_id: "Viewer.update", rust: crate::NativeGuiViewer::update,

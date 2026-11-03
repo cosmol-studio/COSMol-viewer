@@ -4,6 +4,17 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
 
+const pkg = process.env.COSMOL_VIEWER_WASM_PKG;
+assert.ok(pkg, "COSMOL_VIEWER_WASM_PKG must point at the generated package");
+// Node consumes local bytes through the raw generated module. The default
+// browser npm entry and automatic CK initialization are tested in Chromium.
+const binding = await import(pathToFileURL(join(pkg, "cosmol_viewer_wasm.js")));
+binding.initSync({ module: readFileSync(join(pkg, "cosmol_viewer_wasm_bg.wasm")) });
+const ckTypes = await import(pathToFileURL(join(pkg, "node_modules/@cosmol-studio/cosmolkit/cosmolkit_wasm.js")));
+ckTypes.initSync({ module: readFileSync(join(pkg, "node_modules/@cosmol-studio/cosmolkit/cosmolkit_wasm_bg.wasm")) });
+binding.__setCkTypes(ckTypes.Molecule, ckTypes.Protein, ckTypes.Element);
+binding.__setViewerTypes(binding.Selection, binding.Sphere, binding.Stick, binding.Style);
+
 test("CK selections project molecules and proteins without viewer chemistry wrappers", async () => {
     const ckPath = join(pkg, "node_modules/@cosmol-studio/cosmolkit");
     const ck = await import(pathToFileURL(join(ckPath, "cosmolkit_wasm.js")));
@@ -65,10 +76,6 @@ test("CK selections project molecules and proteins without viewer chemistry wrap
         oxygen, oxygenElement, atoms, selector, source]) handle.free();
 });
 
-const pkg = process.env.COSMOL_VIEWER_WASM_PKG;
-assert.ok(pkg, "COSMOL_VIEWER_WASM_PKG must point at the generated package");
-const binding = await import(pathToFileURL(join(pkg, "index.js")));
-binding.initSync({ module: readFileSync(join(pkg, "cosmol_viewer_wasm_bg.wasm")) });
 
 test("add, set, select and cloned scenes share one CK transfer per source", async () => {
     const ckPath = join(pkg, "node_modules/@cosmol-studio/cosmolkit");
@@ -111,7 +118,7 @@ test("add, set, select and cloned scenes share one CK transfer per source", asyn
 });
 
 test("generated browser API has the declared names and native-only restrictions", () => {
-    const handle = binding.Viewer.new();
+    const handle = binding.Viewer.prototype;
     assert.equal(binding.WebHandle, undefined);
     for (const name of ["update", "dispatch", "cameraParameterLogging", "showFps", "showCameraParameters", "takeScreenshot"]) {
         assert.equal(typeof handle[name], "function", name);
@@ -137,35 +144,19 @@ test("generated browser API has the declared names and native-only restrictions"
             assert.ok(typeof binding[owner][method] === "function" || typeof binding[owner].prototype[method] === "function");
         }
     }
-    assert.throws(() => handle.dispatch("invalid-payload"));
-    handle.free();
 });
 
-test("async browser initialization reports a missing DOM canvas", async () => {
-    const handle = binding.Viewer.new();
-    const scene = binding.Scene.new();
-    const animation = binding.Animation.new(0.1, 1n, false);
-    await assert.rejects(binding.Viewer.openInto("missing-canvas", scene), /Canvas not found/);
-    await assert.rejects(binding.Viewer.playInto("missing-canvas", animation), /Canvas not found/);
-    await assert.rejects(binding.Viewer.open(scene, 100, 100), /document is unavailable/);
-    await assert.rejects(binding.Viewer.play(animation, 100, 100), /document is unavailable/);
-    // Async failures must neither consume nor invalidate borrowed JS objects.
-    assert.equal(scene.shapeCount(), 0);
-    assert.equal(animation.frameCount(), 0);
-    await assert.rejects(handle.takeScreenshot(), /before app initialization/);
-    assert.throws(() => handle.update(scene), /before app initialization/);
-    assert.throws(() => handle.cameraParameterLogging(true), /before app initialization/);
-    assert.throws(() => handle.showFps(true), /before app initialization/);
-    assert.throws(() => handle.showCameraParameters(true), /before app initialization/);
-    assert.equal(typeof handle.setCameraParameterLogging, "undefined");
-    assert.equal(scene.shapeCount(), 0);
+test("viewer construction requires an existing canvas and exposes separate render/play", async () => {
+    assert.throws(() => binding.Viewer.new("missing-canvas"), /Canvas not found/);
+    assert.equal(binding.Viewer.open, undefined);
+    assert.equal(binding.Viewer.play, undefined);
+    assert.equal(binding.Viewer.openInto, undefined);
+    assert.equal(binding.Viewer.playInto, undefined);
+    assert.equal(typeof binding.Viewer.prototype.render, "function");
+    assert.equal(typeof binding.Viewer.prototype.play, "function");
     await assert.rejects(binding.Viewer.openNotebook("missing-canvas", "invalid"), /decode failed/);
     await assert.rejects(binding.Viewer.playNotebook("missing-canvas", "CMV99:R:AAAA"), /unsupported payload version/);
     await assert.rejects(binding.Viewer.openNotebook("missing-canvas", "CMV1:AAAA"), /unsupported payload version/);
-    assert.throws(() => handle.dispatch("CMV2:X:AAAA"), /unsupported payload encoding/);
-    scene.free();
-    animation.free();
-    handle.free();
 });
 
 test("JS creates and modifies real Scene/Animation state without transport payloads", () => {
@@ -219,7 +210,10 @@ test("checked JS values reject coercion and leave native state unchanged", async
     for (const invalid of ["2", true, null, undefined, {}, [2]]) {
         assert.throws(() => scene.setScale(invalid), TypeError);
         assert.throws(() => animation.setInterval(invalid), TypeError);
-        await assert.rejects(binding.Viewer.open(scene, invalid, 100), TypeError);
+
+    }
+    for (const invalid of [2, true, null, undefined, {}, ["canvas"]]) {
+        assert.throws(() => binding.Viewer.new(invalid), TypeError);
     }
     for (const invalid of [0, 1, "false", null, undefined]) {
         assert.throws(() => scene.setTransparentBackground(invalid), TypeError);

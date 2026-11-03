@@ -1,6 +1,6 @@
 // Real WebGL smoke test, separate from mocked Notebook/Node decoder checks.
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { createServer } from "node:http";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -12,16 +12,32 @@ const playwright = process.env.PLAYWRIGHT_MODULE || join(root, "target/browser-c
 const { chromium } = await import(pathToFileURL(playwright));
 
 test("typed JS scenes render/update/screenshot and animations play in a real browser", { timeout: 60000 }, async () => {
-    const files = new Set(["cosmol_viewer_wasm.js", "cosmol_viewer_wasm_bg.wasm"]);
+    const files = new Map([
+        ["index.js", join(pkg, "index.js")],
+        ["cosmol_viewer_wasm.js", join(pkg, "cosmol_viewer_wasm.js")],
+        ["cosmol_viewer_wasm_bg.wasm", join(pkg, "cosmol_viewer_wasm_bg.wasm")],
+        ["ck/cosmolkit_wasm.js", join(pkg, "node_modules/@cosmol-studio/cosmolkit/cosmolkit_wasm.js")],
+        ["ck/cosmolkit_wasm_bg.wasm", join(pkg, "node_modules/@cosmol-studio/cosmolkit/cosmolkit_wasm_bg.wasm")],
+    ]);
+    const ckRoot = join(pkg, "node_modules/@cosmol-studio/cosmolkit");
+    for (const file of await readdir(join(ckRoot, "snippets"), { recursive: true, withFileTypes: true })) {
+        if (file.isFile()) {
+            const path = join(file.parentPath, file.name);
+            const name = path.slice(ckRoot.length + 1).replaceAll("\\", "/");
+            files.set(`ck/${name}`, path);
+        }
+    }
+    const loads = new Map();
     const server = createServer(async (request, response) => {
         const name = request.url.slice(1);
         if (request.url === "/") {
             response.setHeader("Content-Type", "text/html");
-            response.end('<!doctype html><html><body><canvas id="mounted" width="128" height="128"></canvas></body></html>');
+            response.end('<!doctype html><html><head><script type="importmap">{"imports":{"@cosmol-studio/cosmol-viewer":"/index.js","@cosmol-studio/cosmolkit":"/ck/cosmolkit_wasm.js"}}</script></head><body><section id="viewport"><canvas id="viewer" width="128" height="128"></canvas></section><canvas id="mounted" width="128" height="128"></canvas><canvas id="animation" width="128" height="128"></canvas></body></html>');
         } else if (files.has(name)) {
             try {
                 response.setHeader("Content-Type", name.endsWith(".wasm") ? "application/wasm" : "text/javascript");
-                response.end(await readFile(join(pkg, name)));
+                loads.set(name, (loads.get(name) || 0) + 1);
+                response.end(await readFile(files.get(name)));
             } catch (error) { response.writeHead(500).end(String(error)); }
         } else { response.writeHead(404).end(); }
     });
@@ -39,13 +55,30 @@ test("typed JS scenes render/update/screenshot and animations play in a real bro
         page.on("dialog", dialog => { errors.push(dialog.message()); dialog.dismiss(); });
         await page.goto(`http://127.0.0.1:${server.address().port}/`);
         const result = await page.evaluate(async () => {
-            const cv = await import("/cosmol_viewer_wasm.js");
-            await cv.default({module_or_path: "/cosmol_viewer_wasm_bg.wasm"});
-            cv.__setViewerTypes(cv.Selection, cv.Sphere, cv.Stick, cv.Style);
+            const cv = await import("@cosmol-studio/cosmol-viewer");
+            const ck = await import("@cosmol-studio/cosmolkit");
+            // No init calls or manual constructor registration in the consumer.
+            const importedAgain = cv === await import("@cosmol-studio/cosmol-viewer");
+            const hasDefaultInit = "default" in cv;
+            const molecule = ck.Molecule.fromSmiles("CO").withAdded3dConformer([[0, 0, 0], [2, 0, 0]]);
+            const molecularScene = cv.Scene.new();
+            molecularScene.add(molecule);
+            const molecularShapes = molecularScene.shapeCount();
+            molecularScene.free();
+            molecule.free();
             const scene = cv.Scene.new();
             scene.set("sphere", cv.Sphere.new(new Float32Array([0, 0, 0]), 1));
             scene.setBackgroundColor(new Uint8Array([0, 0, 0]));
-            const viewer = await cv.Viewer.open(scene, 128, 128);
+            const viewer = cv.Viewer.new("viewer");
+            let beforeRender;
+            try { await viewer.takeScreenshot(); } catch (error) { beforeRender = String(error); }
+            let invalidDispatch;
+            try { viewer.dispatch("invalid-payload"); } catch (error) { invalidDispatch = String(error); }
+            const starting = viewer.render(scene);
+            // WebGL startup can finish synchronously. A second call either
+            // queues a scene or rejects while initialization is still pending.
+            const duplicateStart = await viewer.render(scene).then(() => "queued", error => String(error));
+            await starting;
             const first = Array.from(await viewer.takeScreenshot());
             scene.setBackgroundColor(new Uint8Array([255, 255, 255]));
             viewer.update(scene);
@@ -93,7 +126,8 @@ test("typed JS scenes render/update/screenshot and animations play in a real bro
             viewer.update(scene);
             const afterUpdate = viewer.takeScreenshot();
             const barrier = await Promise.all([beforeUpdate, afterUpdate]);
-            const mounted = await cv.Viewer.openInto("mounted", scene);
+            const mounted = cv.Viewer.new("mounted");
+            await mounted.render(scene);
             mounted.update(scene);
             await mounted.takeScreenshot();
             mounted.close();
@@ -103,11 +137,23 @@ test("typed JS scenes render/update/screenshot and animations play in a real bro
             animation.addFrame(scene);
             scene.setScale(1.5);
             animation.addFrame(scene);
-            const playing = await cv.Viewer.play(animation, 128, 128);
+            const playing = cv.Viewer.new("animation");
+            const empty = cv.Animation.new(0.05, -1n, false);
+            const emptyPlay = await playing.play(empty).then(() => "unexpected success", error => String(error));
+            empty.free();
+            await playing.play(animation);
             await playing.takeScreenshot();
+            await playing.render(scene);
+            const staticAfterPlay = Array.from(await playing.takeScreenshot());
+            await playing.play(animation);
+            await playing.takeScreenshot();
+            await playing.render(scene);
+            const staticAgain = Array.from(await playing.takeScreenshot());
             const shapes = scene.shapeCount();
             const frames = animation.frameCount();
             playing.close();
+            const renderAfterClose = await playing.render(scene).then(() => "unexpected success", error => String(error));
+            const playAfterClose = await playing.play(animation).then(() => "unexpected success", error => String(error));
             playing.free();
             const pending = viewer.takeScreenshot();
             await Promise.resolve();
@@ -118,13 +164,19 @@ test("typed JS scenes render/update/screenshot and animations play in a real bro
             viewer.free();
             animation.free();
             scene.free();
-            return { first, second, cameraOverlay, combinedOverlay, zeroOverlay,
+            return { importedAgain, hasDefaultInit, molecularShapes, beforeRender, invalidDispatch, duplicateStart, emptyPlay, renderAfterClose, playAfterClose, staticAfterPlay, staticAgain, first, second, cameraOverlay, combinedOverlay, zeroOverlay,
                 stillZeroOverlay, resumedOverlay, hiddenOverlay, idleDraws, laterIdleDraws, shapes, frames, preservedCanvas,
                 concurrent: concurrent.map(png => Array.from(png.slice(0, 8))),
                 barrier: barrier.map(png => Array.from(png)), closedWait, closedUpdate,
+                viewerParent: document.getElementById("viewer")?.parentElement.id,
                 remainingCanvases: document.querySelectorAll("canvas").length };
         });
         assert.deepEqual(errors, [], "Browser startup/renderer reported errors");
+        assert.equal(result.importedAgain, true);
+        assert.equal(result.hasDefaultInit, false);
+        assert.equal(result.molecularShapes, 1, "CK molecule must work immediately after importing Viewer");
+        assert.equal(loads.get("cosmol_viewer_wasm_bg.wasm"), 1);
+        assert.equal(loads.get("ck/cosmolkit_wasm_bg.wasm"), 1);
         assert.deepEqual(result.first.slice(0, 8), [137, 80, 78, 71, 13, 10, 26, 10]);
         assert.deepEqual(result.second.slice(0, 8), [137, 80, 78, 71, 13, 10, 26, 10]);
         assert.notDeepEqual(result.first, result.second, "Scene update did not change the screenshot");
@@ -143,8 +195,16 @@ test("typed JS scenes render/update/screenshot and animations play in a real bro
         assert.match(result.closedUpdate, /closed/i);
         assert.equal(result.shapes, 1);
         assert.equal(result.frames, 2);
+        assert.match(result.beforeRender, /before app initialization/);
+        assert.match(result.invalidDispatch, /decode failed/);
+        assert.match(result.duplicateStart, /^(queued|.*already in progress.*)$/);
+        assert.match(result.emptyPlay, /at least one frame/);
+        assert.match(result.renderAfterClose, /closed/i);
+        assert.match(result.playAfterClose, /closed/i);
+        assert.deepEqual(result.staticAfterPlay, result.staticAgain, "Switching playback back to a scene is not repeatable");
         assert.equal(result.preservedCanvas, true);
-        assert.equal(result.remainingCanvases, 1, "close did not remove auto-created canvases");
+        assert.equal(result.viewerParent, "viewport", "Viewer moved or removed the page canvas");
+        assert.equal(result.remainingCanvases, 3, "close must preserve caller-owned canvases");
     } finally {
         if (browser) await browser.close();
         server.closeAllConnections();

@@ -8,10 +8,12 @@ The ``cosmol_viewer`` crate is the public Rust facade. It re-exports the shared
 scene, animation, renderer, shape, and COSMolKit APIs used by the Python and
 WebAssembly packages.
 
+Install the public crate with ``cargo add cosmol_viewer``.
+
 .. code-block:: rust
 
    use cosmol_viewer::{ImageRenderer, Scene};
-   use cosmolkit::Molecule;
+   use cosmol_viewer::cosmolkit::Molecule;
 
    fn main() -> Result<(), Box<dyn std::error::Error>> {
        let molecule = Molecule::from_sdf(include_str!("molecule.sdf"))?;

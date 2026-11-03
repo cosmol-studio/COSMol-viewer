@@ -107,7 +107,7 @@
 .docs-toc-tree a {
     display: block;
     border-radius: 4px;
-    padding: 5px 6px;
+    padding: 2px 6px;
     color: #8495aa;
     overflow-wrap: anywhere;
     text-decoration: none;
@@ -231,7 +231,7 @@
    signature visually distinct from its description without importing the
    documentation theme's global layout rules into the Dioxus shell. */
 .sphinx-content dl[class]:not(.field-list):not(.option-list):not(.simple) {
-    margin: 1.25rem 0;
+    margin: 0;
 }
 
 .sphinx-content dl.py.class {
@@ -239,7 +239,8 @@
     margin-bottom: 0 !important;
 }
 
-.sphinx-content dl.py.method {
+.sphinx-content dl.py.method,
+.sphinx-content dl:is(.class, .interface) > dd > dl[class]:not(.field-list):not(.option-list):not(.simple) {
     margin-bottom: 0 !important;
 }
 
@@ -258,8 +259,9 @@
 .sphinx-content dl[class]:not(.field-list):not(.option-list):not(.simple) > dt.sig {
     margin: 1.25rem 0 0;
     border: 1px solid #263a54;
+    border-left: 3px solid #4b96ff;
     border-radius: 0.25rem;
-    background: #07111f;
+    background: #0d1c30;
     color: #d8e7ff;
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     font-size: 0.875rem;
@@ -267,6 +269,43 @@
     line-height: 1.5;
     overflow-wrap: anywhere;
     padding: 0.55rem 0.75rem;
+}
+
+/* Sphinx groups overload signatures as sibling dt nodes with one shared dd.
+   Keep that grouping visible without changing signatures or adding JS. */
+.sphinx-content dl:has(> dt.sig + dt.sig) {
+    counter-reset: overload;
+}
+
+.sphinx-content dl[class]:not(.field-list):not(.option-list):not(.simple):has(> dt.sig + dt.sig) > dt.sig {
+    counter-increment: overload;
+    border-radius: 0;
+    border-bottom: 0;
+    padding: 0.8rem 1rem;
+}
+
+.sphinx-content dl[class]:has(> dt.sig + dt.sig) > dt.sig::before {
+    content: "OVERLOAD " counter(overload);
+    display: block;
+    margin-bottom: 0.4rem;
+    color: #91b9eb;
+    font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+    font-size: 0.65rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+}
+
+.sphinx-content dl[class]:not(.field-list):not(.option-list):not(.simple):has(> dt.sig + dt.sig) > dt.sig:first-child {
+    border-radius: 6px 6px 0 0;
+}
+
+.sphinx-content dl[class]:not(.field-list):not(.option-list):not(.simple):has(> dt.sig + dt.sig) > dt.sig + dt.sig {
+    border-top-style: dashed;
+}
+
+.sphinx-content dl[class]:not(.field-list):not(.option-list):not(.simple):has(> dt.sig + dt.sig) > dt.sig:has(+ dd) {
+    border-bottom: 1px solid #263a54;
+    border-radius: 0 0 6px 6px;
 }
 
 .sphinx-content dl[class]:not(.field-list):not(.option-list):not(.simple) > dd {
@@ -283,20 +322,35 @@
     margin-bottom: 0.5rem;
 }
 
-/* A method definition is nested inside its owning class description. Extend
-   the final method guide line through the class description's bottom padding
+/* Every API member uses the same block styling, regardless of its kind.
+   Extend the final member guide line through the class description's bottom padding
    so it meets the next top-level signature without changing the content gap. */
-.sphinx-content dl.py.class > dd > dl.py.method:last-child {
+.sphinx-content dl.py.class > dd > dl.py.method:last-child,
+.sphinx-content :is(dl:is(.class, .interface) > dd, .api-member-list) > dl[class]:not(.field-list):not(.option-list):not(.simple):last-child {
     position: relative;
 }
 
-.sphinx-content dl.py.class > dd > dl.py.method:last-child::after {
+.sphinx-content dl.py.class > dd > dl.py.method:last-child::after,
+.sphinx-content :is(dl:is(.class, .interface) > dd, .api-member-list) > dl[class]:not(.field-list):not(.option-list):not(.simple):last-child::after {
     position: absolute;
     top: 100%;
     bottom: -1rem;
     left: 1rem;
     border-left: 2px solid #263a54;
     content: "";
+}
+
+.sphinx-content .api-members {
+    margin: 0;
+    padding: 0;
+}
+
+.sphinx-content .api-members > summary {
+    padding: 0.4rem 0;
+    color: #7ab5ff;
+    font-size: 0.875rem;
+    font-weight: 600;
+    cursor: pointer;
 }
 
 .sphinx-content .sig-name {
@@ -584,4 +638,12 @@
 
 .docs-search-more[hidden] {
     display: none;
+}
+
+/* Adapt sphinx-js markup to the established Python API spacing above.
+   These selectors cannot affect Python pages. */
+.sphinx-content dl.js.class,
+.sphinx-content dl.js.interface {
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
 }

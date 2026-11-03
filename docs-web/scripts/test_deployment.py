@@ -15,7 +15,9 @@ from check_ssg_output import INDEXNOW_KEY, PROJECT_LINKS, SEARCH_BUNDLE_PREFIX, 
 from flatten_html_routes import ROUTES, flatten_html_routes
 from generate_sitemap import BASE_URL, EXCLUDED_ROUTES, SITEMAP_NAMESPACE, write_sitemap
 from strip_client_runtime import strip_client_runtime
-from prepare_deployment import SOCIAL_IMAGE_SOURCE, download_social_image, write_route_assets
+from prepare_deployment import SOCIAL_IMAGE_SOURCE, download_social_image, prepare, write_route_assets
+from version_catalog import load_catalog
+from html_metadata import read_metadata
 
 
 SEARCH_SCRIPTS = (SEARCH_BUNDLE_PREFIX + "-fixture.js", SEARCH_BUNDLE_PREFIX + "_bg-fixture.wasm")
@@ -56,6 +58,9 @@ class DeploymentTests(unittest.TestCase):
         html += '<nav class="cosmol_viewer-project-links">'
         html += ''.join(f'<a href="{link}">Project</a>' for link in sorted(PROJECT_LINKS))
         html += '</nav>'
+        html += '<details id="docs-version-switch"><summary id="docs-version-current">latest</summary><nav id="docs-version-options">'
+        html += ''.join(f'<a data-docs-version="{entry["version"]}" href="{entry["url"]}">{entry["version"]}</a>' for entry in load_catalog()["versions"])
+        html += '</nav></details><script id="docs-version-loader" type="module"></script>'
         if route == "python/search":
             html += '<form id="docs-search-form" action="/python/search" method="get"><input name="q" type="search"></form><p id="docs-search-status"></p><div id="search-results"></div>'
             html += SEARCH_LOADER
@@ -72,17 +77,17 @@ class DeploymentTests(unittest.TestCase):
         self.page("index.html", "", runtime=True)
         for route in ROUTES:
             self.page(f"{route}/index.html", route, runtime=True)
-        self.assertEqual(flatten_html_routes(self.public), 17)
-        self.assertEqual(strip_client_runtime(self.public), 18)
+        self.assertEqual(flatten_html_routes(self.public), len(ROUTES))
+        self.assertEqual(strip_client_runtime(self.public), len(ROUTES) + 1)
         docs_web = Path(__file__).resolve().parents[1]
         (self.public / "social-card.png").write_bytes(PNG_HEADER)
         for name in ("404.html",):
             shutil.copyfile(docs_web / "deployment/public" / name, self.public / name)
         shutil.copyfile(
-            docs_web.parent / "python/docs/source/robots.txt", self.public / "robots.txt"
+            docs_web.parent / "docs/source/robots.txt", self.public / "robots.txt"
         )
         shutil.copyfile(
-            docs_web.parent / f"python/docs/source/{INDEXNOW_KEY}.txt", self.public / f"{INDEXNOW_KEY}.txt"
+            docs_web.parent / f"docs/source/{INDEXNOW_KEY}.txt", self.public / f"{INDEXNOW_KEY}.txt"
         )
         write_route_assets(self.public)
         for src in SEARCH_SCRIPTS:
@@ -90,16 +95,76 @@ class DeploymentTests(unittest.TestCase):
             if not path.exists():
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(b"\x00asm\x01\x00\x00\x00" if path.suffix == ".wasm" else b"// Generated binding fixture")
-        self.assertEqual(write_sitemap(self.public), 13)
+        self.assertEqual(write_sitemap(self.public), len(ROUTES) + 1 - len(EXCLUDED_ROUTES))
 
     def test_full_preparation_and_idempotence(self):
         self.prepare()
-        self.assertEqual(check_output(self.public), 18)
+        self.assertEqual(check_output(self.public), len(ROUTES) + 1)
         self.assertEqual(flatten_html_routes(self.public), 0)
         self.assertEqual(strip_client_runtime(self.public), 0)
+
+    def test_unused_client_bundle_removed_but_search_preserved(self):
+        assets = self.public / "assets"
+        assets.mkdir()
+        removed = ["cosmol-viewer-docs-web-dxh123.js",
+                   "cosmol-viewer-docs-web_bg-dxh456.wasm",
+                   "cosmol-viewer-docs-web-dxh123.js.map",
+                   "cosmol-viewer-docs-web_bg-dxh456.wasm.br"]
+        retained = ["docs_search-fixture.js", "docs_search_bg-fixture.wasm",
+                    "cosmol-viewer-docs-web.css"]
+        for name in removed + retained:
+            (assets / name).write_bytes(b"fixture")
+        self.page("index.html", "", runtime=True)
+        self.assertEqual(strip_client_runtime(self.public), 1)
+        self.assertEqual(sorted(p.name for p in assets.iterdir()), sorted(retained))
+        self.assertEqual(strip_client_runtime(self.public), 0)
+
+    def test_shared_sphinx_assets_do_not_publish_python_modules_as_javascript(self):
+        self.prepare()
+        with tempfile.TemporaryDirectory() as temporary:
+            sphinx = Path(temporary)
+            for folder, filename in (("_static", "style.css"), ("_sources", "index.rst.txt"), ("_modules", "index.html")):
+                (sphinx / folder).mkdir()
+                content = ('<a href="../python/api.html#cosmol_viewer.Molecule">Python</a>'
+                           '<a href="../javascript/index.html">JavaScript</a>'
+                           '<a href="../index.html">Home</a>'
+                           '<a href="builtins.html">Module</a>') if folder == "_modules" else "fixture"
+                (sphinx / folder / filename).write_text(content)
+            for name in ("objects.inv", "robots.txt", INDEXNOW_KEY + ".txt"):
+                (sphinx / name).write_text("fixture")
+            with patch("prepare_deployment.download_social_image"):
+                prepare(self.public, sphinx)
+        self.assertTrue((self.public / "python/_modules/index.html").is_file())
+        module = (self.public / "python/_modules/index.html").read_text()
+        for href in ("/python/api#cosmol_viewer.Molecule", "/javascript", "/", "builtins.html"):
+            self.assertIn(f'href="{href}"', module)
+        self.assertFalse((self.public / "javascript/_modules").exists())
+        self.assertTrue((self.public / "javascript/_static/style.css").is_file())
         for route in ROUTES:
             self.assertFalse((self.public / route / "index.html").exists())
             self.assertTrue((self.public / f"{route}.html").is_file())
+
+    def test_version_switch_survives_runtime_stripping(self):
+        self.prepare()
+        for route in ("index.html", "python/api.html", "python/search.html"):
+            self.assertIn('id="docs-version-loader"', (self.public / route).read_text())
+        self.assertEqual(check_output(self.public), len(ROUTES) + 1)
+        path = self.public / "index.html"
+        path.write_text(path.read_text().replace('id="docs-version-loader"', 'id="removed-loader"'))
+        with self.assertRaisesRegex(ValueError, "version loader"):
+            check_output(self.public)
+
+    def test_internal_navigation_and_styles_cannot_use_latest_origin(self):
+        self.prepare()
+        path = self.public / "python/api.html"
+        original = path.read_text()
+        for bad, message in (
+            (original.replace('href="/">Project', 'href="https://viewer.cosmol.org/python/api">Project'), "relative URLs"),
+            (original.replace('href="/style.css"', 'href="https://viewer.cosmol.org/style.css"'), "relative URLs"),
+        ):
+            path.write_text(bad)
+            with self.assertRaisesRegex(ValueError, message):
+                check_output(self.public)
 
     def test_flatten_preserves_unrelated_directories(self):
         module = self.page("python/_modules/index.html", "python/_modules/")
@@ -109,9 +174,9 @@ class DeploymentTests(unittest.TestCase):
         self.assertTrue(asset.is_file())
 
     def test_conflict_preflight_preserves_all_inputs(self):
-        first = self.page("python/installation/index.html", "python/installation")
-        second = self.page("validation/index.html", "validation")
-        destination = self.page("validation.html", "validation")
+        first = self.page("python/quickstart/index.html", "python/quickstart")
+        second = self.page("javascript/index.html", "javascript")
+        destination = self.page("javascript.html", "javascript")
         with self.assertRaises(FileExistsError):
             flatten_html_routes(self.public)
         self.assertTrue(first.is_file())
@@ -119,7 +184,7 @@ class DeploymentTests(unittest.TestCase):
         self.assertTrue(destination.is_file())
 
     def test_unexpected_route_contents_are_not_removed(self):
-        index = self.page("python/installation/index.html", "python/installation")
+        index = self.page("python/quickstart/index.html", "python/quickstart")
         extra = index.parent / "extra.txt"
         extra.write_text("keep", encoding="utf-8")
         with self.assertRaises(ValueError):
@@ -129,15 +194,15 @@ class DeploymentTests(unittest.TestCase):
 
     def test_sitemap_excludes_flat_and_directory_utility_pages(self):
         self.page("index.html", "")
-        self.page("python/installation/index.html", "python/installation")
-        for route in ("python/search", "python/genindex", "python/py-modindex", "javascript", "benchmarks"):
+        self.page("python/quickstart/index.html", "python/quickstart")
+        for route in ("python/search", "python/genindex", "javascript", "javascript/genindex"):
             self.page(f"{route}.html", route)
             self.page(f"{route}/index.html", route)
         self.page("python/_modules/index.html", "python/_modules/")
-        self.assertEqual(write_sitemap(self.public), 2)
+        self.assertEqual(write_sitemap(self.public), 3)
         root = ElementTree.parse(self.public / "sitemap.xml")
         urls = [node.text for node in root.findall(f".//{{{SITEMAP_NAMESPACE}}}loc")]
-        self.assertEqual(urls, [BASE_URL, BASE_URL + "python/installation"])
+        self.assertEqual(urls, [BASE_URL, BASE_URL + "javascript", BASE_URL + "python/quickstart"])
 
     def test_sitemap_excludes_not_found_page(self):
         self.page("index.html", "")
@@ -187,13 +252,13 @@ class DeploymentTests(unittest.TestCase):
 
     def test_output_rejects_legacy_canonical(self):
         self.prepare()
-        self.page("python/installation.html", "python/installation.html")
+        self.page("python/quickstart.html", "python/quickstart.html")
         with self.assertRaisesRegex(ValueError, "clean canonical"):
             check_output(self.public)
 
     def test_output_rejects_directory_slash_loop(self):
         self.prepare()
-        self.page("python/installation/index.html", "python/installation")
+        self.page("python/quickstart/index.html", "python/quickstart")
         with self.assertRaisesRegex(ValueError, "trailing slash"):
             check_output(self.public)
 
@@ -230,7 +295,7 @@ class DeploymentTests(unittest.TestCase):
         self.prepare()
         sitemap = self.public / "sitemap.xml"
         sitemap.write_text(
-            sitemap.read_text(encoding="utf-8").replace("/python/installation", "/python/search"),
+            sitemap.read_text(encoding="utf-8").replace("/python/quickstart", "/python/search"),
             encoding="utf-8",
         )
         with self.assertRaisesRegex(ValueError, "sitemap"):
@@ -238,7 +303,7 @@ class DeploymentTests(unittest.TestCase):
 
     def test_output_validates_final_head_metadata(self):
         self.prepare()
-        path = self.public / "python/installation.html"
+        path = self.public / "python/quickstart.html"
         original = path.read_text(encoding="utf-8")
         for old, new, message in (
             ('name="description"', 'name="removed-description"', "description"),
@@ -257,20 +322,20 @@ class DeploymentTests(unittest.TestCase):
 
     def test_output_rejects_duplicate_titles_and_descriptions(self):
         self.prepare()
-        path = self.public / "python/installation.html"
+        path = self.public / "python/quickstart.html"
         original = path.read_text(encoding="utf-8")
         for old, new, message in (
-            ("COSMol Viewer python/installation", "COSMol Viewer python/api", "duplicates.*title"),
-            ("Read the COSMol Viewer python/installation guide and reference.", "Read the COSMol Viewer python/api guide and reference.", "duplicates.*description"),
+            ("COSMol Viewer python/quickstart", "COSMol Viewer python/api", "duplicates.*title"),
+            ("Read the COSMol Viewer python/quickstart guide and reference.", "Read the COSMol Viewer python/api guide and reference.", "duplicates.*description"),
         ):
             with self.subTest(message=message):
                 path.write_text(original.replace(old, new), encoding="utf-8")
                 with self.assertRaisesRegex(ValueError, message):
                     check_output(self.public)
 
-    def test_output_requires_noindex_on_utility_and_placeholder_pages(self):
+    def test_output_requires_noindex_on_utility_pages(self):
         self.prepare()
-        for route in ("python/search", "python/genindex", "python/py-modindex", "javascript", "benchmarks"):
+        for route in ("python/search", "python/genindex", "javascript/genindex"):
             with self.subTest(route=route):
                 path = self.public / f"{route}.html"
                 original = path.read_text(encoding="utf-8")
@@ -279,9 +344,15 @@ class DeploymentTests(unittest.TestCase):
                     check_output(self.public)
                 path.write_text(original, encoding="utf-8")
 
+    def test_published_javascript_pages_are_indexable(self):
+        self.prepare()
+        for route in ("javascript", "javascript/api"):
+            page = read_metadata(self.public / f"{route}.html")
+            self.assertEqual(page.robots, {"index", "follow"})
+
     def test_sitemap_honors_rendered_noindex(self):
         self.page("index.html", "")
-        path = self.page("python/installation.html", "python/installation")
+        path = self.page("python/quickstart.html", "python/quickstart")
         path.write_text(path.read_text().replace("index, follow", "noindex, follow"), encoding="utf-8")
         self.assertEqual(write_sitemap(self.public), 1)
 
@@ -295,7 +366,7 @@ class DeploymentTests(unittest.TestCase):
     def test_output_requires_project_links_on_copied_module_pages(self):
         self.prepare()
         module = self.page("python/_modules/index.html", "python/_modules/")
-        self.assertEqual(check_output(self.public), 18)
+        self.assertEqual(check_output(self.public), len(ROUTES) + 1)
         module.write_text(module.read_text().replace("cosmol_viewer-project-links", "other-links"), encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "Project and Rust crates"):
             check_output(self.public)
@@ -330,7 +401,7 @@ class DeploymentTests(unittest.TestCase):
             response.read.assert_called_once_with()
             request = fetch.call_args.args[0]
             self.assertEqual(request.full_url, SOCIAL_IMAGE_SOURCE)
-            self.assertEqual(request.get_header('User-agent'), 'COSMol-viewer-Docs-CI/1.0')
+            self.assertEqual(request.get_header('User-agent'), 'COSMol Viewer-Docs-CI/1.0')
             self.assertEqual(fetch.call_args.kwargs, {'timeout': 30})
             for invalid in (b'not a PNG', png[:16] + struct.pack('>II', 600, 315)):
                 response.read.return_value = invalid

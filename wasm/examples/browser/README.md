@@ -1,12 +1,13 @@
 # Browser example
 
+Before running the commands below, complete the [WASM build and npm package preparation](../../DEV.md).
+
 A plain JavaScript example installing both Viewer and COSMolKit through
 `package.json`. No frontend framework or bundler is needed.
 
 From the repository root:
 
 ```sh
-python wasm/build.py
 python wasm/check.py
 cd wasm/examples/browser
 npm install
@@ -34,12 +35,12 @@ The page demonstrates:
 - **Molecule:** a CK molecule, atom/element selections and multiple display styles.
 - **Protein + ligand:** CK Protein and Molecule objects in the same scene, with
   a residue cartoon and molecular ball-and-stick display.
-- **Animation:** 32 scene snapshots played with `Animation` and `Viewer.playInto`.
+- **Animation:** 32 scene snapshots played with `Animation` and `viewer.play(animation)`.
 - Named display replacement with `set`, followed by `viewer.update(scene)`.
 - `scene.recenterOn(molecule)`, FPS/camera overlays and PNG screenshots.
 
 The scientific inputs reuse `cosmol_viewer/examples/6fi1.cif` and
-`6fi1_ligand.sdf`. CK and Viewer are initialized separately. The HTML import map
+`6fi1_ligand.sdf`. Importing Viewer's `index.js` initializes CK and Viewer. The HTML import map
 makes the example and Viewer resolve exactly the same CK module, so foreign
 object identity checks work without copying or patching generated bindings.
 

@@ -4,7 +4,7 @@
 **COSMol Viewer** is a molecular visualization library for Rust, Python, and the web.
 
 [Source repository](https://github.com/cosmol-studio/COSMol-viewer) ·
-[Documentation](https://cosmol-studio.github.io/COSMol-viewer/) ·
+[Documentation](https://viewer.cosmol.org/) ·
 [Web tools](https://tools.cosmol.org/) ·
 [Rust crate](https://crates.io/crates/cosmol_viewer) ·
 [Python package](https://pypi.org/project/cosmol-viewer/).

@@ -1,103 +1,161 @@
-"""Validate the actual manual GitHub Release steps without remote mutations."""
+"""Manual Release workflow regressions; no Git, network or publication."""
+
 import json
 import os
 from pathlib import Path
-import re
 import subprocess
+import shutil
+import tempfile
 import textwrap
 import unittest
-from unittest import mock
 
-ROOT = Path(__file__).resolve().parents[1]
+
+BASH = shutil.which("bash") or "bash"
+
+WORKFLOW = Path(__file__).resolve().parents[1] / ".github/workflows/release.yml"
+
+
+def literal_block(step, key):
+    lines = WORKFLOW.read_text(encoding="utf-8").split(f"- name: {step}\n", 1)[1].splitlines()
+    start = next(i for i, line in enumerate(lines) if line.strip() == f"{key}: |")
+    indent = len(lines[start]) - len(lines[start].lstrip())
+    block = []
+    for line in lines[start + 1:]:
+        if line.strip() and len(line) - len(line.lstrip()) <= indent:
+            break
+        block.append(line)
+    return textwrap.dedent("\n".join(block))
+
 
 class ReleaseWorkflowTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
-        match = re.search(r"          python - <<'PY'\n(.*?)          PY\n", cls.workflow, re.S)
-        if match is None:
-            raise AssertionError("Missing release validation and changelog extraction")
-        cls.validation = compile(textwrap.dedent(match[1]), "<release workflow>", "exec")
-
-    def run_validation(self, tag_version, rust, python, *, notes_version=None):
-        notes_version = notes_version or tag_version
-        content = {
-            "Cargo.toml": f'[workspace.package]\nversion = "{rust}"\n',
-            "python/pyproject.toml": f'[project]\nversion = "{python}"\n',
-            "wasm/Cargo.toml": '[package]\nversion.workspace = true\n',
-            "CHANGELOG.md": (
-                "<!-- release-header:start -->\nProject links\n<!-- release-header:end -->\n\n"
-                f"## [{notes_version}] - 2026-11-02\n\n### Changed\n\n- Release details.\n\n"
-                "<!-- release-footer:start -->\nDocumentation links\n<!-- release-footer:end -->\n"
-            ),
-        }
-        def read(path, **kwargs):
-            return content[str(path).replace("\\", "/")]
-        with mock.patch.dict(os.environ, {"RELEASE_TAG": f"v{tag_version}"}), \
-             mock.patch.object(Path, "read_text", read), \
-             mock.patch.object(Path, "write_text") as save:
-            exec(self.validation, {})
-            save.assert_called_once()
-            return save.call_args.args[0]
-
-    def test_rc_rust_and_python_versions_are_equivalent(self):
-        notes = self.run_validation("0.6.0-rc.1", "0.6.0-rc.1", "0.6.0rc1")
-        self.assertIn("COSMol Viewer v0.6.0-rc.1", notes)
-        self.assertIn("- Release details.", notes)
-        self.assertEqual(notes.count("Documentation links"), 1)
-
-    def test_stable_versions_still_work(self):
-        self.assertIn("COSMol Viewer v0.6.0", self.run_validation("0.6.0", "0.6.0", "0.6.0"))
-
-    def test_mismatched_python_release_is_rejected(self):
-        with self.assertRaisesRegex(ValueError, "must match"):
-            self.run_validation("0.6.0-rc.1", "0.6.0-rc.1", "0.6.0rc2")
-
-    def test_mismatched_tag_is_rejected(self):
-        with self.assertRaisesRegex(ValueError, "Release tag"):
-            self.run_validation("0.6.0-rc.1", "0.6.0-rc.2", "0.6.0rc2")
-
-    def test_missing_changelog_is_rejected(self):
-        with self.assertRaisesRegex(SystemExit, "no dated section"):
-            self.run_validation("0.6.0-rc.1", "0.6.0-rc.1", "0.6.0rc1", notes_version="0.5.0")
-
-    def test_release_is_manual_and_prereleases_never_become_latest(self):
-        self.assertIn("workflow_dispatch:", self.workflow)
-        self.assertNotIn("workflow_run:", self.workflow)
-        self.assertIn("--prerelease --latest=false", self.workflow)
-        self.assertIn('gh release create "$RELEASE_TAG" --verify-tag', self.workflow)
-
-    def test_only_one_unreleased_tag_on_selected_commit_is_used(self):
-        match = re.search(r"          script: \|\n(.*?)(?=\n      - name: Checkout)", self.workflow, re.S)
-        self.assertIsNotNone(match)
-        code = textwrap.dedent(match[1])
+    def select(self, tags=(), releases=(), ref="refs/heads/main", api_error=False):
+        script = literal_block("Find an unreleased tag on this commit", "script")
+        fixture = json.dumps(dict(tags=tags, releases=releases, ref=ref, error=api_error))
         harness = """
-const {code} = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
-const run = new (Object.getPrototypeOf(async function(){}).constructor)('github','context','core',code);
-const tag = (name,sha='head') => ({name,commit:{sha}});
-const cases = [
-  {tags:[],releases:[],expected:null},
-  {tags:[tag('v0.6.0-rc.1','other')],releases:[],expected:null},
-  {tags:[tag('v0.6.0-rc.1')],releases:[{tag_name:'v0.6.0-rc.1',draft:true}],expected:null},
-  {tags:[tag('v0.6.0-rc.1')],releases:[],expected:'v0.6.0-rc.1'},
-  {tags:[tag('v0.6.0-rc.1'),tag('v0.6.0-rc.2')],releases:[],failed:true},
-  {tags:[tag('v0.6.0-rc.1'),tag('v0.6.0-rc.2')],releases:[],ref:'refs/tags/v0.6.0-rc.2',expected:'v0.6.0-rc.2'},
-];
-(async()=>{
-  for (const c of cases) {
-    let actual=null,failed=false;
-    const github={rest:{repos:{listTags:'tags',listReleases:'releases'}},paginate:async key=>c[key]};
-    const context={sha:'head',ref:c.ref||'refs/heads/main',repo:{owner:'test',repo:'viewer'}};
-    const core={notice(){},info(){},setFailed(){failed=true;},setOutput(key,value){if(key==='tag')actual=value;}};
-    await run(github,context,core);
-    require('node:assert/strict').equal(failed,!!c.failed);
-    require('node:assert/strict').equal(actual,c.expected||null);
-  }
-})().catch(error=>{console.error(error);process.exitCode=1;});
+const fixture = JSON.parse(process.argv[1]);
+const result = {outputs: {}, notices: [], failures: []};
+const core = {
+  setOutput: (key, value) => {result.outputs[key] = value;},
+  notice: message => result.notices.push(message),
+  setFailed: message => result.failures.push(message),
+  info: () => {},
+};
+const context = {repo: {owner: 'test', repo: 'test'}, sha: 'current', ref: fixture.ref};
+const github = {
+  rest: {repos: {listTags: 'tags', listReleases: 'releases'}},
+  paginate: async endpoint => {
+    if (fixture.error) throw new Error('API unavailable');
+    return fixture[endpoint];
+  },
+};
 """
-        result = subprocess.run(["node", "-e", harness], input=json.dumps({"code": code}),
-                                text=True, encoding="utf-8", capture_output=True)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        harness += "(async () => {\n" + script + "\n})().then(() => console.log(JSON.stringify(result))).catch(error => {console.error(error.message); process.exitCode = 1;});"
+        process = subprocess.run(
+            ["node", "-e", harness, fixture], capture_output=True, text=True, encoding="utf-8"
+        )
+        if api_error:
+            self.assertNotEqual(process.returncode, 0)
+            self.assertIn("API unavailable", process.stderr)
+            return None
+        self.assertEqual(process.returncode, 0, process.stderr)
+        return json.loads(process.stdout)
+
+    @staticmethod
+    def tag(name="v0.5.0", sha="current"):
+        return dict(name=name, commit=dict(sha=sha))
+
+    def test_manual_only_without_tag_input(self):
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("on:\n  workflow_dispatch:\n", workflow)
+        self.assertNotIn("  push:", workflow)
+        self.assertNotIn("inputs:", workflow)
+        self.assertIn("ref: ${{ github.sha }}", workflow)
+        self.assertIn('gh release create "$RELEASE_TAG" --verify-tag', workflow)
+        self.assertEqual(workflow.count("if: steps.release_tag.outputs.tag != ''"), 3)
+
+    def test_current_commit_unreleased_tag(self):
+        result = self.select(tags=[self.tag()])
+        self.assertEqual(result["outputs"], {"tag": "v0.5.0"})
+        self.assertFalse(result["failures"])
+
+    def test_prerelease_creation_flags(self):
+        script = literal_block("Create GitHub Release", "run")
+        # Shell function records arguments without invoking GitHub.
+        script = 'gh() { printf "%s\\n" "$@"; };\n' + script
+        for tag in ("v0.6.0-dev.1", "v0.6.0-dev.4", "v0.6.0-rc.6", "v0.6.0"):
+            result = subprocess.run([BASH, "-c", script], env={**os.environ, "RELEASE_TAG": tag, "RUNNER_TEMP": "/tmp"}, text=True, encoding="utf-8", capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual("--prerelease" in result.stdout, "-" in tag)
+            self.assertEqual("--latest=false" in result.stdout, "-" in tag)
+
+    def test_untagged_or_different_commit_is_skipped(self):
+        for tags in ([], [self.tag(sha="other")], [self.tag(name="non-version")]):
+            with self.subTest(tags=tags):
+                result = self.select(tags=tags)
+                self.assertFalse(result["outputs"])
+                self.assertTrue(result["notices"])
+
+    def test_existing_releases_are_skipped_including_drafts(self):
+        for flags in ({}, {"draft": True}, {"prerelease": True}):
+            with self.subTest(flags=flags):
+                result = self.select(
+                    tags=[self.tag()], releases=[dict(tag_name="v0.5.0", **flags)]
+                )
+                self.assertFalse(result["outputs"])
+                self.assertTrue(result["notices"])
+
+    def test_multiple_unreleased_tags_fail_without_selecting_arbitrarily(self):
+        result = self.select(tags=[self.tag(), self.tag(name="v0.5.1")])
+        self.assertFalse(result["outputs"])
+        self.assertTrue(result["failures"])
+
+    def test_selected_tag_ref_is_respected(self):
+        result = self.select(
+            tags=[self.tag(), self.tag(name="v0.5.1")], ref="refs/tags/v0.5.1"
+        )
+        self.assertEqual(result["outputs"], {"tag": "v0.5.1"})
+
+    def test_already_released_tag_does_not_block_another_pending_tag(self):
+        result = self.select(
+            tags=[self.tag(), self.tag(name="v0.5.1")],
+            releases=[dict(tag_name="v0.5.0")],
+        )
+        self.assertEqual(result["outputs"], {"tag": "v0.5.1"})
+
+    def test_api_failure_does_not_allow_publication(self):
+        self.select(api_error=True)
+
+    def test_changelog_uses_detected_tag_not_branch_name(self):
+        for footer in ("Footer", "", " \n\t"):
+            with self.subTest(footer=footer):
+                self.check_changelog_notes(footer)
+
+    def check_changelog_notes(self, footer):
+        script = literal_block("Read release notes from changelog", "run")
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / "CHANGELOG.md").write_text(
+                "<!-- release-header:start -->\nHeader\n<!-- release-header:end -->\n"
+                "## [0.5.1] - 2026-10-11\nNewer notes\n"
+                "## [0.5.0] - 2026-10-10\nSelected notes\n"
+                "## [0.4.0] - 2026-10-01\nOlder notes\n"
+                f"<!-- release-footer:start -->\n{footer}\n<!-- release-footer:end -->\n", encoding="utf-8"
+            )
+            process = subprocess.run(
+                [BASH, "-c", script], cwd=root,
+                env={**os.environ, "RUNNER_TEMP": folder,
+                     "RELEASE_TAG": "v0.5.0", "GITHUB_REF_NAME": "main"},
+                capture_output=True, text=True, encoding="utf-8",
+            )
+            self.assertEqual(process.returncode, 0, process.stderr)
+            notes = (root / "release-notes.md").read_text(encoding="utf-8")
+            self.assertIn("Selected notes", notes)
+            self.assertIn("Header", notes)
+            self.assertEqual((root / "release-footer.md").read_text(encoding="utf-8"), footer + "\n")
+            self.assertTrue(notes.endswith(footer + "\n"))
+            self.assertNotIn("Newer notes", notes)
+            self.assertNotIn("Older notes", notes)
+
 
 if __name__ == "__main__":
     unittest.main()

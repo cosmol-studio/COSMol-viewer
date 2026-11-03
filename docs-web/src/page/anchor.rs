@@ -60,6 +60,12 @@ pub(super) fn use_fragment_scroll() {
                 return false;
             }
             if let Some(target) = document.get_element_by_id(&id) {
+                // HTML inserted by the client does not execute the static
+                // page's inline reveal script. Open the enclosing member list
+                // before scrolling, including on reload and route changes.
+                if let Ok(Some(members)) = target.closest("details.api-members") {
+                    let _ = members.set_attribute("open", "");
+                }
                 target.scroll_into_view();
             }
             true

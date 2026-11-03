@@ -1,16 +1,19 @@
 """Prepare the final static artifact using the documentation route contract."""
 
 from pathlib import Path
+from html import escape, unescape
+import re
 import shutil
 import struct
 import sys
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
 from flatten_html_routes import flatten_html_routes
 from strip_client_runtime import strip_client_runtime
 from generate_sitemap import write_sitemap
 from route_contract import PAGES, SOCIAL_IMAGE_SOURCE, redirect_rules
+from version_catalog import write_version_assets
 
 
 def validate_social_image(image):
@@ -21,7 +24,7 @@ def validate_social_image(image):
 
 
 def download_social_image(public):
-    request = Request(SOCIAL_IMAGE_SOURCE, headers={"User-Agent": "COSMol-viewer-Docs-CI/1.0"})
+    request = Request(SOCIAL_IMAGE_SOURCE, headers={"User-Agent": "COSMol Viewer-Docs-CI/1.0"})
     with urlopen(request, timeout=30) as response:
         if response.status != 200 or response.headers.get_content_type() != "image/png":
             raise ValueError("social image must return HTTP 200 and image/png")
@@ -33,6 +36,7 @@ def download_social_image(public):
 
 
 def write_route_assets(public):
+    write_version_assets(public)
     rules = redirect_rules(PAGES)
     (public / "_redirects").write_text(
         "# Generated from routes.toml; do not edit.\n" + "".join(
@@ -40,23 +44,52 @@ def write_route_assets(public):
         ), encoding="utf-8")
 
 
+def rewrite_module_navigation(html, docname):
+    """Keep Sphinx module-source navigation on the public documentation routes."""
+    routes = {p["docname"]: p["path"] for p in PAGES if "docname" in p}
+
+    def anchor(match):
+        def href(attribute):
+            value = unescape(attribute[1])
+            if value.startswith(("#", "?")) or urlsplit(value).scheme or urlsplit(value).netloc:
+                return attribute[0]
+            target = urlsplit(urljoin("https://sphinx.invalid/" + docname + ".html", value))
+            page = target.path.lstrip("/").removesuffix(".html")
+            if page not in routes:
+                return attribute[0]
+            destination = urlunsplit(("", "", routes[page], target.query, target.fragment))
+            return 'href="' + escape(destination, quote=True) + '"'
+
+        return re.sub(r'(?<![\w:-])href="([^"]*)"', href, match[0])
+
+    return re.sub(r"<a\b[^>]*>", anchor, html)
+
+
 def prepare(public, sphinx):
     docs_web = Path(__file__).resolve().parents[1]
-    # Download and validate before changing the SSG layout.
+    # Fetch before changing the SSG layout; failures stop artifact preparation.
     download_social_image(public)
     print(f"Flattened {flatten_html_routes(public)} routes")
     print(f"Stripped runtime from {strip_client_runtime(public)} pages")
     shutil.copytree(docs_web / "deployment/public", public, dirs_exist_ok=True,
                     ignore=shutil.ignore_patterns("social-card.png"))
-    namespace = public / "python"
-    namespace.mkdir(exist_ok=True)
-    for name in ("_static", "_sources", "_modules"):
-        if (sphinx / name).is_dir():
-            shutil.copytree(sphinx / name, namespace / name, dirs_exist_ok=True)
-    for name in ("_images", "_downloads"):
-        if (sphinx / name).is_dir():
-            shutil.copytree(sphinx / name, namespace / name, dirs_exist_ok=True)
-    shutil.copyfile(sphinx / "objects.inv", namespace / "objects.inv")
+    for binding in ("python", "javascript"):
+        namespace = public / binding
+        namespace.mkdir(exist_ok=True)
+        assets = ["_static", "_sources", "_images", "_downloads"]
+        if binding == "python":
+            assets.append("_modules")
+        for name in assets:
+            if (sphinx / name).is_dir():
+                shutil.copytree(sphinx / name, namespace / name, dirs_exist_ok=True)
+        if binding == "python" and (sphinx / "_modules").is_dir():
+            for source in (sphinx / "_modules").rglob("*.html"):
+                relative = source.relative_to(sphinx)
+                html = source.read_text(encoding="utf-8")
+                (namespace / relative).write_text(
+                    rewrite_module_navigation(html, relative.with_suffix("").as_posix()),
+                    encoding="utf-8")
+        shutil.copyfile(sphinx / "objects.inv", namespace / "objects.inv")
     for name in ("robots.txt", "1d047fb8-319c-41ca-8fa0-3955d72ece0f.txt"):
         shutil.copyfile(sphinx / name, public / name)
     write_route_assets(public)

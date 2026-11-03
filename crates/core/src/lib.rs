@@ -299,7 +299,14 @@ impl<L: Logger> eframe::App for App<L> {
                             .send_feedback(Feedback::Applied { request_id })
                             .unwrap();
                     }
-                    _ => panic!("expected UpdateScene, received an initialization request"),
+                    Request::InitializeScene { request_id, scene, .. } => {
+                        self.canvas.render_scene(&scene);
+                        transport.send_feedback(Feedback::Applied { request_id }).unwrap();
+                    }
+                    Request::InitializeAnimation { request_id, animation, .. } => {
+                        self.canvas.play_animation(animation);
+                        transport.send_feedback(Feedback::Applied { request_id }).unwrap();
+                    }
                 }
                 // Drain batches larger than the per-frame budget without relying
                 // on continuous browser polling.

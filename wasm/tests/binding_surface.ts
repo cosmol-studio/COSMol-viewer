@@ -1,6 +1,9 @@
 import { Sphere, Stick, Viewer, Scene, Animation, bindingContractJson } from "cosmol-viewer-generated";
 import { select, Style, Selection, Selector } from "cosmol-viewer-generated";
 import type { Molecule, Protein, Element } from "@cosmol-studio/cosmolkit";
+import * as cv from "cosmol-viewer-generated";
+// @ts-expect-error The npm entry initializes itself and has no callable default init.
+cv.default();
 
 declare const molecule: Molecule;
 declare const protein: Protein;
@@ -30,10 +33,19 @@ scene.setBackgroundColor(new Uint8Array([255, 255, 255]));
 const animation: Animation = Animation.new(0.1, -1n, true);
 animation.addFrame(scene);
 animation.setStaticScene(scene);
-const rendered: Promise<Viewer> = Viewer.open(scene, 800, 600);
-const playing: Promise<Viewer> = Viewer.play(animation, 800, 600);
-const mounted: Promise<Viewer> = Viewer.openInto("canvas-id", scene);
-const handle: Viewer = await rendered;
+const handle: Viewer = Viewer.new("canvas-id");
+const rendered: Promise<void> = handle.render(scene);
+const playing: Promise<void> = handle.play(animation);
+// @ts-expect-error Construction needs a canvas ID.
+Viewer.new();
+// @ts-expect-error Creation and rendering are separate.
+Viewer.open(scene, 800, 600);
+// @ts-expect-error Playback is an instance operation.
+Viewer.play(animation, 800, 600);
+// @ts-expect-error Combined creation/rendering is not exported.
+Viewer.openInto("canvas-id", scene);
+// @ts-expect-error Combined creation/playback is not exported.
+Viewer.playInto("canvas-id", animation);
 const updated: void = handle.update(scene);
 const logged: void = handle.cameraParameterLogging(true);
 const fps: void = handle.showFps(true);
@@ -56,12 +68,12 @@ handle.takeScreenshotNotebook();
 // @ts-expect-error Native lifecycle methods must not appear in browser declarations.
 handle.keepAlive();
 // @ts-expect-error Normal JS render does not accept notebook transport payloads.
-Viewer.open("compressed-scene", 800, 600);
+handle.render("compressed-scene");
 // @ts-expect-error Normal JS update takes a Scene, not a transport payload.
 handle.update("compressed-scene");
 // @ts-expect-error Animation frames must be typed scenes.
 animation.addFrame("compressed-scene");
-void [playing, mounted, updated, logged, fps, cameraOverlay, screenshot, contract, notebook, submitted];
+void [rendered, playing, updated, logged, fps, cameraOverlay, screenshot, contract, notebook, submitted];
 
 scientificScene.add(molecule);
 scientificScene.set("protein", protein);

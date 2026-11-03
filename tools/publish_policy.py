@@ -1,38 +1,42 @@
-"""Validate matching Rust/Python/WASM versions before building release artifacts."""
+"""Validate release versions; manual publication accepts matching dev and RC builds."""
+
 import os
 from pathlib import Path
+import re
 import tomllib
 
-try:
-    from .bump_version import release_versions
-except ImportError:
-    from bump_version import release_versions
 
 ROOT = Path(__file__).resolve().parents[1]
 
+
 def check_versions(rust: str, python: str, wasm: str, event: str, ref: str, requested: bool) -> bool:
-    expected_rust, expected_python = release_versions(rust)
-    if rust != expected_rust:
-        raise ValueError("Rust release version must use canonical Cargo notation")
+    rc = re.fullmatch(r"(\d+\.\d+\.\d+)-(rc|dev)\.(\d+)", rust)
+    stable = re.fullmatch(r"\d+\.\d+\.\d+", rust)
+    if rc is None and stable is None:
+        raise ValueError("Publishing requires a stable or RC or dev Rust version")
+    expected_python = rc[1] + ("rc" if rc[2] == "rc" else ".dev") + rc[3] if rc else rust
     if python != expected_python or wasm != rust:
         raise ValueError("Rust, Python and WASM release versions must match")
     if event == "push" and ref != f"refs/tags/v{rust}":
         raise ValueError("Release tag must equal v followed by the Rust version")
-    prerelease = "-" in rust
-    if event == "workflow_dispatch" and requested and not prerelease:
+    if event == "workflow_dispatch" and requested and rc is None:
         raise ValueError("Manual publication is dev/RC-only; publish stable releases by pushing a tag")
-    return prerelease
+    return rc is not None
+
 
 def main() -> None:
-    def manifest(path):
-        return tomllib.loads((ROOT / path).read_text(encoding="utf-8"))
-    workspace = manifest("Cargo.toml")["workspace"]["package"]["version"]
+    def manifest(path: str) -> dict:
+        with (ROOT / path).open("rb") as source:
+            return tomllib.load(source)
+
     wasm_version = manifest("wasm/Cargo.toml")["package"]["version"]
     if wasm_version == {"workspace": True}:
-        wasm_version = workspace
+        wasm_version = manifest("Cargo.toml")["workspace"]["package"]["version"]
     try:
         allowed = check_versions(
-            workspace, manifest("python/pyproject.toml")["project"]["version"], wasm_version,
+            manifest("Cargo.toml")["workspace"]["package"]["version"],
+            manifest("python/pyproject.toml")["project"]["version"],
+            wasm_version,
             os.environ.get("GITHUB_EVENT_NAME", "workflow_dispatch"),
             os.environ.get("GITHUB_REF", ""),
             os.environ.get("PUBLISH_REQUESTED") == "true",
@@ -42,7 +46,11 @@ def main() -> None:
     if output := os.environ.get("GITHUB_OUTPUT"):
         with open(output, "a", encoding="utf-8") as destination:
             destination.write(f"manual_publish_allowed={str(allowed).lower()}\n")
-    print(f"Release versions match: {workspace}; manual prerelease publication allowed: {allowed}")
+            version = manifest("Cargo.toml")["workspace"]["package"]["version"]
+            label = version.split("-", 1)[1].split(".", 1)[0] if allowed else "main"
+            destination.write(f"conda_label={label}\n")
+    print(f"Release versions match; manual prerelease publication allowed: {allowed}")
+
 
 if __name__ == "__main__":
     main()

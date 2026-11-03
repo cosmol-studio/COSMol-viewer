@@ -1,5 +1,7 @@
 # Project Development
 
+Before running the commands below, complete the [WASM build and npm package preparation](wasm/DEV.md).
+
 Run the commands below from the repository root. On Windows, activate the
 Python development environment with `conda activate COS` first.
 
@@ -75,7 +77,6 @@ Local policy and workflow checks (without publishing):
 ```sh
 python -m unittest discover -s tools -p 'test_*.py' -v
 python tools/publish_policy.py
-python wasm/build.py
 python wasm/check.py --browser
 python python/build.py --check
 python python/build_native_viewer.py

@@ -3,7 +3,7 @@
 use wasm_bindgen::prelude::wasm_bindgen;
 
 #[cfg(target_arch = "wasm32")]
-use crate::wasm::{WasmLogger, canvas, create_canvas};
+use crate::wasm::{WasmLogger, canvas};
 use crate::{Animation, Scene};
 use cosmol_viewer_core::Request;
 #[cfg(target_arch = "wasm32")]
@@ -29,13 +29,14 @@ pub struct Viewer {
     #[cfg(target_arch = "wasm32")]
     runner: WebRunner,
     #[cfg(target_arch = "wasm32")]
-    owned_canvas: Rc<RefCell<Option<web_sys::HtmlCanvasElement>>>,
+    canvas: web_sys::HtmlCanvasElement,
     #[cfg(target_arch = "wasm32")]
     transport: ViewerTransport,
     #[cfg(target_arch = "wasm32")]
     pending_renderer: Rc<RefCell<Option<RendererTransport>>>,
     request_id: Rc<Cell<u64>>,
     initialized: Rc<Cell<bool>>,
+    starting: Rc<Cell<bool>>,
     closed: Rc<Cell<bool>>,
 }
 
@@ -47,95 +48,58 @@ impl crate::input::NativeOutput for Viewer {}
     cosmol_viewer_derive::checked_wasm
 )]
 impl Viewer {
-    /// Create an uninitialized viewer. Prefer open or play for normal use.
-    pub fn new() -> Self {
-        #[cfg(target_arch = "wasm32")]
-        eframe::WebLogger::init(log::LevelFilter::Debug).ok();
-        #[cfg(target_arch = "wasm32")]
-        let (transport, renderer) = transport::pair();
-        Self {
-            #[cfg(target_arch = "wasm32")]
-            runner: WebRunner::new(),
-            #[cfg(target_arch = "wasm32")]
-            owned_canvas: Rc::new(RefCell::new(None)),
-            #[cfg(target_arch = "wasm32")]
-            transport,
-            #[cfg(target_arch = "wasm32")]
-            pending_renderer: Rc::new(RefCell::new(Some(renderer))),
-            request_id: Rc::new(Cell::new(0)),
-            initialized: Rc::new(Cell::new(false)),
-            closed: Rc::new(Cell::new(false)),
-        }
-    }
-
-    /// Create a canvas in document.body and render a typed scene into it.
-    pub async fn open(scene: &Scene, width: f32, height: f32) -> Result<Self, String> {
+    /// Bind a viewer to an existing canvas ID without starting rendering.
+    /// The caller owns canvas placement and dimensions.
+    pub fn new(canvas_id: String) -> Result<Self, String> {
         #[cfg(target_arch = "wasm32")]
         {
-            let canvas = create_canvas(width, height)?;
-            let viewer = Self::new();
-            if let Err(error) = viewer.start_scene(canvas.clone(), scene).await {
-                canvas.remove();
-                return Err(error);
-            }
-            *viewer.owned_canvas.borrow_mut() = Some(canvas);
-            Ok(viewer)
+            let canvas = canvas(&canvas_id)?;
+            eframe::WebLogger::init(log::LevelFilter::Debug).ok();
+            let (transport, renderer) = transport::pair();
+            Ok(Self {
+                runner: WebRunner::new(),
+                canvas,
+                transport,
+                pending_renderer: Rc::new(RefCell::new(Some(renderer))),
+                request_id: Rc::new(Cell::new(0)),
+                initialized: Rc::new(Cell::new(false)),
+                starting: Rc::new(Cell::new(false)),
+                closed: Rc::new(Cell::new(false)),
+            })
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let _ = (scene, width, height);
+            let _ = canvas_id;
             Err("Browser rendering requires wasm32 and a DOM canvas".into())
         }
     }
 
-    /// Render into an existing canvas. The caller owns canvas sizing and mounting.
-    pub async fn open_into(canvas_id: String, scene: &Scene) -> Result<Self, String> {
+    /// Render a scene on this viewer's canvas, stopping any previous animation.
+    /// First use starts the renderer; subsequent calls queue a new scene.
+    pub async fn render(&self, scene: &Scene) -> Result<(), String> {
         #[cfg(target_arch = "wasm32")]
         {
-            let viewer = Self::new();
-            viewer.start_scene(canvas(&canvas_id)?, scene).await?;
-            Ok(viewer)
+            self.start_scene(self.canvas.clone(), scene).await
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let _ = (canvas_id, scene);
+            let _ = scene;
             Err("Browser rendering requires wasm32 and a DOM canvas".into())
         }
     }
 
-    /// Create a canvas in document.body and play a typed animation.
-    pub async fn play(animation: &Animation, width: f32, height: f32) -> Result<Self, String> {
+    /// Play an animation on this viewer's canvas, replacing previous content.
+    pub async fn play(&self, animation: &Animation) -> Result<(), String> {
+        if animation.frame_count() == 0 {
+            return Err("Animation must have at least one frame".into());
+        }
         #[cfg(target_arch = "wasm32")]
         {
-            let canvas = create_canvas(width, height)?;
-            let viewer = Self::new();
-            if let Err(error) = viewer.start_animation(canvas.clone(), animation).await {
-                canvas.remove();
-                return Err(error);
-            }
-            *viewer.owned_canvas.borrow_mut() = Some(canvas);
-            Ok(viewer)
+            self.start_animation(self.canvas.clone(), animation).await
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let _ = (animation, width, height);
-            Err("Browser rendering requires wasm32 and a DOM canvas".into())
-        }
-    }
-
-    /// Play a typed animation in an existing canvas without consuming it.
-    pub async fn play_into(canvas_id: String, animation: &Animation) -> Result<Self, String> {
-        #[cfg(target_arch = "wasm32")]
-        {
-            let viewer = Self::new();
-            viewer
-                .start_animation(canvas(&canvas_id)?, animation)
-                .await?;
-            Ok(viewer)
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let _ = (canvas_id, animation);
+            let _ = animation;
             Err("Browser rendering requires wasm32 and a DOM canvas".into())
         }
     }
@@ -176,7 +140,7 @@ impl Viewer {
         })
     }
 
-    /// Stop rendering. Auto-created canvases are removed; caller-owned canvases remain.
+    /// Stop rendering and release renderer resources. The caller-owned canvas remains.
     pub fn close(&self) {
         self.closed.set(true);
         self.initialized.set(false);
@@ -185,9 +149,6 @@ impl Viewer {
             self.transport.close();
             self.pending_renderer.borrow_mut().take();
             self.runner.destroy();
-            if let Some(canvas) = self.owned_canvas.borrow_mut().take() {
-                canvas.remove();
-            }
         }
     }
 
@@ -278,13 +239,23 @@ impl Viewer {
         canvas: web_sys::HtmlCanvasElement,
         request: Request,
     ) -> Result<(), String> {
+        if self.closed.get() {
+            return Err("Viewer is closed".into());
+        }
+        if self.initialized.get() {
+            return self.send_request(request);
+        }
+        if self.starting.replace(true) {
+            return Err("Viewer initialization is already in progress".into());
+        }
         self.send_request(request)?;
         let transport = self
             .pending_renderer
             .borrow_mut()
             .take()
             .ok_or("Viewer renderer already started")?;
-        self.runner
+        let result = self
+            .runner
             .start(
                 canvas,
                 eframe::WebOptions::default(),
@@ -299,7 +270,16 @@ impl Viewer {
                 }),
             )
             .await
-            .map_err(|error| error.as_string().unwrap_or_else(|| format!("{error:?}")))?;
+            .map_err(|error| error.as_string().unwrap_or_else(|| format!("{error:?}")));
+        self.starting.set(false);
+        if let Err(error) = result {
+            self.close();
+            return Err(error);
+        }
+        if self.closed.get() {
+            self.runner.destroy();
+            return Err("Viewer closed during initialization".into());
+        }
         self.initialized.set(true);
         Ok(())
     }
@@ -322,11 +302,5 @@ impl Viewer {
             },
         )
         .await
-    }
-}
-
-impl Default for Viewer {
-    fn default() -> Self {
-        Self::new()
     }
 }

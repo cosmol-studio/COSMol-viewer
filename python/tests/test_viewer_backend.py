@@ -180,7 +180,8 @@ import { pathToFileURL } from 'node:url';
 const {contract: expectedContract, startups, payloads} = JSON.parse(readFileSync(0, 'utf8'));
 const mod = await import(pathToFileURL(process.argv[1]).href);
 await mod.default({ module_or_path: readFileSync(process.argv[2]) });
-const app = mod.Viewer.new();
+const app = mod.Viewer.prototype;
+assert.throws(() => mod.Viewer.new("missing-canvas"), /Canvas not found/);
 const contract = JSON.parse(mod.bindingContractJson());
 assert.deepEqual(contract, expectedContract);
 const wait = contract.find(entry => entry.semantic_id === 'Viewer.keep_alive');
@@ -188,12 +189,6 @@ assert.deepEqual(wait.python.platforms, ['native']);
 assert.equal(wait.javascript.name, null);
 assert.ok(wait.javascript.unsupported_reason);
 assert.equal(typeof app.keepAlive, 'undefined');
-for (const payload of payloads) {
-    assert.throws(
-        () => app.dispatch(payload),
-        error => String(error).includes('before app initialization'),
-    );
-}
 for (const payload of startups.scene_payload) {
     await assert.rejects(mod.Viewer.openNotebook('missing-canvas', payload),
         error => String(error).includes('Canvas not found'));
@@ -202,7 +197,6 @@ for (const payload of startups.animation_payload) {
     await assert.rejects(mod.Viewer.playNotebook('missing-canvas', payload),
         error => String(error).includes('Canvas not found'));
 }
-app.free();
 """
     result = subprocess.run(
         [node, "--input-type=module", "-e", script,

@@ -191,7 +191,7 @@ ChimeraX-style cartoon ribbon mesh. Use
 `Cartoon().rainbow_residues()` for ChimeraX-style residue rainbow coloring, or `Cartoon().color("#10ACBF")`
 for a uniform cartoon color.
 
-more examples can be found in the [examples](https://github.com/COSMol-repl/COSMol-viewer/tree/main/cosmol_viewer/examples) folder:
+more examples can be found in the [examples](https://github.com/cosmol-studio/COSMol-viewer/tree/main/cosmol_viewer/examples) folder:
 ```bash
 cd cosmol_viewer
 python .\examples\render_protein.py
@@ -230,7 +230,7 @@ require an explicit `styles::Coordinates::ThreeD { id }` choice.
 Rust, Python and JavaScript expose the same scene operations. Rust examples use primitive `shapes::Sphere` / `shapes::Stick` for
 positioned geometry and `styles::Sphere` / `styles::Stick` for scientific displays.
 
-see examples in [examples](https://github.com/COSMol-repl/COSMol-viewer/tree/main/cosmol_viewer/examples) folder:
+see examples in [examples](https://github.com/cosmol-studio/COSMol-viewer/tree/main/cosmol_viewer/examples) folder:
 ```bash
 cd cosmol_viewer
 cargo run --example render_protein
@@ -241,7 +241,7 @@ cargo run --example render_protein
 - Project development and release version upgrades: [DEV.md](DEV.md)
 - Documentation (Python and JavaScript tracks): <https://viewer.cosmol.org/>
 - Rust API reference: <https://docs.rs/cosmol_viewer/latest/cosmol_viewer/>
-- Documentation sources: [`python/docs/source`](python/docs/source)
+- Documentation sources: [`docs/source`](docs/source)
 - Documentation website and build instructions: [`docs-web`](docs-web/README.md)
 
 ---

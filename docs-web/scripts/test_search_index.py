@@ -15,12 +15,14 @@ class SearchIndexTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
+        (self.root / "python").mkdir()
+        (self.root / "javascript").mkdir()
         self.output = self.root / "records.json"
-        self.index = {"docnames": ["api"], "titles": ["API Reference"],
+        self.index = {"docnames": ["python/api"], "titles": ["API Reference"],
                       "objects": {"cosmol_viewer": [[0, 0, 0, "", "Molecule"]]},
                       "objnames": {"0": ["py", "class", "Python class"]},
                       "alltitles": {"Molecules": [[0, "molecules"]]}}
-        (self.root / "api.html").write_text('<head><meta name="description" content="Molecules &amp; atoms"></head><nav>Not article text</nav><article id="furo-main-content">Body text</article>', encoding="utf-8")
+        (self.root / "python/api.html").write_text('<head><meta name="description" content="Molecules &amp; atoms"></head><nav>Not article text</nav><article id="furo-main-content">Body text</article>', encoding="utf-8")
         self.write_index()
 
     def write_index(self):
@@ -40,8 +42,32 @@ class SearchIndexTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "absent from routes.toml"):
             generate_index(self.root, self.output)
 
+    def test_javascript_symbols_keep_their_own_binding_destination(self):
+        self.index = {"docnames": ["javascript/api"], "titles": ["JavaScript API"],
+                      "objects": {"wasm_wasm.d": [[0, 0, 0, "Molecule", "Molecule"]]},
+                      "objnames": {"0": ["js", "class", "JavaScript class"]},
+                      "alltitles": {}}
+        (self.root / "javascript/api.html").write_text(
+            '<article id="furo-main-content">Molecule.fromSmiles</article>', encoding="utf-8")
+        self.write_index()
+        self.assertEqual(generate_index(self.root, self.output), 2)
+        records = json.loads(self.output.read_text())
+        self.assertEqual(records[0]["url"], "/javascript/api")
+        self.assertEqual(records[1]["url"], "/javascript/api#Molecule")
+
+    def test_rendering_document_has_a_declared_destination(self):
+        self.index = {"docnames": ["python/rendering"], "titles": ["Image Rendering"],
+                      "objects": {}, "objnames": {}, "alltitles": {}}
+        (self.root / "python/rendering.html").write_text(
+            '<article id="furo-main-content">PNG export and offscreen rendering</article>', encoding="utf-8")
+        self.write_index()
+        self.assertEqual(generate_index(self.root, self.output), 1)
+        record, = json.loads(self.output.read_text(encoding="utf-8"))
+        self.assertEqual(record["url"], "/python/rendering")
+        self.assertEqual(record["text"], "PNG export and offscreen rendering")
+
     def test_missing_source_and_invalid_index_fail(self):
-        (self.root / "api.html").unlink()
+        (self.root / "python/api.html").unlink()
         with self.assertRaises(FileNotFoundError):
             generate_index(self.root, self.output)
         (self.root / "searchindex.js").write_text("changed format", encoding="utf-8")
@@ -77,7 +103,7 @@ class SearchIndexTests(unittest.TestCase):
             relative = (out / name).relative_to(self.root).as_posix()
             self.assertIn(f'asset!(r#"/{relative}"#)', generated)
             # Match Manganis's Unix resolution: trim '/' and join crate root.
-            linux_root = PurePosixPath('/home/runner/work/COSMol-viewer/COSMol-viewer/docs-web')
+            linux_root = PurePosixPath('/home/runner/work/COSMol Viewer/COSMol Viewer/docs-web')
             resolved = linux_root / ('/' + relative).lstrip('/')
             self.assertEqual(resolved.relative_to(linux_root).as_posix(), relative)
             self.assertTrue((self.root / relative).is_file())

@@ -4,17 +4,16 @@
 COSMol Viewer
 ==============
 
-COSMol Viewer is a Python and Rust molecular visualization library backed by a
-shared Rust renderer. It supports static PNG export, native desktop viewers,
+Use COSMol Viewer from Python to build and display molecular scenes. It supports static PNG export, native desktop viewers,
 interactive Jupyter and Google Colab canvases, molecular animations, protein
 cartoons, and molecular surfaces.
 
 The Python API is organized around three concepts:
 
 * A :class:`~cosmol_viewer.Scene` owns shapes and rendering settings.
-* Shapes such as :class:`~cosmol_viewer.Molecule`,
-  :class:`~cosmol_viewer.Protein`, :class:`~cosmol_viewer.Sphere`, and
-  :class:`~cosmol_viewer.Stick` describe visible geometry.
+* COSMolKit molecules and proteins supply scientific data.
+  :class:`~cosmol_viewer.Sphere` and :class:`~cosmol_viewer.Stick` supply annotation geometry.
+  Use ``scene.add(item)`` or ``scene.set(name, item)`` for all content.
 * :class:`~cosmol_viewer.Viewer` creates an interactive native or notebook
   view. Static output is produced directly by the scene.
 
@@ -39,5 +38,4 @@ The Python API is organized around three concepts:
    geometry
    rendering
    viewer
-   rust
    api
