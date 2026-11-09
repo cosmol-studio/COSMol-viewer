@@ -45,8 +45,8 @@ reads an explicit cloned handle. No native pointer is interpreted manually.
 
 All content enters the same core `Scene::add`/`set`: shapes carry their material,
 whole objects and selections may omit their style. Defaults are exclusively core
-policy (molecule atoms: BallAndStick; molecular bonds: Stick; protein atoms: Sphere;
-proteins/residues: Cartoon). Passing a scientific style for a shape fails atomically.
+policy (Molecule: BallAndStick; Protein: Cartoon; atom selections: Sphere;
+bond selections: Stick; residue selections: Cartoon). Passing a scientific style for a shape fails atomically.
 
 ## Values and ownership
 

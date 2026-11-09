@@ -11,7 +11,11 @@ use std::sync::{Arc, Mutex};
 pub struct Scene {
     state: Arc<Mutex<CoreScene>>,
     #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
-    sources: std::rc::Rc<std::cell::RefCell<Vec<std::rc::Rc<crate::selection::ImportedSource>>>>,
+    sources: std::rc::Rc<
+        std::cell::RefCell<
+            cosmol_viewer_core::scene::SourceReferences<std::rc::Rc<crate::selection::ImportedSource>>,
+        >,
+    >,
 }
 
 #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
@@ -37,7 +41,6 @@ impl Scene {
             }
         }
         .map_err(|e| js_sys::Error::new(&e.to_string()))?;
-        self.retain_source(source);
         Ok(())
     }
     pub fn new() -> Self {
@@ -47,9 +50,9 @@ impl Scene {
     pub fn clone_scene(&self) -> Self {
         let copy: Self = self.snapshot().into();
         #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
-        copy.sources
-            .borrow_mut()
-            .extend(self.sources.borrow().iter().cloned());
+        {
+            *copy.sources.borrow_mut() = self.sources.borrow().clone();
+        }
         copy
     }
     pub fn recenter(&self, center: Vec<f32>) -> Result<(), String> {
@@ -165,12 +168,19 @@ impl Scene {
             .lock()
             .unwrap()
             .remove_shape(&id)
-            .map_err(|error| error.to_string())
+            .map_err(|error| error.to_string())?;
+        #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
+        self.sources.borrow_mut().remove(&id);
+        Ok(())
     }
     pub fn merge_shapes(&self, other: &Scene) {
         // Snapshot first: merging a scene with itself must not lock it twice.
+        #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
+        let sources = other.sources.borrow().clone();
         let other = other.snapshot();
         self.state.lock().unwrap().merge_shapes(&other);
+        #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
+        self.sources.borrow_mut().merge(&sources);
     }
     pub fn shape_count(&self) -> usize {
         let scene = self.state.lock().unwrap();
@@ -183,16 +193,6 @@ impl Scene {
 }
 
 impl Scene {
-    #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
-    fn retain_source(&self, source: std::rc::Rc<crate::selection::ImportedSource>) {
-        let mut sources = self.sources.borrow_mut();
-        if !sources
-            .iter()
-            .any(|item| std::rc::Rc::ptr_eq(item, &source))
-        {
-            sources.push(source);
-        }
-    }
     pub(crate) fn snapshot(&self) -> CoreScene {
         self.state.lock().unwrap().clone()
     }
@@ -249,9 +249,7 @@ impl Scene {
             }
             .map_err(|e| wasm_bindgen::JsValue::from(js_sys::Error::new(&e.to_string())))
         })?;
-        if let Some(source) = source {
-            self.retain_source(source);
-        }
+        self.sources.borrow_mut().add(source);
         Ok(())
     }
     #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
@@ -265,14 +263,12 @@ impl Scene {
         let style = style.as_ref().map(|s| s.representation()).transpose()?;
         let source = item.with_native(|item| {
             match style {
-                Some(style) => self.state.lock().unwrap().set(name, (item, style)),
-                None => self.state.lock().unwrap().set(name, item),
+                Some(style) => self.state.lock().unwrap().set(&name, (item, style)),
+                None => self.state.lock().unwrap().set(&name, item),
             }
             .map_err(|e| wasm_bindgen::JsValue::from(js_sys::Error::new(&e.to_string())))
         })?;
-        if let Some(source) = source {
-            self.retain_source(source);
-        }
+        self.sources.borrow_mut().set(&name, source);
         Ok(())
     }
 }

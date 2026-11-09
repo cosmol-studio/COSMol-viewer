@@ -16,7 +16,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     ImageRenderer::save_png(&scene, "render_protein_surface.png", 1200, 900)?;
 
-    let viewer = Viewer::open_with_quality(&scene, 800.0, 500.0, RenderQuality::High)?;
+    let viewer = Viewer::show_with_quality(&scene, 800.0, 500.0, RenderQuality::High)?;
 
     viewer.keep_alive()?;
 

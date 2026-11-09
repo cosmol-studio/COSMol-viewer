@@ -33,7 +33,7 @@ END
         animation.add_frame(scene)
         viewer = Viewer.play(animation, 100.0, 100.0)
     else:
-        viewer = Viewer.open(scene, 100.0, 100.0)
+        viewer = Viewer.show(scene, 100.0, 100.0)
     # Let a static renderer become idle; IPC commands must wake it without polling.
     time.sleep(0.2)
     viewer.update(scene)

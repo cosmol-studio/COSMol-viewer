@@ -95,7 +95,7 @@ Open the scene in an interactive view to rotate and zoom the molecule.
 
    .. code-block:: python
 
-      viewer = Viewer.open(scene, width=800, height=500)
+      viewer = Viewer.show(scene, width=800, height=500)
 
    .. code-block:: javascript
 

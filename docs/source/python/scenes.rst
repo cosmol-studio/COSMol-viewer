@@ -18,6 +18,12 @@ Use IDs when a shape must later be replaced or removed:
    scene.set("focus", Sphere([1, 0, 0], 1.2).color("#00798c"))
    scene.remove_shape("focus")
 
+Replacing or removing named content releases its imported source when no other
+content in the scene uses it. Selections and other scenes keep their own
+references. Failed replacements preserve the old content and ownership.
+``recenter_on()`` stores only the center. Once all owners release an import,
+passing the CK object again imports its current data.
+
 ``add()`` is sufficient for static content that does not need an ID.
 ``recenter()`` changes the scene center and ``set_scale()`` applies a global
 uniform scale.
@@ -50,7 +56,7 @@ parameter line whenever the camera moves:
 
    from cosmol_viewer import Viewer
 
-   viewer = Viewer.open(scene, width=800, height=500)
+   viewer = Viewer.show(scene, width=800, height=500)
    viewer.camera_parameter_logging(True)
 
 Logging is disabled by default. Native viewers log to the terminal;

@@ -38,19 +38,13 @@ pub(crate) enum NativeSource {
     Protein(ck::Protein),
 }
 pub(crate) struct ImportedSource {
-    owner: Py<PyAny>,
+    _owner: Py<PyAny>,
     pub(crate) native: NativeSource,
 }
 // Weak entries never extend a source's lifetime. Selectors, selections and Scenes
 // retain imports, including the Python owner so its address cannot be reused.
 static IMPORTS: OnceLock<Mutex<HashMap<usize, Weak<ImportedSource>>>> = OnceLock::new();
-#[derive(Clone, Default)]
-pub(crate) struct Sources(HashMap<usize, Arc<ImportedSource>>);
-impl Sources {
-    pub(crate) fn retain(&mut self, source: Arc<ImportedSource>) {
-        self.0.insert(source.owner.as_ptr() as usize, source);
-    }
-}
+pub(crate) type Sources = cosmol_viewer_core::scene::SourceReferences<Arc<ImportedSource>>;
 impl ScientificInput<'_> {
     fn object(&self) -> &Bound<'_, PyAny> {
         match self {
@@ -82,7 +76,7 @@ impl ScientificInput<'_> {
             }
         };
         let source = Arc::new(ImportedSource {
-            owner: self.object().clone().unbind(),
+            _owner: self.object().clone().unbind(),
             native,
         });
         let mut cache = imports.lock().unwrap();

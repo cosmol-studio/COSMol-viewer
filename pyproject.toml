@@ -9,7 +9,7 @@ dependencies = []
 dev = [
     "basedpyright>=1.31",
     "maturin==1.15.0",
-    "cosmolkit==0.6.2rc1",
+    "cosmolkit==0.6.2",
     "sphinx>=8.0",
     "furo>=2024.8.6",
     "sphinx-sitemap>=2.9.0",

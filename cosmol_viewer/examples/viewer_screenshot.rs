@@ -17,7 +17,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     scene.recenter_on(&mol)?;
     scene.set_auto_rotate(true, 20.0);
 
-    let viewer = Viewer::open(&scene, 800.0, 500.0)?;
+    let viewer = Viewer::show(&scene, 800.0, 500.0)?;
 
     let img = viewer.take_screenshot()?;
 

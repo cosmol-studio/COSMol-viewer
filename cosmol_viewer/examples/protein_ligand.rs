@@ -18,7 +18,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     ImageRenderer::save_png(&scene, "protein_ligand.png", 1200, 900)?;
 
-    let viewer = Viewer::open(&scene, 800.0, 500.0)?;
+    let viewer = Viewer::show(&scene, 800.0, 500.0)?;
 
     viewer.show_fps(true);
     viewer.show_camera_parameters(true);

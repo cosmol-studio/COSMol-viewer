@@ -9,7 +9,7 @@ Installation
 
 .. code-block:: shell
 
-   npm install @cosmol-studio/cosmol-viewer@rc @cosmol-studio/cosmolkit@0.6.2-rc.1
+   npm install @cosmol-studio/cosmol-viewer@0.6.2 @cosmol-studio/cosmolkit@0.6.2
 
 Use the package entry point so native constructors and scientific inputs are
 registered. Importing Viewer automatically initializes both Viewer and the same

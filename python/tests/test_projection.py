@@ -100,6 +100,56 @@ class ForeignProjectionTests(unittest.TestCase):
         cv.select(source).atoms()
         self.assertEqual(source.imports, 2)
 
+    def test_replacement_and_removal_release_only_unused_sources(self):
+        import weakref
+        source = object.__new__(ForeignMolecule)
+        source.native = self.source.native.copy()
+        source.imports = 0
+        owner = weakref.ref(source)
+        scene = cv.Scene()
+        scene.set("a", source)
+        scene.set("b", source)
+        scene.recenter_on(source)
+        with self.assertRaises(ValueError):
+            scene.set("a", cv.Sphere([0, 0, 0], 1), cv.Cartoon())
+        cv.select(source).atoms()
+        self.assertEqual(source.imports, 1)
+        selected = cv.select(source).atoms()
+        del source
+        scene.set("a", cv.Sphere([0, 0, 0], 1))
+        self.assertIsNotNone(owner())
+        scene.remove_shape("b")
+        self.assertIsNotNone(owner())  # Selection still owns the import.
+        del selected
+        self.assertIsNone(owner())
+
+        source = object.__new__(ForeignMolecule)
+        source.native = self.source.native.copy()
+        source.imports = 0
+        owner = weakref.ref(source)
+        scene.add(source)
+        scene.set("a", source)
+        del source
+        scene.remove_shape("a")
+        self.assertIsNotNone(owner())  # Unnamed content still uses it.
+        del scene
+        self.assertIsNone(owner())
+
+    def test_repeated_named_replacement_does_not_keep_previous_sources(self):
+        import weakref
+        scene = cv.Scene()
+        owners = []
+        for _ in range(50):
+            source = object.__new__(ForeignMolecule)
+            source.native = self.source.native.copy()
+            source.imports = 0
+            owners.append(weakref.ref(source))
+            scene.set("moving", source)
+            del source
+        self.assertEqual(sum(ref() is not None for ref in owners), 1)
+        scene.remove_shape("moving")
+        self.assertTrue(all(ref() is None for ref in owners))
+
     def test_invalid_transfer_never_changes_scene_and_can_be_retried(self):
         source = self.source
         scene = cv.Scene()
@@ -163,6 +213,12 @@ class InstalledCosmolkitTests(unittest.TestCase):
         defaults.set("item", source)
         explicit.set("item", source, cv.BallAndStick())
         self.assertEqual(repr(defaults), repr(explicit))
+        atoms = cv.select(source).atoms()
+        whole = repr(defaults)
+        defaults.set("item", atoms)
+        explicit.set("item", atoms, cv.SphereStyle())
+        self.assertEqual(repr(defaults), repr(explicit))
+        self.assertNotEqual(repr(defaults), whole)
         defaults.set("item", cv.Sphere([1, 2, 3], 0.5))
         defaults.add(cv.Stick([0, 0, 0], [1, 1, 1], 0.2))
         before = repr(defaults)

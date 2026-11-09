@@ -83,7 +83,7 @@ scene.add(mol, cv.BallAndStick())
 scene.set("protein", protein, cv.Cartoon())
 scene.add(protein, cv.Surface())
 scene.add(oxygen, cv.SphereStyle())
-viewer = cv.Viewer.open(scene)
+viewer = cv.Viewer.show(scene)
 ```
 
 Python and JavaScript import each live CK object through its transfer binary once.
@@ -137,14 +137,14 @@ viewer never silently remaps a selection onto another topology.
 
 Trajectories, surfaces, and property coloring must preserve the same division: CK supplies scientific data; the independent selection layer supplies source-aware selections; the viewer supplies visual projections and display state.
 
-This plan does not define implementation types, storage layouts, selection algorithms, transport protocols, display editing methods, or migration schedules. It does not change the existing `Viewer.open`, `Viewer.update`, or `Viewer.keep_alive` lifecycle contract.
+This plan does not define implementation types, storage layouts, selection algorithms, transport protocols, display editing methods, or migration schedules. It does not change the existing `Viewer.show`, `Viewer.update`, or `Viewer.keep_alive` lifecycle contract.
 
 ## Unified content and default styles
 
 Rust accepts `scene.add(item)` and `scene.set(name, item)` for positioned shapes,
 CK objects and selections. An explicit style is paired with the object as a tuple:
 `scene.add((&protein, Surface::default()))`. Python/JS use a separate optional
-style parameter. The core defaults are BallAndStick for Molecule/molecular atoms,
-Cartoon for Protein/residues, Sphere for protein atoms, and Stick for molecular
-bonds. Shapes carry their own material. Named content can be replaced across
+style parameter. The core defaults are BallAndStick for Molecule, Cartoon for
+Protein/residue selections, Sphere for atom selections regardless of their source,
+and Stick for bond selections. Shapes carry their own material. Named content can be replaced across
 kinds, and invalid projections leave the earlier content unchanged.

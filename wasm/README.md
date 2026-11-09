@@ -89,9 +89,9 @@ scene.free();
 `Stick.new(start, end, radius)` create reusable positioned shapes; `.color(rgb)`
 and `.opacity(value)` return styled copies. Scenes snapshot shapes on insertion.
 Shapes already carry their material, so passing an extra scientific style fails.
-Omitting the style uses the Rust core defaults: Molecule/its atom selections use
-BallAndStick, Protein/residue selections use Cartoon, molecular bonds use Stick,
-and protein atom selections use Sphere.
+Omitting the style uses the Rust core defaults: Molecule uses BallAndStick and
+Protein uses Cartoon. Atom selections use Sphere regardless of their source;
+bond selections use Stick and residue selections use Cartoon.
 
 ## COSMolKit scientific objects
 
@@ -195,3 +195,10 @@ python wasm/check.py --browser
 Linux CI uses `playwright install --with-deps chromium`. `PLAYWRIGHT_MODULE` can
 point to another installed Playwright module and `BROWSER_EXECUTABLE` to a local
 Chromium/Chrome executable. These test dependencies are not shipped in npm/wheels.
+
+Scene source ownership follows its current content. Replacing or removing named
+content releases its imported source when no other content in that scene uses it.
+Selections and other scenes keep their own references; failed replacements leave
+ownership unchanged. `recenter_on` (JavaScript: `recenterOn`) stores only a center,
+not a lasting reference to the source. Once all owners release an import, passing
+the CK object again imports its current data.

@@ -4,10 +4,10 @@ use cosmol_viewer_derive::binding_contract;
 binding_contract! {
     pub static BINDING_CONTRACT = [
         {
-            semantic_id: "Viewer.open", rust: crate::NativeGuiViewer::open,
+            semantic_id: "Viewer.show", rust: crate::NativeGuiViewer::show,
             signature: fn(scene: &crate::scene::Scene, width: f32, height: f32) -> Result<crate::NativeGuiViewer, crate::RenderError>,
             rust_cfg: not(target_arch = "wasm32"), receiver: none, platforms: &[Native],
-            python: Projection::supported("Viewer.open", &[Native, Notebook]),
+            python: Projection::supported("Viewer.show", &[Native, Notebook]),
             javascript: Projection::supported("Viewer.render", &[Browser]).with_notebook("Viewer.openNotebook", None),
             notes: "Browser Viewer.new(canvasId) binds a canvas first; instance render(scene) starts rendering or replaces content. Notebook payload startup is a separate internal endpoint.",
         },

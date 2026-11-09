@@ -23,6 +23,6 @@ scene.recenter_on(mol)
 
 scene.save_image("render_3d_conformer_from_cosmolkit.png", width=1200, height=900)
 
-viewer = Viewer.open(scene, width=800, height=500)
+viewer = Viewer.show(scene, width=800, height=500)
 
 viewer.keep_alive()

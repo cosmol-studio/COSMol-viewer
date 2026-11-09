@@ -57,7 +57,7 @@ The selection adapter accepts actual `cosmolkit.Molecule` and `cosmolkit.Protein
 objects. The binding imports the source once into this extension's native CK
 value: both Molecule and Protein use `to_transfer_binary()` and the corresponding
 native `ck::Molecule::from_transfer_binary` / `ck::Protein::from_transfer_binary`.
-Rust pins CK `0.6.2-rc.1` and Python pins `0.6.2rc1` for the transfer format's
+Rust pins CK `0.6.2` and Python pins `0.6.2` for the transfer format's
 exact-version requirement. Protein is decoded directly without mmCIF conversion
 or another protein projection.
 
@@ -71,7 +71,7 @@ methods with the native CK object. Core Rust owns validation, geometry generatio
 and atomic insertion/replacement. Python only converts arguments, dispatches concrete types and retains their
 lifetimes. `add` and `set` accept positioned shapes, entire CK objects or selections; selections carry
 their source and never require a second source argument. Core Rust chooses the
-whole-object entity set from the style. `Viewer.open` creates a viewer.
+whole-object entity set from the style. `Viewer.show` creates a viewer.
 
 Live selectors, selections and Scenes share an immutable import by Python object
 identity. A weak registry does not keep discarded imports alive; each live import
@@ -97,9 +97,9 @@ Wheel and editable builds use `maturin --generate-stubs`, extracting from the
 binary being packaged. PEP 517 enables this automatically. Generated files are
 outputs, never additional API sources. See [DEV.md](DEV.md) for commands.
 
-Styles are optional. The core owns all defaults: Molecule and molecule atom
-selections use BallAndStick, Protein and residues use Cartoon, protein atoms use
-Sphere, and bonds use Stick. Positioned shapes retain their material and reject
+Styles are optional. The core owns all defaults: Molecule uses BallAndStick and
+Protein uses Cartoon. Atom selections use Sphere regardless of their source,
+bond selections use Stick, and residue selections use Cartoon. Positioned shapes retain their material and reject
 an additional scientific style. Python passes the optional style through without
 choosing a platform-specific default. The old shape-specific insertion/replacement
 methods are removed; `set` creates or replaces named content of any supported kind.

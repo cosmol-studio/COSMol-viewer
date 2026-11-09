@@ -12,7 +12,7 @@ for id in ids:
 
 scene.set_scale(2.0)
 
-viewer = Viewer.open(scene, width=800.0, height=500.0)
+viewer = Viewer.show(scene, width=800.0, height=500.0)
 
 # === time-driven animation ===
 start_time = time.perf_counter()

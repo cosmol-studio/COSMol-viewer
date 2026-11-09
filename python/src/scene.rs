@@ -33,8 +33,8 @@ pub struct Scene {
 impl Scene {
     /// Add a positioned shape, CK object or source-bound selection.
     /// Omitted styles use the core defaults: molecules use BallAndStick, proteins use Cartoon.
-    /// Selections use BallAndStick (molecule atoms), Stick (bonds), Sphere (protein atoms),
-    /// or Cartoon (residues). Shapes already carry their own style.
+    /// Selections use Sphere (atoms), Stick (bonds), or Cartoon (residues),
+    /// regardless of their source. Shapes already carry their own style.
     /// The native source import is shared by selections and Scenes.
     #[pyo3(signature = (item, style=None))]
     pub(crate) fn add(
@@ -49,9 +49,7 @@ impl Scene {
             }
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
         })?;
-        if let Some(source) = source {
-            self.sources.retain(source);
-        }
+        self.sources.add(source);
         Ok(())
     }
     /// Create or replace named content; failed projections preserve the old content.
@@ -69,9 +67,7 @@ impl Scene {
             }
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
         })?;
-        if let Some(source) = source {
-            self.sources.retain(source);
-        }
+        self.sources.set(name, source);
         Ok(())
     }
     pub(crate) fn recenter_on(
@@ -84,7 +80,6 @@ impl Scene {
             NativeSource::Protein(protein) => self.inner.recenter_on(protein),
         }
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-        self.sources.retain(source);
         Ok(())
     }
     #[new]
@@ -106,7 +101,9 @@ id : str
     pub fn remove_shape(&mut self, id: &str) -> PyResult<()> {
         self.inner
             .remove_shape(id)
-            .map_err(|e| pyo3::exceptions::PyKeyError::new_err(e.to_string()))
+            .map_err(|e| pyo3::exceptions::PyKeyError::new_err(e.to_string()))?;
+        self.sources.remove(id);
+        Ok(())
     }
 
     #[doc = r#"

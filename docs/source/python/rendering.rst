@@ -40,8 +40,8 @@ Notebook Display
 
    scene.display(width=1200, height=800)
 
-It is intentionally different from ``Viewer.open()``: ``display()`` produces
-a static image, while ``Viewer.open()`` creates an interactive canvas.
+It is intentionally different from ``Viewer.show()``: ``display()`` produces
+a static image, while ``Viewer.show()`` creates an interactive canvas.
 
 Headless Environments
 ---------------------

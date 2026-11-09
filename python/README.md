@@ -18,8 +18,8 @@ Full installation, workflow, and Python API documentation is available at
   <a href="https://crates.io/crates/cosmol_viewer">
     <img src="https://img.shields.io/crates/v/cosmol_viewer.svg" alt="crates.io Latest Release" />
   </a>
-  <a href="https://www.npmjs.com/package/cosmol_viewer_wasm">
-    <img src="https://img.shields.io/npm/v/cosmol_viewer_wasm.svg" alt="npm Latest Release" />
+  <a href="https://www.npmjs.com/package/@cosmol-studio/cosmol-viewer">
+    <img src="https://img.shields.io/npm/v/@cosmol-studio/cosmol-viewer.svg" alt="npm Latest Release" />
   </a>
 </div>
 
@@ -37,10 +37,10 @@ All implementations share the same Rust rendering engine, ensuring consistent pe
 ## Quick concepts
 
 - **Scene**: container for shapes (molecules, proteins, spheres, etc.).
-- **Viewer.open(scene, ...)**: create an interactive viewer in a native window or notebook canvas.
+- **Viewer.show(scene, ...)**: create an interactive viewer in a native window or notebook canvas.
 - **scene.save_image(path, ...)** / **scene.to_png(...)** / **scene.display(...)**: render the scene directly to a static PNG at any requested resolution. This is independent of notebook JavaScript or browser canvas readback.
 - **scene.set_camera_view(...)** / **scene.rotate_camera(...)**: set the reproducible camera used by both static exports and newly created viewers.
-- **viewer.update(scene)**: push incremental changes after `Viewer.open()` (real-time / streaming use-cases).
+- **viewer.update(scene)**: push incremental changes after `Viewer.show()` (real-time / streaming use-cases).
 - **Animation**: An Animation object containing frames and settings.
 - **Animation(interval, loops, interpolate)**: stores precomputed frames and playback settings.
 - **Viewer.play(animation, width, height)**: *recommended* for precomputed animations and demonstrations. The viewer takes care of playback timing and looping.
@@ -98,7 +98,7 @@ For an interactive native window:
 ```python
 from cosmol_viewer import Viewer
 
-viewer = Viewer.open(scene, width=800, height=500)
+viewer = Viewer.show(scene, width=800, height=500)
 
 viewer.keep_alive()
 ```
@@ -125,7 +125,7 @@ rendering:
 scene.set_transparent_background()
 scene.set_zoom_disabled()
 scene.set_auto_rotate()
-viewer = Viewer.open(scene, width=800, height=500)
+viewer = Viewer.show(scene, width=800, height=500)
 ```
 
 For static exports, omit `background` to use the scene background, pass a color
@@ -135,8 +135,8 @@ a transparent background.
 Use `scene.add(item)` to append content and `scene.set(name, item)` to create or
 replace named content. Both accept positioned shapes, CK objects and selections.
 The optional style defaults to BallAndStick for molecules and Cartoon for proteins.
-For selections, molecule atoms use BallAndStick, bonds use Stick, protein atoms
-use Sphere, and residues use Cartoon. Shapes retain their own material and reject
+For selections, atoms use Sphere regardless of their source, bonds use Stick,
+and residues use Cartoon. Shapes retain their own material and reject
 an additional scientific style. Rust supplies explicit styles as `(item, style)`;
 Python and JavaScript use `add(item, style)` or `set(name, item, style)`.
 
@@ -184,7 +184,7 @@ scene = Scene()
 scene.set("protein", protein, Cartoon().rainbow_residues())
 scene.recenter_on(protein)
 
-viewer = Viewer.open(scene, width=800, height=500)
+viewer = Viewer.show(scene, width=800, height=500)
 ```
 
 `ck.Protein.from_mmcif()` and `ck.Protein.from_pdb()` create the scientific
@@ -208,3 +208,10 @@ Please check out our documentation at [here](https://cosmol-studio.github.io/COS
 # Contact
 
 For any questions, issues, or suggestions, please contact [wjt@cosmol.org](mailto:wjt@cosmol.org) or open an issue in the repository. We will review and address them as promptly as possible.
+
+Scene source ownership follows its current content. Replacing or removing named
+content releases its imported source when no other content in that scene uses it.
+Selections and other scenes keep their own references; failed replacements leave
+ownership unchanged. `recenter_on` (JavaScript: `recenterOn`) stores only a center,
+not a lasting reference to the source. Once all owners release an import, passing
+the CK object again imports its current data.

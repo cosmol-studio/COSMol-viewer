@@ -60,7 +60,7 @@ js_bridge = [
 crate-type = ["rlib", "cdylib"]
 
 [package.metadata.javascript.dependencies]
-"@cosmol-studio/cosmolkit" = "0.6.2-rc.1"
+"@cosmol-studio/cosmolkit" = "0.6.2"
 
 [package.metadata.wasm-pack.profile.dev]
 wasm-opt = ['-O']

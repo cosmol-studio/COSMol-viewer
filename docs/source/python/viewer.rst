@@ -7,7 +7,7 @@ Interactive Viewers and Animation
 Runtime Selection
 -----------------
 
-``Viewer.open()`` selects its backend from the Python runtime:
+``Viewer.show()`` selects its backend from the Python runtime:
 
 * Jupyter and Google Colab use an inline WebAssembly canvas.
 * Plain Python scripts and terminal IPython use a native GUI window.
@@ -17,7 +17,7 @@ Runtime Selection
    from cosmol_viewer import Viewer
 
    print(Viewer.get_environment())
-   viewer = Viewer.open(scene, width=800, height=500)
+   viewer = Viewer.show(scene, width=800, height=500)
 
 The returned viewer must remain referenced while it is being updated.
 

@@ -19,6 +19,28 @@ The manually triggered GitHub Release workflow uses an unreleased `v*` tag on
 the selected commit. It combines the release-header, matching dated version
 section and release-footer without modifying an existing Release.
 
+## [0.6.2] - 2026-11-09
+
+### Changed
+
+- Rename the Rust and Python interactive scene entry point from `Viewer.open`
+  to `Viewer.show` (`Viewer::show` in Rust); JavaScript keeps instance `render`.
+- Upgrade Rust, Python and npm COSMolKit dependencies to 0.6.2.
+- Default all atom selections to Sphere; whole molecules retain BallAndStick
+  and whole proteins retain Cartoon.
+- Initialize CK and Viewer WASM automatically through the npm entry point.
+- Separate browser canvas binding from rendering and animation playback with
+  `Viewer.new(canvasId)`, `viewer.render(scene)` and `viewer.play(animation)`.
+- Align documentation and release workflows with COSMolKit, including version
+  switching, shared Python/JavaScript Quick Start examples and Conda publishing.
+- Use the MIT license across project distributions.
+
+### Fixed
+
+- Release unused imported sources when scene content is replaced or removed,
+  while preserving references held by selections and other scene content.
+- Preserve imported source ownership when cloning and merging browser scenes.
+
 ## [0.6.0-rc.1] - 2026-11-02
 
 ### Added

@@ -21,6 +21,12 @@ The same live CK object is imported once. ``add``, ``set``, ``select`` and
 snapshot is retained, pass a new CK object to import the edited value. Styles and
 camera operations do not mutate the scientific source.
 
+Replacing or removing named content releases the old imported source once no
+other content in that scene uses it. Selections, cloned scenes and merged content
+retain their own references. Failed replacements preserve the old content and
+ownership. ``recenterOn`` stores only the center. After all owners release an
+import, passing the CK object again imports its current data.
+
 Selections
 ----------
 
@@ -33,9 +39,10 @@ Selections
    const highlight = cv.Style.sphere().scale(1.4);
    scene.set("oxygen", selected, highlight);
 
-Selections already retain their source; never pass it again. Molecular atom
-selections default to BallAndStick, molecular bonds to Stick, protein atoms to
-Sphere, and residues to Cartoon. Molecular bond selections support ``aromatic()``.
+Selections already retain their source; never pass it again. Atom selections
+default to Sphere regardless of their source, bond selections to Stick, and
+residue selections to Cartoon. Whole Molecule objects default to BallAndStick
+and whole Protein objects to Cartoon. Molecular bond selections support ``aromatic()``.
 
 Shapes and dynamic updates
 --------------------------

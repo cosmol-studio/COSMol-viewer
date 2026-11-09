@@ -49,6 +49,8 @@ def verify_backend(mode):
 
     assert callable(Viewer.keep_alive)
     assert callable(Viewer.is_open)
+    assert callable(Viewer.show)
+    assert not hasattr(Viewer, "open")
 
     scene = Scene()
     # Exercise the temporary CK residue-name Serde adapter in actual WASM payloads.
@@ -66,7 +68,7 @@ END
     if mode in {"plain", "terminal", "unsupported"}:
         # Missing renderer errors must stay recoverable and must not open a GUI.
         os.environ["COSMOL_VIEWER_NATIVE_PATH"] = str(Path(__file__).with_name("missing-native-viewer"))
-        for create, item in ((Viewer.open, scene), (Viewer.play, animation)):
+        for create, item in ((Viewer.show, scene), (Viewer.play, animation)):
             try:
                 create(item, 100.0, 100.0)
             except (RuntimeError, ValueError) as error:
@@ -78,7 +80,7 @@ END
         return
 
     assert Viewer.get_environment() == {"colab": "Colab", "jupyter": "Jupyter"}[mode]
-    viewer = Viewer.open(scene, 100.0, 100.0)
+    viewer = Viewer.show(scene, 100.0, 100.0)
     assert any("Viewer.openNotebook(canvas.id" in item.data for item in displays)
     display_count = len(displays)
     output = io.StringIO()

@@ -7,6 +7,6 @@
   },
   "dependencies": {
     "@cosmol-studio/cosmol-viewer": "file:../../pkg",
-    "@cosmol-studio/cosmolkit": "0.6.2-rc.1"
+    "@cosmol-studio/cosmolkit": "0.6.2"
   }
 }

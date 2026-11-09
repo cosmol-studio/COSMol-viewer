@@ -600,7 +600,10 @@ fn default_styles_match_explicit_styles_for_objects_and_selections() {
     let mol = carbon_oxygen();
     let protein = ck::Protein::from_pdb(PROTEIN_PDB).unwrap();
     same(&mol, BallAndStick::default());
-    same(select(&mol).atoms(), BallAndStick::default());
+    same(
+        select(&mol).atoms(),
+        cosmol_viewer_core::styles::Sphere::default(),
+    );
     same(
         select(&mol).bonds(),
         cosmol_viewer_core::styles::Stick::default(),

@@ -1,9 +1,8 @@
 # Project Development
 
-Before running the commands below, complete the [WASM build and npm package preparation](wasm/DEV.md).
-
-Run the commands below from the repository root. On Windows, activate the
-Python development environment with `conda activate COS` first.
+Run the commands below from the repository root with your Python development
+environment activated. See the component guides for build prerequisites and
+the order of the WASM, native-renderer and Python-extension builds.
 
 Component-specific instructions:
 
@@ -17,8 +16,8 @@ Component-specific instructions:
 Preview and then apply a release bump:
 
 ```bash
-python tools/bump_version.py 0.6.0-rc.1 --dry-run
-python tools/bump_version.py 0.6.0-rc.1
+python tools/bump_version.py 0.6.2 --dry-run
+python tools/bump_version.py 0.6.2
 ```
 
 The script accepts stable `X.Y.Z`, RC (`X.Y.ZrcN` or `X.Y.Z-rc.N`),
@@ -54,18 +53,26 @@ python tools/test_bump_version.py -v
 The release flow follows COSMolKit: build artifacts first, publish packages in a
 single gated job, and create a GitHub Release separately on demand.
 
-- `publish.yml` runs on `v*` tag pushes, pull requests and manual dispatch.
+- `publish.yml` runs on `v*` tag pushes and manual dispatch.
   `tools/publish_policy.py` checks matching Rust/Python/WASM versions and requires
   a pushed tag to equal `v` plus the Cargo version.
 - Manual dispatch with `publish=false` only builds and validates. Setting it to
   `true` permits matching dev/RC versions; stable releases require a tag push.
   npm uses the `dev`, `rc` or `latest` dist-tag for the corresponding version.
-- Browser bindings are tested before the optimized npm package is built.
-  Python declarations and Notebook tests use that browser artifact. Wheel and
-  sdist jobs then consume the same browser package and generated declarations.
-- A single wheel matrix retains Linux x86_64/x86/aarch64, Windows x86_64/x86,
-  and macOS x86_64/aarch64. Windows/macOS use `rust-cache`; Linux keeps the
-  manylinux cache mounts and builds its bundled renderer inside the container.
+- The optimized npm package is built and checked before generating Python
+  declarations. Wheel and sdist jobs consume that same browser package and
+  the generated declarations.
+- The wheel matrix covers Linux x86_64/aarch64, Windows x86_64, and macOS
+  x86_64/aarch64. Each platform builds its native renderer once and reuses it
+  across its wheels. Linux builds the renderer inside the manylinux container;
+  wheel builds use maturin-action with sccache.
+- Windows wheel builds apply `tools/patches/surfman-0.14.0-quiet-wgl.patch`
+  to a temporary copy of surfman before building the renderer and extensions.
+  This removes only the direct stdout warning about missing GPU preference
+  exports in Python hosts; `warn!` and device selection are unchanged. The CI
+  checkout uses a temporary Cargo patch configuration and lockfile update;
+  Cargo's registry cache is untouched. Conda packages reuse these wheels.
+  Local builds, source distributions and Rust crates use the original crate.
 - `release.yml` is manually dispatched on the selected commit/tag. It creates a
   Release only for one matching, unreleased `v*` tag; it never overwrites an
   existing Release. Select the intended tag ref when several pending tags point
@@ -89,5 +96,5 @@ After rebuilding WASM, run `npm ci` in `wasm/examples/browser` to refresh its
 installed local package. The generated npm package and example lockfile should
 report the same Cargo version before committing a release bump.
 
-This workflow publishes Python and npm packages. Rust crate publication remains
+This workflow publishes Python, npm and Conda packages. Rust crate publication remains
 separate, in dependency order: derive helper, core, then facade.

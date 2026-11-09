@@ -1,3 +1,44 @@
+/// Binding-owned source references follow the lifetime of scene content.
+/// Update this only after the corresponding scene operation succeeds.
+#[doc(hidden)]
+#[derive(Clone)]
+pub struct SourceReferences<T> {
+    named: std::collections::HashMap<String, T>,
+    unnamed: Vec<T>,
+}
+impl<T> Default for SourceReferences<T> {
+    fn default() -> Self {
+        Self {
+            named: Default::default(),
+            unnamed: Vec::new(),
+        }
+    }
+}
+impl<T> SourceReferences<T> {
+    pub fn add(&mut self, source: Option<T>) {
+        if let Some(source) = source {
+            self.unnamed.push(source);
+        }
+    }
+    pub fn set(&mut self, name: &str, source: Option<T>) {
+        if let Some(source) = source {
+            self.named.insert(name.to_owned(), source);
+        } else {
+            self.remove(name);
+        }
+    }
+    pub fn remove(&mut self, name: &str) {
+        self.named.remove(name);
+    }
+}
+impl<T: Clone> SourceReferences<T> {
+    pub fn merge(&mut self, other: &Self) {
+        // Core Scene::merge_shapes appends all incoming content as unnamed.
+        self.unnamed.extend(other.named.values().cloned());
+        self.unnamed.extend(other.unnamed.iter().cloned());
+    }
+}
+
 use crate::utils::Color;
 use crate::utils::InstanceGroups;
 use crate::utils::Logger;

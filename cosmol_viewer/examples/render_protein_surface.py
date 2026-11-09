@@ -18,6 +18,6 @@ scene.set_depth_cue_range(0.3,1.0)
 
 scene.save_image("render_protein_surface.png", width=1200, height=900)
 
-viewer = Viewer.open(scene, width=800, height=500)
+viewer = Viewer.show(scene, width=800, height=500)
 
 viewer.keep_alive()

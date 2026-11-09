@@ -22,7 +22,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     ImageRenderer::save_png(&scene, "render_3d_conformer_from_cosmolkit.png", 1200, 900)?;
 
-    let viewer = Viewer::open(&scene, 800.0, 500.0)?;
+    let viewer = Viewer::show(&scene, 800.0, 500.0)?;
     viewer.keep_alive()?;
 
     Ok(())

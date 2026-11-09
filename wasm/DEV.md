@@ -2,8 +2,7 @@
 
 Run from the repository root. The same commands work in Ubuntu Bash and Windows
 PowerShell. Install Rust, wasm-pack, Node/npm and Python 3.11+.
-The `python` command must select Python 3.11+; activate a virtual environment
-on Ubuntu or `conda activate COS` on the Windows development machine.
+Activate your preferred Python 3.11+ environment before running these commands.
 
 ## Build WASM
 
@@ -63,7 +62,7 @@ npm --prefix wasm/pkg pkg set 'type=module'
 npm --prefix wasm/pkg pkg set 'main=index.js'
 npm --prefix wasm/pkg pkg set 'types=index.d.ts'
 npm --prefix wasm/pkg pkg set 'sideEffects[]=./index.js'
-npm --prefix wasm/pkg pkg set 'dependencies.@cosmol-studio/cosmolkit=0.6.2-rc.1'
+npm --prefix wasm/pkg pkg set 'dependencies.@cosmol-studio/cosmolkit=0.6.2'
 ```
 
 The CK dependency must match
@@ -94,9 +93,9 @@ npm --prefix wasm/pkg pkg set 'publishConfig.access=public'
 Choose **one** command matching the package version:
 
 ```sh
-npm --prefix wasm/pkg pkg set 'publishConfig.tag=rc'      # X.Y.Z-rc.N (current)
+npm --prefix wasm/pkg pkg set 'publishConfig.tag=rc'      # X.Y.Z-rc.N
 npm --prefix wasm/pkg pkg set 'publishConfig.tag=dev'     # X.Y.Z-dev.N
-npm --prefix wasm/pkg pkg set 'publishConfig.tag=latest'  # X.Y.Z
+npm --prefix wasm/pkg pkg set 'publishConfig.tag=latest'  # X.Y.Z (current)
 ```
 
 Inspect the package without uploading it:

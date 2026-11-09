@@ -59,7 +59,7 @@ appropriate backend:
 - Jupyter or Colab uses an inline WebAssembly canvas.
 - A Python script or terminal uses a native GUI window when supported.
 
-Use ``Viewer.open(scene, width, height)`` to display a scene interactively, or
+Use ``Viewer.show(scene, width, height)`` to display a scene interactively, or
 ``Viewer.play(animation, width, height)`` to play an animation. Use
 ``scene.save_image(path, width, height)`` or ``scene.to_png(width, height)`` for
 static image output. Call ``viewer.keep_alive()`` at the end of a native script
@@ -162,7 +162,7 @@ str
 
     #[staticmethod]
     #[doc = r#"
-Open an interactive viewer for a 3D scene.
+Show a 3D scene in an interactive viewer.
 
 Parameters
 ----------
@@ -178,14 +178,14 @@ Returns
 Viewer
     The created viewer instance.
 "#]
-    pub fn open(scene: &Scene, width: f32, height: f32, py: Python) -> PyResult<Self> {
+    pub fn show(scene: &Scene, width: f32, height: f32, py: Python) -> PyResult<Self> {
         let env_type = detect_runtime_env(py)?;
         match env_type {
             RuntimeEnv::Colab | RuntimeEnv::Jupyter => {
                 setup_wasm_if_needed(py, env_type)?;
                 let mut scene = scene.inner.clone();
                 scene.prepare_for_wasm();
-                let wasm_viewer = NotebookViewer::open(py, &scene, width, height)?;
+                let wasm_viewer = NotebookViewer::show(py, &scene, width, height)?;
 
                 let state = NotebookState {
                     viewer: wasm_viewer,
@@ -201,7 +201,7 @@ Viewer
             }
             RuntimeEnv::PlainScript | RuntimeEnv::IPythonTerminal => {
                 let executable = native_viewer_executable(py)?;
-                let native_gui_viewer = match NativeGuiViewer::open_with_executable(
+                let native_gui_viewer = match NativeGuiViewer::show_with_executable(
                     &scene.inner,
                     width,
                     height,

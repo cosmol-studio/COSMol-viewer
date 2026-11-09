@@ -10,7 +10,7 @@ pub struct NotebookViewer {
 }
 
 impl NotebookViewer {
-    pub fn open(py: Python, scene: &Scene, width: f32, height: f32) -> PyResult<Self> {
+    pub fn show(py: Python, scene: &Scene, width: f32, height: f32) -> PyResult<Self> {
         use pyo3::types::PyAnyMethods;
         use uuid::Uuid;
 

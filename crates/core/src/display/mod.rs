@@ -130,7 +130,7 @@ impl Display {
 /// Native projection extension point used by Scene; callers need not import it.
 pub trait ProjectSource<I> {
     fn default_style() -> Representation {
-        crate::styles::BallAndStick::default().into()
+        crate::styles::Sphere::default().into()
     }
     fn project(&self, ids: &[I], style: Representation) -> Result<Display, DisplayError>;
 }
@@ -153,7 +153,8 @@ impl<T: SceneItem, S: Into<Representation> + Copy> SceneItem for (T, S) {
 }
 impl SceneItem for ck::Molecule {
     fn to_shape(&self, style: Option<Representation>) -> Result<crate::utils::Shape, DisplayError> {
-        crate::selection::select(self).atoms().to_shape(style)
+        let style = style.unwrap_or_else(|| crate::styles::BallAndStick::default().into());
+        crate::selection::select(self).atoms().to_shape(Some(style))
     }
 }
 impl SceneItem for ck::Protein {

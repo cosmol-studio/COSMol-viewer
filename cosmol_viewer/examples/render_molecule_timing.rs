@@ -12,7 +12,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     scene.set("mol", &mol)?;
     scene.recenter_on(&mol)?;
 
-    let viewer = Viewer::open(&scene, 800.0, 500.0)?;
+    let viewer = Viewer::show(&scene, 800.0, 500.0)?;
     let t_after_render = Instant::now();
 
     // Trigger one real scene change before the first update.
