@@ -92,6 +92,8 @@ scalar!(IndexInput, usize);
 scalar!(SignedIndexInput, isize);
 scalar!(BoolInput, bool);
 scalar!(TextInput, String);
+scalar!(IndexArrayInput, Vec<usize>);
+scalar!(U32ArrayInput, Vec<u32>);
 
 #[derive(Deserialize, Tsify)]
 #[serde(transparent)]

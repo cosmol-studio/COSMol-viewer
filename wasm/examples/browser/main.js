@@ -53,7 +53,7 @@ async function perform(action) {
     } finally {
         for (const button of buttons) button.disabled = false;
         for (const control of [fps, camera, screenshot]) control.disabled = !viewer;
-        for (const control of [update, highlight]) control.disabled = !viewer || mode === "animation";
+        for (const control of [update, highlight]) control.disabled = !viewer || mode === "animation" || mode === "sidechains" || mode === "residues";
     }
 }
 
@@ -94,6 +94,41 @@ async function showExample(nextMode) {
     scene.recenterOn(molecule);
     scene.setCameraView(-55, 20, 0, 32, new Float32Array([0, 0, 0]), 18);
 
+    if (mode === "sidechains") {
+        scene.removeShape("ligand");
+        const protein = own(ck.Protein.fromMmcif(await text("6fi1.cif")));
+        const source = own(cv.select(protein));
+        const allAtoms = own(source.atoms());
+        // Zero-based CK residue IDs, not PDB sequence numbers.
+        const chosen = own(allAtoms.residueIds([10, 11, 12, 13, 14]));
+        const sidechains = own(chosen.sidechain());
+        const remaining = own(allAtoms.difference(sidechains));
+        const sticks = own(cv.Style.stick());
+        const red = own(sticks.color(new Uint8Array([255, 68, 68])));
+        scene.set("protein", remaining, sticks);
+        scene.set("sidechains", sidechains, red);
+        scene.recenterOn(protein);
+        scene.setScale(0.2);
+    }
+
+    if (mode === "residues") {
+        scene.removeShape("ligand");
+        const protein = own(ck.Protein.fromMmcif(await text("6fi1.cif")));
+        const source = own(cv.select(protein));
+        const residues = own(source.residues());
+        // Zero-based CK residue IDs, not the residue numbers in the CIF.
+        const highlighted = own(residues.filterIds([10, 11, 12, 13, 14]));
+        const remaining = own(residues.difference(highlighted));
+        // Complementary selections share complete-chain Cartoon geometry.
+        const cartoon = own(cv.Style.cartoon());
+        const gray = own(cartoon.color(new Uint8Array([170, 180, 192])));
+        const red = own(cartoon.color(new Uint8Array([255, 68, 68])));
+        scene.set("remaining", remaining, gray);
+        scene.set("highlighted", highlighted, red);
+        scene.recenterOn(protein);
+        scene.setScale(0.2);
+    }
+
     viewer = cv.Viewer.new("viewer");
     if (mode === "animation") {
         // Frames share the same CK source and capture independent display state.
@@ -111,6 +146,8 @@ async function showExample(nextMode) {
     viewer.showFps(fps.checked);
     viewer.showCameraParameters(camera.checked);
     status.textContent = mode === "animation" ? "Animation ready · 32 frames" :
+        mode === "residues" ? "Cartoon - residues 10-14 highlighted" :
+        mode === "sidechains" ? "Protein sticks - side chains of residues 10-14 highlighted" :
         mode === "protein" ? "Protein + ligand ready" : `Molecule ready · ${atoms.len()} atoms`;
 }
 

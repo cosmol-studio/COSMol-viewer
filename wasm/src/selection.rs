@@ -281,6 +281,103 @@ impl Selection {
 }
 #[cosmol_viewer_derive::checked_wasm]
 impl Selection {
+    /// Keep only these zero-based source IDs, preserving source order.
+    pub fn filter_ids(&self, ids: Vec<usize>) -> Result<Self, JsValue> {
+        let ids = match self.native() {
+            NativeSelection::MoleculeAtoms(s) => {
+                let ids = ids
+                    .iter()
+                    .map(|id| Ok(ck::AtomId::new(*id)))
+                    .collect::<Result<Vec<_>, JsValue>>()?;
+                Ids::MoleculeAtoms(s.filter_ids(&ids).ids().to_vec())
+            }
+            NativeSelection::MoleculeBonds(s) => {
+                let ids = ids
+                    .iter()
+                    .map(|id| Ok(ck::BondId::new(*id)))
+                    .collect::<Result<Vec<_>, JsValue>>()?;
+                Ids::MoleculeBonds(s.filter_ids(&ids).ids().to_vec())
+            }
+            NativeSelection::ProteinAtoms(s) => {
+                let ids = ids
+                    .iter()
+                    .map(|id| {
+                        Ok(ck::BioAtomId::new(
+                            u32::try_from(*id).map_err(|_| error("ID exceeds u32"))?,
+                        ))
+                    })
+                    .collect::<Result<Vec<_>, JsValue>>()?;
+                Ids::ProteinAtoms(s.filter_ids(&ids).ids().to_vec())
+            }
+            NativeSelection::ProteinResidues(s) => {
+                let ids = ids
+                    .iter()
+                    .map(|id| {
+                        Ok(ck::BioResidueId::new(
+                            u32::try_from(*id).map_err(|_| error("ID exceeds u32"))?,
+                        ))
+                    })
+                    .collect::<Result<Vec<_>, JsValue>>()?;
+                Ids::ProteinResidues(s.filter_ids(&ids).ids().to_vec())
+            }
+        };
+        Ok(Self {
+            source: self.source.clone(),
+            ids,
+        })
+    }
+    /// Keep atoms in zero-based CK residue IDs, not PDB sequence numbers.
+    pub fn residue_ids(&self, ids: Vec<u32>) -> Result<Self, JsValue> {
+        let NativeSelection::ProteinAtoms(s) = self.native() else {
+            return Err(error("residue_ids requires a protein atom selection"));
+        };
+        let ids = ids
+            .into_iter()
+            .map(ck::BioResidueId::new)
+            .collect::<Vec<_>>();
+        Ok(Self {
+            source: self.source.clone(),
+            ids: Ids::ProteinAtoms(s.residue_ids(&ids).ids().to_vec()),
+        })
+    }
+    /// Select side-chain heavy atoms; excludes H and N, CA, C, O, OXT.
+    pub fn sidechain(&self) -> Result<Self, JsValue> {
+        let NativeSelection::ProteinAtoms(s) = self.native() else {
+            return Err(error("sidechain requires a protein atom selection"));
+        };
+        Ok(Self {
+            source: self.source.clone(),
+            ids: Ids::ProteinAtoms(s.sidechain().ids().to_vec()),
+        })
+    }
+    /// Remove a selection of the same kind from the same source.
+    pub fn difference(&self, other: &Selection) -> Result<Self, JsValue> {
+        let ids = match (self.native(), other.native()) {
+            (NativeSelection::MoleculeAtoms(a), NativeSelection::MoleculeAtoms(b)) => {
+                Ids::MoleculeAtoms(a.difference(&b).map_err(error)?.ids().to_vec())
+            }
+            (NativeSelection::MoleculeBonds(a), NativeSelection::MoleculeBonds(b)) => {
+                Ids::MoleculeBonds(a.difference(&b).map_err(error)?.ids().to_vec())
+            }
+            (NativeSelection::ProteinAtoms(a), NativeSelection::ProteinAtoms(b)) => {
+                Ids::ProteinAtoms(a.difference(&b).map_err(error)?.ids().to_vec())
+            }
+            (NativeSelection::ProteinResidues(a), NativeSelection::ProteinResidues(b)) => {
+                Ids::ProteinResidues(a.difference(&b).map_err(error)?.ids().to_vec())
+            }
+
+            _ => {
+                return Err(error(
+                    "difference requires selections of the same kind and source",
+                ));
+            }
+        };
+        Ok(Self {
+            source: self.source.clone(),
+            ids,
+        })
+    }
+
     /// Copy the selection handle while sharing the same imported source.
     pub fn clone_selection(&self) -> Self {
         self.clone()

@@ -44,6 +44,52 @@ default to Sphere regardless of their source, bond selections to Stick, and
 residue selections to Cartoon. Whole Molecule objects default to BallAndStick
 and whole Protein objects to Cartoon. Molecular bond selections support ``aromatic()``.
 
+Protein atoms and bonds
+-----------------------
+
+Proteins also accept ``Style.ballAndStick()`` and ``Style.stick()`` directly:
+
+.. code-block:: javascript
+
+   const molecularScene = cv.Scene.new();
+   const sticks = cv.Style.stick();
+   molecularScene.add(protein, sticks);
+   sticks.free();
+
+For independently colored side chains, build complementary atom selections:
+
+.. code-block:: javascript
+
+   const source = cv.select(protein);
+   const allAtoms = source.atoms();
+   const selectedResidues = allAtoms.residueIds([10, 11, 12, 13, 14]);
+   const sidechains = selectedResidues.sidechain();
+   const remaining = allAtoms.difference(sidechains);
+   const baseStyle = cv.Style.stick();
+   const red = baseStyle.color(new Uint8Array([255, 68, 68]));
+   const coloredScene = cv.Scene.new();
+   coloredScene.set("protein", remaining, baseStyle);
+   coloredScene.set("sidechains", sidechains, red);
+   coloredScene.recenterOn(protein);
+   // An existing <canvas id="protein-viewer"> is required.
+   const proteinViewer = cv.Viewer.new("protein-viewer");
+   await proteinViewer.render(coloredScene);
+   for (const value of [red, baseStyle, remaining, sidechains,
+                        selectedResidues, allAtoms, source]) value.free();
+   // Keep coloredScene for updates; dispose it and proteinViewer when finished.
+
+``residueIds`` accepts zero-based CK residue IDs, not PDB sequence numbers.
+``sidechain`` selects heavy atoms excluding H and backbone names N, CA, C, O,
+OXT. ``filterIds([id, ...])`` intersects explicit entity IDs; ``difference``
+requires the same source object and entity kind. Selections remain reusable.
+
+Protein BallAndStick/Stick selections split complete bonds at their midpoints,
+so complementary selections meet without missing connections. CK chemical graph
+conversion runs in Rust once while its displays are retained, preserving atoms
+and coordinates with sanitization and hydrogen removal disabled. CK proximity
+bonding supplements source connectivity; Viewer adds no separate bond inference.
+Whole proteins still default to Cartoon and atom selections to Sphere.
+
 Shapes and dynamic updates
 --------------------------
 

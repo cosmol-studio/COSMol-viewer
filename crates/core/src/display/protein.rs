@@ -15,6 +15,7 @@ use crate::utils::{InstanceGroups, MeshData};
 use cosmolkit::{self as ck, BioCoordinateFormat};
 use glam::{Quat, Vec3, Vec4};
 use std::collections::BTreeSet;
+use std::sync::{Arc, Mutex, Weak};
 
 struct SurfacePoint {
     id: ck::BioAtomId,
@@ -26,7 +27,7 @@ pub(super) fn project_residues(
     protein: &ProteinInput,
     ids: &[ck::BioResidueId],
     style: Representation,
-) -> Result<(MeshData, InstanceGroups, Vec3), DisplayError> {
+) -> Result<(MeshData, InstanceGroups, Vec3, Option<Arc<CartoonGeometry>>), DisplayError> {
     if let Some(id) = ids
         .iter()
         .find(|id| id.index() >= protein.chains.iter().map(Vec::len).sum::<usize>())
@@ -38,8 +39,8 @@ pub(super) fn project_residues(
     }
     match style {
         Representation::Cartoon(style) => {
-            let (mesh, center) = cartoon(protein, ids, &style)?;
-            Ok((mesh, InstanceGroups::default(), center))
+            let (mesh, center, geometry) = cartoon(protein, ids, &style)?;
+            Ok((mesh, InstanceGroups::default(), center, geometry))
         }
         other => Err(DisplayError::IncompatibleStyle {
             style: other.name(),
@@ -135,23 +136,122 @@ pub(super) fn project_atoms(
     }
 }
 
-fn cartoon(
-    protein: &ProteinInput,
-    ids: &[ck::BioResidueId],
-    style: &Cartoon,
-) -> Result<(MeshData, Vec3), DisplayError> {
-    let selected: BTreeSet<_> = ids.iter().copied().collect();
-    if selected.is_empty() {
-        return Ok((MeshData::default(), Vec3::ZERO));
+// Cache only geometry and immutable input values, never selection or material.
+// Displays retain the strong reference; the registry does not extend its lifetime.
+static CARTOONS: Mutex<Vec<Weak<CartoonGeometry>>> = Mutex::new(Vec::new());
+
+#[cfg(test)]
+mod cache_tests {
+    use super::*;
+    use crate::display::ProjectSource;
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn selections_and_materials_share_geometry_until_last_display_is_dropped() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        let source =
+            ck::Protein::from_mmcif(include_str!("../../../../cosmol_viewer/examples/6fi1.cif"))
+                .unwrap();
+        let first = source
+            .project(
+                &[ck::BioResidueId::new(10)],
+                Cartoon::default().color("#FF4444").into(),
+            )
+            .unwrap();
+        let second = source
+            .project(
+                &[ck::BioResidueId::new(11)],
+                Cartoon::default().rainbow_residues().opacity(0.5).into(),
+            )
+            .unwrap();
+        let a = first._cartoon.as_ref().unwrap();
+        let b = second._cartoon.as_ref().unwrap();
+        assert!(Arc::ptr_eq(a, b));
+        assert!(
+            first
+                .mesh
+                .colors
+                .as_ref()
+                .unwrap()
+                .iter()
+                .all(|c| c.w == 1.0)
+        );
+        assert!(
+            second
+                .mesh
+                .colors
+                .as_ref()
+                .unwrap()
+                .iter()
+                .all(|c| c.w == 0.5)
+        );
+        let weak = Arc::downgrade(a);
+        let clone = second.clone();
+        drop(first);
+        drop(second);
+        assert!(weak.upgrade().is_some());
+        drop(clone);
+        assert!(
+            weak.upgrade().is_none(),
+            "cache must not retain released scene geometry"
+        );
     }
-    let mut mesh = MeshData::default();
-    let mut centers = Vec::new();
+
+    #[test]
+    fn coordinate_changes_do_not_reuse_stale_cartoon_geometry() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        let source =
+            ck::Protein::from_mmcif(include_str!("../../../../cosmol_viewer/examples/6fi1.cif"))
+                .unwrap();
+        let input = ProteinInput::try_from(&source).unwrap();
+        let original = shared_cartoon(&input);
+        let mut changed = input.clone();
+        for atom in changed
+            .chains
+            .iter_mut()
+            .flatten()
+            .flat_map(|r| &mut r.atoms)
+        {
+            atom.position.x += 1.0;
+            atom.source_position[0] += 1.0;
+        }
+        let updated = shared_cartoon(&changed);
+        assert!(!Arc::ptr_eq(&original, &updated));
+        assert!(Arc::ptr_eq(&original, &shared_cartoon(&input)));
+        assert_ne!(
+            original.patches[10].mesh.vertices,
+            updated.patches[10].mesh.vertices
+        );
+    }
+}
+
+pub(super) struct CartoonGeometry {
+    input: ProteinInput,
+    patches: Vec<ResiduePatch>,
+}
+#[derive(Default)]
+struct ResiduePatch {
+    mesh: MeshData,
+    center: Option<Vec3>,
+}
+
+fn shared_cartoon(protein: &ProteinInput) -> Arc<CartoonGeometry> {
+    let mut cache = CARTOONS.lock().unwrap();
+    cache.retain(|entry| entry.strong_count() != 0);
+    for entry in cache.iter().filter_map(Weak::upgrade) {
+        // Compare values, not addresses: modified coordinates/topology cannot
+        // accidentally reuse old geometry, including after source reallocation.
+        if entry.input == *protein {
+            return entry;
+        }
+    }
+    let count = protein.chains.iter().map(Vec::len).sum();
+    let mut patches: Vec<ResiduePatch> = (0..count).map(|_| ResiduePatch::default()).collect();
     for mut chain in protein.chains.clone() {
         // A residue representation chooses one coherent backbone altloc using
         // the existing occupancy/B-factor policy. Atom selections are not changed.
         select_best_alt_locs(&mut chain);
-        let palette = (style.rainbow && style.material.color.is_none())
-            .then(|| chimerax_rainbow_residue_colors(chain.len(), style.material.opacity));
+        let palette = chimerax_rainbow_residue_colors(chain.len(), 1.0);
         let mut backbones = Vec::new();
         for raw in &chain {
             let p = |name: &str| {
@@ -171,11 +271,9 @@ fn cartoon(
                     sns: raw.seq_id.map(|(n, _)| n.max(0) as usize).unwrap_or(0),
                     ss: None,
                 }),
-                _ if selected.contains(&raw.id) => {
-                    return Err(DisplayError::MissingBackbone(raw.id.value()));
-                }
                 _ => None,
             };
+            patches[raw.id.index()].center = backbone.as_ref().map(|r| r.ca);
             backbones.push(backbone);
         }
         let mut start = 0;
@@ -193,34 +291,53 @@ fn cartoon(
                 .collect();
             // DSSP uses complete available chain context, not only selected rows.
             let info = SecondaryStructureCalculator::new().compute_ribbon_info(&full);
-            let mut run = 0;
-            while run < full.len() {
-                if !selected.contains(&chain[start + run].id) {
-                    run += 1;
-                    continue;
-                }
-                let stop = (run..full.len())
-                    .find(|&i| !selected.contains(&chain[start + i].id))
-                    .unwrap_or(full.len());
-                let residues: Vec<_> = full[run..stop].iter().collect();
-                centers.extend(residues.iter().map(|r| r.ca));
-                let colors = palette
-                    .as_ref()
-                    .map(|p| p[start + run..start + stop].to_vec());
-                if residues.len() >= 2 {
-                    mesh.append(&build_chimerax_ribbon_mesh(
-                        &residues,
-                        &info[run..stop],
-                        colors.as_deref(),
-                    ));
-                }
-                run = stop;
+            let residues: Vec<_> = full.iter().collect();
+            let meshes = build_chimerax_ribbon_mesh(&residues, &info, Some(&palette[start..end]));
+            for (raw, mesh) in chain[start..end].iter().zip(meshes) {
+                patches[raw.id.index()].mesh = mesh;
             }
             start = end;
         }
     }
+    let geometry = Arc::new(CartoonGeometry {
+        input: protein.clone(),
+        patches,
+    });
+    cache.push(Arc::downgrade(&geometry));
+    geometry
+}
+
+fn cartoon(
+    protein: &ProteinInput,
+    ids: &[ck::BioResidueId],
+    style: &Cartoon,
+) -> Result<(MeshData, Vec3, Option<Arc<CartoonGeometry>>), DisplayError> {
+    if ids.is_empty() {
+        return Ok((MeshData::default(), Vec3::ZERO, None));
+    }
+    let geometry = shared_cartoon(protein);
+    let mut mesh = MeshData::default();
+    let mut centers = Vec::new();
+    for id in ids.iter().copied().collect::<BTreeSet<_>>() {
+        let patch = &geometry.patches[id.index()];
+        centers.push(
+            patch
+                .center
+                .ok_or(DisplayError::MissingBackbone(id.value()))?,
+        );
+        mesh.append(&patch.mesh);
+    }
+    if style.rainbow && style.material.color.is_none() {
+        if let Some(colors) = &mut mesh.colors {
+            for color in colors {
+                color.w = style.material.opacity;
+            }
+        }
+    } else {
+        mesh.colors = None;
+    }
     apply_material(&mut mesh, style.material);
-    Ok((mesh, center(centers.into_iter())))
+    Ok((mesh, center(centers.into_iter()), Some(geometry)))
 }
 
 fn surface(
@@ -597,25 +714,29 @@ fn build_chimerax_ribbon_mesh(
     residues: &[&Residue],
     ribbon_info: &[RibbonResidueInfo],
     residue_colors: Option<&[Vec4]>,
-) -> MeshData {
+) -> Vec<MeshData> {
     if residues.len() < 2 {
-        return MeshData::default();
+        return vec![MeshData::default(); residues.len()];
     }
 
-    let mut mesh = MeshData::default();
+    let mut mesh = vec![MeshData::default(); residues.len()];
     for range in contiguous_backbone_ranges(residues) {
         if range.end - range.start < 2 {
             continue;
         }
 
         let segment_colors = residue_colors.map(|colors| &colors[range.start..range.end]);
-        mesh.append(&build_chimerax_ribbon_segment_mesh(
+        let patches = build_chimerax_ribbon_segment_mesh(
             &residues[range.start..range.end],
             &ribbon_info[range.start..range.end],
             segment_colors,
-        ));
+        );
+        mesh[range.start..range.end].clone_from_slice(&patches);
     }
-    mesh.append(&build_backbone_gap_dashes(residues, residue_colors));
+    let gaps = build_backbone_gap_dashes(residues, residue_colors);
+    for (patch, gap) in mesh.iter_mut().zip(gaps) {
+        patch.append(&gap);
+    }
     mesh
 }
 
@@ -623,7 +744,7 @@ fn build_chimerax_ribbon_segment_mesh(
     residues: &[&Residue],
     ribbon_info: &[RibbonResidueInfo],
     residue_colors: Option<&[Vec4]>,
-) -> MeshData {
+) -> Vec<MeshData> {
     let mut centers: Vec<Vec3> = residues.iter().map(|residue| residue.ca).collect();
     let mut guides: Vec<Vec3> = residues
         .iter()
@@ -692,9 +813,13 @@ fn residue_backbone_connected(previous: &Residue, next: &Residue) -> bool {
     true
 }
 
-fn build_backbone_gap_dashes(residues: &[&Residue], residue_colors: Option<&[Vec4]>) -> MeshData {
-    let mut mesh = MeshData::default();
+fn build_backbone_gap_dashes(
+    residues: &[&Residue],
+    residue_colors: Option<&[Vec4]>,
+) -> Vec<MeshData> {
+    let mut mesh = vec![MeshData::default(); residues.len()];
     for i in 1..residues.len() {
+        // Assign each real chain-gap marker to its preceding residue exactly once.
         if residue_backbone_connected(residues[i - 1], residues[i]) {
             continue;
         }
@@ -702,7 +827,7 @@ fn build_backbone_gap_dashes(residues: &[&Residue], residue_colors: Option<&[Vec
         let color = residue_colors
             .and_then(|colors| colors.get(i - 1).zip(colors.get(i)))
             .map(|(previous, next)| (*previous + *next) * 0.5);
-        mesh.append(&dashed_backbone_gap_mesh(
+        mesh[i - 1].append(&dashed_backbone_gap_mesh(
             residues[i - 1].ca,
             residues[i].ca,
             color,
@@ -1327,8 +1452,8 @@ fn ribbon_extrusions(
     xs_back: &[RibbonXSection],
     residue_colors: Option<&[Vec4]>,
     manager: &ChimeraXSectionManager,
-) -> MeshData {
-    let mut mesh = MeshData::default();
+) -> Vec<MeshData> {
+    let mut mesh = vec![MeshData::default(); num_res];
     if num_res == 0 || coords.is_empty() {
         return mesh;
     }
@@ -1355,7 +1480,7 @@ fn ribbon_extrusions(
             if let Some(color) = residue_color {
                 front_mesh.colors = Some(vec![color; front_mesh.vertices.len()]);
             }
-            mesh.append(&front_mesh);
+            mesh[i].append(&front_mesh);
 
             let next_cap = if i + 1 == range.end {
                 true
@@ -1379,7 +1504,7 @@ fn ribbon_extrusions(
             if let Some(color) = residue_color {
                 back_mesh.colors = Some(vec![color; back_mesh.vertices.len()]);
             }
-            mesh.append(&back_mesh);
+            mesh[i].append(&back_mesh);
             capped = next_cap;
         }
     }

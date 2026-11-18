@@ -230,3 +230,52 @@ impl ProteinAtomSelection<'_> {
         self
     }
 }
+
+impl<'a, S: ?Sized, I: Copy + Eq + std::hash::Hash> Selection<'a, S, I> {
+    /// Intersect with IDs from this source; absent IDs are ignored, order is preserved.
+    pub fn filter_ids(self, ids: &[I]) -> Self {
+        let ids: std::collections::HashSet<_> = ids.iter().copied().collect();
+        self.filter(|id| ids.contains(id))
+    }
+
+    /// Remove another selection of the same kind and exact source.
+    pub fn difference(self, other: &Self) -> Result<Self, crate::display::DisplayError> {
+        if !self.belongs_to(other.source) {
+            return Err(crate::display::DisplayError::SourceMismatch);
+        }
+        let ids: std::collections::HashSet<_> = other.ids.iter().copied().collect();
+        Ok(self.filter(|id| !ids.contains(id)))
+    }
+}
+
+impl ProteinAtomSelection<'_> {
+    /// Keep atoms in these zero-based CK residue IDs (not PDB sequence numbers).
+    pub fn residue_ids(mut self, ids: &[BioResidueId]) -> Self {
+        let ids: std::collections::HashSet<_> = ids.iter().copied().collect();
+        self.ids.retain(|id| {
+            ids.contains(
+                &self
+                    .source
+                    .as_bio_structure()
+                    .atom(*id)
+                    .expect("selected source atom")
+                    .residue_id(),
+            )
+        });
+        self
+    }
+
+    /// Keep side-chain heavy atoms: exclude H and backbone N, CA, C, O, OXT.
+    pub fn sidechain(mut self) -> Self {
+        self.ids.retain(|id| {
+            let atom = self
+                .source
+                .as_bio_structure()
+                .atom(*id)
+                .expect("selected source atom");
+            atom.element() != Element::H
+                && !matches!(atom.name().as_str().trim(), "N" | "CA" | "C" | "O" | "OXT")
+        });
+        self
+    }
+}

@@ -14,6 +14,7 @@ const { chromium } = await import(pathToFileURL(playwright));
 test("typed JS scenes render/update/screenshot and animations play in a real browser", { timeout: 60000 }, async () => {
     const files = new Map([
         ["index.js", join(pkg, "index.js")],
+        ["protein.cif", join(root, "cosmol_viewer/examples/6fi1.cif")],
         ["cosmol_viewer_wasm.js", join(pkg, "cosmol_viewer_wasm.js")],
         ["cosmol_viewer_wasm_bg.wasm", join(pkg, "cosmol_viewer_wasm_bg.wasm")],
         ["ck/cosmolkit_wasm.js", join(pkg, "node_modules/@cosmol-studio/cosmolkit/cosmolkit_wasm.js")],
@@ -130,6 +131,25 @@ test("typed JS scenes render/update/screenshot and animations play in a real bro
             await mounted.render(scene);
             mounted.update(scene);
             await mounted.takeScreenshot();
+            const protein = ck.Protein.fromMmcif(await (await fetch("/protein.cif")).text());
+            const selector = cv.select(protein);
+            const atoms = selector.atoms();
+            const residues = atoms.residueIds([10, 11, 12, 13, 14]);
+            const sidechain = residues.sidechain();
+            const rest = atoms.difference(sidechain);
+            const proteinScene = cv.Scene.new();
+            const balls = cv.Style.ballAndStick();
+            const red = balls.color(new Uint8Array([255, 68, 68]));
+            proteinScene.set("rest", rest, balls);
+            proteinScene.set("highlight", sidechain, red);
+            proteinScene.recenterOn(protein);
+            proteinScene.setScale(0.2);
+            await mounted.render(proteinScene);
+            const proteinImage = Array.from(await mounted.takeScreenshot());
+            proteinScene.removeShape("highlight");
+            mounted.update(proteinScene);
+            const withoutSidechain = Array.from(await mounted.takeScreenshot());
+            for (const handle of [proteinScene, red, balls, rest, sidechain, residues, atoms, selector, protein]) handle.free();
             mounted.close();
             mounted.free();
             const preservedCanvas = !!document.getElementById("mounted");
@@ -164,7 +184,7 @@ test("typed JS scenes render/update/screenshot and animations play in a real bro
             viewer.free();
             animation.free();
             scene.free();
-            return { importedAgain, hasDefaultInit, molecularShapes, beforeRender, invalidDispatch, duplicateStart, emptyPlay, renderAfterClose, playAfterClose, staticAfterPlay, staticAgain, first, second, cameraOverlay, combinedOverlay, zeroOverlay,
+            return { proteinImage, withoutSidechain, importedAgain, hasDefaultInit, molecularShapes, beforeRender, invalidDispatch, duplicateStart, emptyPlay, renderAfterClose, playAfterClose, staticAfterPlay, staticAgain, first, second, cameraOverlay, combinedOverlay, zeroOverlay,
                 stillZeroOverlay, resumedOverlay, hiddenOverlay, idleDraws, laterIdleDraws, shapes, frames, preservedCanvas,
                 concurrent: concurrent.map(png => Array.from(png.slice(0, 8))),
                 barrier: barrier.map(png => Array.from(png)), closedWait, closedUpdate,
@@ -172,6 +192,7 @@ test("typed JS scenes render/update/screenshot and animations play in a real bro
                 remainingCanvases: document.querySelectorAll("canvas").length };
         });
         assert.deepEqual(errors, [], "Browser startup/renderer reported errors");
+        assert.notDeepEqual(result.proteinImage, result.withoutSidechain, "Selected protein sidechains were not rendered");
         assert.equal(result.importedAgain, true);
         assert.equal(result.hasDefaultInit, false);
         assert.equal(result.molecularShapes, 1, "CK molecule must work immediately after importing Viewer");

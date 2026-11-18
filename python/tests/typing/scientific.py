@@ -20,6 +20,12 @@ def molecular(source: ck.Molecule) -> cv.Scene:
 
 def protein(source: ck.Protein) -> cv.Scene:
     scene = cv.Scene()
+    atoms = cv.select(source).atoms()
+    selected = atoms.residue_ids([10, 11]).sidechain()
+    assert_type(selected.filter_ids([1, 2]), cv.Selection)
+    scene.set("rest", atoms.difference(selected), cv.StickStyle())
+    scene.set("sidechain", selected, cv.BallAndStick().color("#FF4444"))
+    scene.add(source, cv.BallAndStick())
     scene.add(source, cv.Cartoon().rainbow_residues())
     scene.add(source, cv.Surface().configure(grid_spacing=0.7))
     scene.add(source)

@@ -80,3 +80,11 @@ scientificScene.set("protein", protein);
 scientificScene.add(selectedAtoms);
 scientificScene.add(Sphere.new(new Float32Array([0,0,0]), 1));
 scientificScene.set("stick", Stick.new(new Float32Array([0,0,0]), new Float32Array([1,0,0]), 0.2));
+
+const proteinAtoms = select(protein).atoms();
+const sidechain = proteinAtoms.residueIds([10, 11]).sidechain();
+scientificScene.set("protein", protein, Style.ballAndStick());
+scientificScene.set("rest", proteinAtoms.difference(sidechain), Style.stick());
+scientificScene.set("highlight", sidechain.filterIds([1, 2]), Style.stick().color(new Uint8Array([255, 68, 68])));
+// @ts-expect-error Residue IDs are numeric, not PDB labels.
+proteinAtoms.residueIds(["A:10"]);

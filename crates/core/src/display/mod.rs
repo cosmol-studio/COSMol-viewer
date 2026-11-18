@@ -12,6 +12,7 @@
 pub mod input;
 mod molecular;
 mod protein;
+mod protein_molecular;
 
 use crate::styles::Representation;
 use crate::utils::{InstanceGroups, Interpolatable, Logger, MeshData};
@@ -22,6 +23,8 @@ use std::sync::Arc;
 
 #[derive(Debug, thiserror::Error)]
 pub enum DisplayError {
+    #[error("protein chemical graph conversion failed: {0}")]
+    ProteinChemistry(String),
     #[error("positioned shapes already carry their style; omit the representation argument")]
     ShapeStyle,
     #[error("radius must be finite and positive")]
@@ -69,6 +72,10 @@ pub struct Display {
     center: Vec3,
     #[serde(skip)]
     source: Option<Arc<SourceSnapshot>>,
+    #[serde(skip)]
+    _cartoon: Option<Arc<protein::CartoonGeometry>>,
+    #[serde(skip)]
+    _protein_molecule: Option<Arc<protein_molecular::ProteinMolecule>>,
 }
 
 impl std::fmt::Debug for Display {
@@ -249,6 +256,8 @@ impl ProjectSource<ck::AtomId> for ck::Molecule {
             mesh: MeshData::default(),
             instances,
             center,
+            _protein_molecule: None,
+            _cartoon: None,
             source: Some(Arc::new(SourceSnapshot::Molecule(self.clone()))),
         })
     }
@@ -265,6 +274,8 @@ impl ProjectSource<ck::BondId> for ck::Molecule {
             mesh: MeshData::default(),
             instances,
             center,
+            _protein_molecule: None,
+            _cartoon: None,
             source: Some(Arc::new(SourceSnapshot::Molecule(self.clone()))),
         })
     }
@@ -279,12 +290,14 @@ impl ProjectSource<ck::BioResidueId> for ck::Protein {
         ids: &[ck::BioResidueId],
         style: Representation,
     ) -> Result<Display, DisplayError> {
-        let (mesh, instances, center) =
+        let (mesh, instances, center, cartoon) =
             protein::project_residues(&input::ProteinInput::try_from(self)?, ids, style)?;
         Ok(Display {
             mesh,
             instances,
             center,
+            _protein_molecule: None,
+            _cartoon: cartoon,
             source: Some(Arc::new(SourceSnapshot::Protein(self.clone()))),
         })
     }
@@ -299,12 +312,30 @@ impl ProjectSource<ck::BioAtomId> for ck::Protein {
         ids: &[ck::BioAtomId],
         style: Representation,
     ) -> Result<Display, DisplayError> {
+        if matches!(
+            style,
+            Representation::BallAndStick(_) | Representation::Stick(_)
+        ) {
+            let converted = protein_molecular::shared(self)?;
+            let (instances, center) =
+                molecular::project_protein_atoms(&converted.input, ids, style)?;
+            return Ok(Display {
+                mesh: MeshData::default(),
+                instances,
+                center,
+                source: Some(Arc::new(SourceSnapshot::Protein(self.clone()))),
+                _cartoon: None,
+                _protein_molecule: Some(converted),
+            });
+        }
         let (mesh, instances, center) =
             protein::project_atoms(&input::ProteinInput::try_from(self)?, ids, style)?;
         Ok(Display {
             mesh,
             instances,
             center,
+            _protein_molecule: None,
+            _cartoon: None,
             source: Some(Arc::new(SourceSnapshot::Protein(self.clone()))),
         })
     }

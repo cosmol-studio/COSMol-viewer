@@ -312,3 +312,39 @@ test("replacement releases unused imports while selections, clones and merged co
     probe(); assert.equal(imports, 6);
     for (const value of [sphere, cartoon, mol]) value.free();
 });
+
+
+test("protein molecular styles and sidechain selections share the CK source", () => {
+    const protein = ckTypes.Protein.fromMmcif(readFileSync(new URL("../../cosmol_viewer/examples/6fi1.cif", import.meta.url), "utf8"));
+    const original = protein.toTransferBinary.bind(protein);
+    let transfers = 0;
+    protein.toTransferBinary = () => { transfers++; return original(); };
+    const selector = binding.select(protein);
+    const atoms = selector.atoms();
+    const residues = selector.residues();
+    const subset = atoms.residueIds([10, 11]);
+    const highlight = subset.sidechain();
+    const rest = atoms.difference(highlight);
+    const ids = atoms.filterIds([1, 1]);
+    assert.deepEqual(Array.from(ids.ids()), [1]);
+    assert.ok(highlight.len() > 0);
+    assert.equal(rest.len() + highlight.len(), atoms.len());
+    const scene = binding.Scene.new();
+    const balls = binding.Style.ballAndStick();
+    const sticks = binding.Style.stick();
+    scene.add(protein, balls);
+    const full = JSON.parse(scene.toJson());
+    scene.set("rest", rest, sticks);
+    scene.set("highlight", highlight, sticks);
+    assert.equal(scene.shapeCount(), 3);
+    assert.equal(transfers, 1);
+    assert.ok(JSON.stringify(full).includes('sticks'));
+    const other = protein.copy();
+    const otherSelector = binding.select(other);
+    const otherAtoms = otherSelector.atoms();
+    assert.throws(() => atoms.difference(otherAtoms), /different source/);
+    assert.throws(() => atoms.difference(residues), /same kind/);
+    assert.throws(() => residues.sidechain(), /protein atom/);
+    assert.throws(() => atoms.residueIds([-1]));
+    for (const handle of [scene, balls, sticks, ids, rest, highlight, subset, atoms, residues, selector, otherAtoms, otherSelector, other, protein]) handle.free();
+});

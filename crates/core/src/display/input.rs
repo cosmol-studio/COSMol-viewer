@@ -256,6 +256,7 @@ impl SourceInput {
                 });
             }
         }
+        let mut cartoon = None;
         let (mesh, instances, center) = match (self, kind) {
             (Self::Molecule(m), EntityKind::Atoms) => {
                 let (groups, center) = super::molecular::project_atoms(
@@ -280,13 +281,17 @@ impl SourceInput {
                     .collect::<Vec<_>>(),
                 style,
             )?,
-            (Self::Protein(p), EntityKind::Residues) => super::protein::project_residues(
-                p,
-                &ids.iter()
-                    .map(|&i| ck::BioResidueId::new(i as u32))
-                    .collect::<Vec<_>>(),
-                style,
-            )?,
+            (Self::Protein(p), EntityKind::Residues) => {
+                let (mesh, instances, center, geometry) = super::protein::project_residues(
+                    p,
+                    &ids.iter()
+                        .map(|&i| ck::BioResidueId::new(i as u32))
+                        .collect::<Vec<_>>(),
+                    style,
+                )?;
+                cartoon = geometry;
+                (mesh, instances, center)
+            }
             _ => return Err(DisplayError::InvalidSelection),
         };
         Ok(Display {
@@ -294,6 +299,8 @@ impl SourceInput {
             instances,
             center,
             source: None,
+            _protein_molecule: None,
+            _cartoon: cartoon,
         })
     }
 }

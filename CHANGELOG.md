@@ -19,6 +19,35 @@ The manually triggered GitHub Release workflow uses an unreleased `v*` tag on
 the selected commit. It combines the release-header, matching dated version
 section and release-footer without modifying an existing Release.
 
+## [0.6.3] - 2026-11-18
+
+### Added
+
+- Render COSMolKit proteins directly with BallAndStick or Stick styles in Rust,
+  Python and JavaScript, reusing the molecular renderer. Chemical graph conversion
+  runs in Rust through CK, preserves atoms and coordinates, disables sanitization
+  and hydrogen removal, and uses CK proximity bonding to supplement connectivity.
+- Add source-bound `filter_ids` / `filterIds`, `residue_ids` / `residueIds`,
+  `sidechain` and `difference` selection operations across all three bindings.
+  Residue IDs are zero-based CK IDs; sidechain selection includes heavy atoms only.
+- Add Rust, Python and browser examples for continuous Cartoon residue highlighting
+  and protein Stick displays with default element colors and highlighted side chains.
+
+### Changed
+
+- Share converted protein chemical graphs between live molecular displays, and
+  release cached data when the last display is dropped.
+- Compute Cartoon geometry from complete chains and share that computation between
+  live displays with identical protein inputs, including differently colored selections.
+  Displays retain their own selected mesh patches and materials.
+
+### Fixed
+
+- Preserve Cartoon continuity across residue selection boundaries instead of
+  introducing independent spline endpoints and caps for each subset.
+- Preserve cross-selection protein bonds in BallAndStick and Stick displays by
+  partitioning full-topology bond geometry at bond midpoints.
+
 ## [0.6.2] - 2026-11-09
 
 ### Changed
@@ -148,3 +177,5 @@ section and release-footer without modifying an existing Release.
 Installation and API usage: [COSMol Viewer documentation](https://viewer.cosmol.org/).
 <!-- release-footer:end -->
 [0.3.0]: https://github.com/cosmol-studio/COSMol-viewer/compare/v0.2.26...v0.3.0
+
+[0.6.3]: https://github.com/cosmol-studio/COSMol-viewer/compare/v0.6.2...v0.6.3

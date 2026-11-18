@@ -223,6 +223,55 @@ fn scientific_sources_can_be_dropped_after_show_and_transport_contains_only_geom
 }
 
 #[test]
+fn complementary_cartoon_selections_preserve_complete_chain_geometry() {
+    let protein =
+        ck::Protein::from_mmcif(include_str!("../../../cosmol_viewer/examples/6fi1.cif")).unwrap();
+    let triangles = |scene: &Scene| {
+        let mut result = Vec::new();
+        for mesh in scene._get_meshes() {
+            for triangle in mesh.indices.chunks_exact(3) {
+                let mut key = Vec::new();
+                for &index in triangle {
+                    key.extend(mesh.vertices[index as usize].to_array().map(f32::to_bits));
+                    key.extend(mesh.normals[index as usize].to_array().map(f32::to_bits));
+                }
+                result.push(key);
+            }
+        }
+        result.sort();
+        result
+    };
+    let mut complete = Scene::new();
+    complete.add(&protein).unwrap();
+    let expected = triangles(&complete);
+    assert!(!expected.is_empty());
+
+    // Include a single residue and alternating selections: neither may become
+    // an artificial spline endpoint or disappear as a one-residue fragment.
+    for ids in [vec![10], (10..25).collect(), (0..100).step_by(2).collect()] {
+        let selected = select(&protein)
+            .residues()
+            .filter(|id| ids.contains(&id.index()));
+        let other = select(&protein)
+            .residues()
+            .filter(|id| !ids.contains(&id.index()));
+        let mut split = Scene::new();
+        split
+            .add((&selected, Cartoon::default().color("#FF4444")))
+            .unwrap();
+        split
+            .add((&other, Cartoon::default().color("#AAB4C0")))
+            .unwrap();
+        assert!(!split._get_meshes()[0].indices.is_empty());
+        assert_eq!(
+            triangles(&split),
+            expected,
+            "selection {ids:?} changed geometry"
+        );
+    }
+}
+
+#[test]
 fn protein_cartoon_and_atom_displays_share_one_ck_source() {
     let source = ck::Protein::from_pdb(PROTEIN_PDB).unwrap();
     let before: Vec<_> = source.atoms().map(|a| a.position()).collect();
@@ -637,4 +686,56 @@ fn shapes_and_scientific_objects_share_named_content_and_atomic_validation() {
     scene.add(Sphere::new([0.0; 3], 1.0)).unwrap();
     assert_eq!(scene.named_shapes.len(), 1);
     assert_eq!(scene.unnamed_shapes.len(), 1);
+}
+
+#[test]
+fn protein_molecular_styles_partition_complete_bonds_and_preserve_coordinates() {
+    let source =
+        ck::Protein::from_mmcif(include_str!("../../../cosmol_viewer/examples/6fi1.cif")).unwrap();
+    let before = source.atoms().map(|a| a.position()).collect::<Vec<_>>();
+    let atoms = select(&source).atoms();
+    let highlighted = atoms
+        .clone()
+        .residue_ids(&[ck::BioResidueId::new(10), ck::BioResidueId::new(11)])
+        .sidechain();
+    assert!(!highlighted.is_empty());
+    let rest = atoms.clone().difference(&highlighted).unwrap();
+    assert_eq!(rest.len() + highlighted.len(), atoms.len());
+    let other = source.clone();
+    assert!(atoms.clone().difference(&select(&other).atoms()).is_err());
+    assert_eq!(
+        atoms
+            .clone()
+            .filter_ids(&[ck::BioAtomId::new(1), ck::BioAtomId::new(1)])
+            .len(),
+        1
+    );
+    for style in [
+        cosmol_viewer_core::styles::Representation::from(BallAndStick::default()),
+        Stick::default().into(),
+    ] {
+        let mut full = Scene::new();
+        full.add((&source, style)).unwrap();
+        let mut split = Scene::new();
+        split.add((&highlighted, style)).unwrap();
+        split.add((&rest, style)).unwrap();
+        let a = full.get_instances_grouped();
+        let b = split.get_instances_grouped();
+        assert!(!a.sticks.is_empty());
+        // Compare every primitive, including its endpoints, radii and element colors.
+        fn sorted<T: serde::Serialize>(v: &[T]) -> Vec<String> {
+            let mut v = v
+                .iter()
+                .map(|x| serde_json::to_string(x).unwrap())
+                .collect::<Vec<_>>();
+            v.sort();
+            v
+        }
+        assert_eq!(sorted(&a.spheres), sorted(&b.spheres));
+        assert_eq!(sorted(&a.sticks), sorted(&b.sticks));
+    }
+    assert_eq!(
+        before,
+        source.atoms().map(|a| a.position()).collect::<Vec<_>>()
+    );
 }

@@ -275,6 +275,36 @@ class InstalledCosmolkitTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "conformers"): scene.add(atoms, cv.BallAndStick())
         scene.add(atoms, cv.BallAndStick().conformer(source.conformers_3d[-1].id))
 
+    def test_protein_ball_and_stick_and_sidechain_selection(self):
+        from pathlib import Path
+        root = Path(__file__).resolve().parents[2] / "cosmol_viewer/examples"
+        protein = self.ck.Protein.from_mmcif((root / "6fi1.cif").read_text(encoding="utf-8"))
+        original = self.ck.Protein.to_transfer_binary
+        calls = []
+        def tracked(obj):
+            calls.append(obj)
+            return original(obj)
+        with patch.object(self.ck.Protein, "to_transfer_binary", tracked):
+            selector = cv.select(protein)
+            atoms = selector.atoms()
+            highlighted = atoms.residue_ids([10, 11]).sidechain()
+            rest = atoms.difference(highlighted)
+            self.assertGreater(len(highlighted), 0)
+            self.assertEqual(set(rest.ids) | set(highlighted.ids), set(atoms.ids))
+            self.assertFalse(set(rest.ids) & set(highlighted.ids))
+            self.assertEqual(atoms.filter_ids([1, 1]).ids, [1])
+            scene = cv.Scene()
+            scene.add(protein, cv.BallAndStick())
+            scene.set("rest", rest, cv.StickStyle().color("#AAB4C0"))
+            scene.set("highlight", highlighted, cv.StickStyle().color("#FF4444"))
+            scene.add(protein)
+            self.assertEqual(len(calls), 1)
+            with self.assertRaisesRegex(ValueError, "different source"):
+                atoms.difference(cv.select(self.ck.Protein.from_mmcif((root / "6fi1.cif").read_text(encoding="utf-8"))).atoms())
+            with self.assertRaises(ValueError): atoms.difference(selector.residues())
+            with self.assertRaises(ValueError): selector.residues().sidechain()
+            with self.assertRaises((ValueError, OverflowError)): atoms.residue_ids([-1])
+
     def test_protein_and_ligand_use_ck_objects_directly(self):
         from pathlib import Path
         root = Path(__file__).resolve().parents[2] / "cosmol_viewer/examples"

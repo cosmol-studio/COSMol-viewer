@@ -35,6 +35,11 @@ The page demonstrates:
 - **Molecule:** a CK molecule, atom/element selections and multiple display styles.
 - **Protein + ligand:** CK Protein and Molecule objects in the same scene, with
   a residue cartoon and molecular ball-and-stick display.
+- **Highlight residues:** continuous Cartoon ribbon with residues 10?14 in red,
+  using `residues().filterIds(...)` and `difference`, matching the Rust and Python
+  `highlight_residues` examples. The range uses zero-based CK IDs, not CIF residue numbers.
+- **Protein side chains:** whole-protein stick geometry with default element colors with separately colored
+  side-chain heavy atoms, using `residueIds`, `sidechain` and `difference`.
 - **Animation:** 32 scene snapshots played with `Animation` and `viewer.play(animation)`.
 - Named display replacement with `set`, followed by `viewer.update(scene)`.
 - `scene.recenterOn(molecule)`, FPS/camera overlays and PNG screenshots.

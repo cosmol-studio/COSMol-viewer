@@ -159,7 +159,38 @@ pub(super) fn project_atoms(
         .iter()
         .map(|bond| atom_mask[bond.begin] && atom_mask[bond.end])
         .collect();
-    project(molecule, &atom_mask, &bond_mask, mode, options)
+    project(molecule, &atom_mask, &bond_mask, mode, options, false)
+}
+
+/// Partition complete bonds at their midpoint, preserving connections between
+/// differently colored protein selections and their full-topology glyph offsets.
+pub(super) fn project_protein_atoms(
+    molecule: &MoleculeInput,
+    ids: &[ck::BioAtomId],
+    style: Representation,
+) -> Result<(InstanceGroups, Vec3), DisplayError> {
+    let (mode, options) = configuration(style, "molecule atoms")?;
+    if !matches!(options.coordinates, Coordinates::Auto) {
+        return Err(DisplayError::IncompatibleStyle {
+            style: "molecular coordinate selection",
+            selection: "protein atoms",
+        });
+    }
+    let mut atom_mask = vec![false; molecule.elements.len()];
+    for id in ids {
+        *atom_mask
+            .get_mut(id.index())
+            .ok_or(DisplayError::InvalidEntity {
+                kind: "atom",
+                index: id.index(),
+            })? = true;
+    }
+    let bond_mask = molecule
+        .bonds
+        .iter()
+        .map(|b| atom_mask[b.begin] || atom_mask[b.end])
+        .collect::<Vec<_>>();
+    project(molecule, &atom_mask, &bond_mask, mode, options, true)
 }
 
 pub(super) fn project_bonds(
@@ -182,7 +213,7 @@ pub(super) fn project_bonds(
         atom_mask[bond.begin] = true;
         atom_mask[bond.end] = true;
     }
-    project(molecule, &atom_mask, &bond_mask, mode, options)
+    project(molecule, &atom_mask, &bond_mask, mode, options, false)
 }
 
 fn project(
@@ -191,6 +222,7 @@ fn project(
     bond_mask: &[bool],
     mode: MolecularMode,
     options: MolecularOptions,
+    partition_bonds: bool,
 ) -> Result<(InstanceGroups, Vec3), DisplayError> {
     if !atom_mask.iter().any(|x| *x) {
         return Ok((InstanceGroups::default(), Vec3::ZERO));
@@ -318,35 +350,43 @@ fn project(
                 let scaled_radius = radius * scale * options.radius_scale;
 
                 if matches!(mode, MolecularMode::Stick) {
-                    groups.spheres.push(SphereInstance::new(
+                    if !partition_bonds || atom_mask[*a] {
+                        groups.spheres.push(SphereInstance::new(
+                            scaled_pos_a,
+                            scaled_radius,
+                            color_a,
+                            material,
+                        ));
+                    }
+                    if !partition_bonds || atom_mask[*b] {
+                        groups.spheres.push(SphereInstance::new(
+                            scaled_pos_b,
+                            scaled_radius,
+                            color_b,
+                            material,
+                        ));
+                    }
+                }
+
+                if !partition_bonds || atom_mask[*a] {
+                    groups.sticks.push(StickInstance::new(
                         scaled_pos_a,
+                        scaled_midpoint,
                         scaled_radius,
                         color_a,
                         material,
                     ));
-                    groups.spheres.push(SphereInstance::new(
+                }
+
+                if !partition_bonds || atom_mask[*b] {
+                    groups.sticks.push(StickInstance::new(
                         scaled_pos_b,
+                        scaled_midpoint,
                         scaled_radius,
                         color_b,
                         material,
                     ));
                 }
-
-                groups.sticks.push(StickInstance::new(
-                    scaled_pos_a,
-                    scaled_midpoint,
-                    scaled_radius,
-                    color_a,
-                    material,
-                ));
-
-                groups.sticks.push(StickInstance::new(
-                    scaled_pos_b,
-                    scaled_midpoint,
-                    scaled_radius,
-                    color_b,
-                    material,
-                ));
             }
 
             if *bond_type == BondGlyph::Aromatic {
@@ -362,34 +402,42 @@ fn project(
                     let scaled_radius = aromatic_radius * scale * options.radius_scale;
 
                     if matches!(mode, MolecularMode::Stick) {
-                        groups.spheres.push(SphereInstance::new(
+                        if !partition_bonds || atom_mask[*a] {
+                            groups.spheres.push(SphereInstance::new(
+                                scaled_pos_a,
+                                scaled_radius,
+                                color_a,
+                                material,
+                            ));
+                        }
+                        if !partition_bonds || atom_mask[*b] {
+                            groups.spheres.push(SphereInstance::new(
+                                scaled_pos_b,
+                                scaled_radius,
+                                color_b,
+                                material,
+                            ));
+                        }
+                    }
+
+                    if !partition_bonds || atom_mask[*a] {
+                        groups.sticks.push(StickInstance::new(
                             scaled_pos_a,
+                            scaled_midpoint,
                             scaled_radius,
                             color_a,
                             material,
                         ));
-                        groups.spheres.push(SphereInstance::new(
+                    }
+                    if !partition_bonds || atom_mask[*b] {
+                        groups.sticks.push(StickInstance::new(
                             scaled_pos_b,
+                            scaled_midpoint,
                             scaled_radius,
                             color_b,
                             material,
                         ));
                     }
-
-                    groups.sticks.push(StickInstance::new(
-                        scaled_pos_a,
-                        scaled_midpoint,
-                        scaled_radius,
-                        color_a,
-                        material,
-                    ));
-                    groups.sticks.push(StickInstance::new(
-                        scaled_pos_b,
-                        scaled_midpoint,
-                        scaled_radius,
-                        color_b,
-                        material,
-                    ));
                 }
             }
         }
