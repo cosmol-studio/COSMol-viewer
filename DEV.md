@@ -16,8 +16,8 @@ Component-specific instructions:
 Preview and then apply a release bump:
 
 ```bash
-python tools/bump_version.py 0.6.3-rc.1 --dry-run
-python tools/bump_version.py 0.6.3-rc.1
+python tools/bump_version.py 0.6.3-rc.2 --dry-run
+python tools/bump_version.py 0.6.3-rc.2
 ```
 
 The script accepts stable `X.Y.Z`, RC (`X.Y.ZrcN` or `X.Y.Z-rc.N`),
@@ -84,6 +84,7 @@ Local policy and workflow checks (without publishing):
 ```sh
 python -m unittest discover -s tools -p 'test_*.py' -v
 python tools/publish_policy.py
+cargo check --locked -p cosmol_viewer --target wasm32-unknown-unknown
 python wasm/check.py --browser
 python python/build.py --check
 python python/build_native_viewer.py

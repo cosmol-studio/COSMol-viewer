@@ -132,7 +132,7 @@ binary. The `wasm32-unknown-unknown` Rust target must also be installed.
 
 The production deployment renders static HTML with native Dioxus and uploads
 it to Cloudflare Pages. It does not compile the site's browser WASM; only the
-independent search engine uses WASM. Pushes to
+independent search engine and the homepage gallery use WASM. Pushes to
 `main` build and deploy through `.github/workflows/docs-web.yml`, using the
 checkout's Python extension and generated WASM declarations. URLs omit `.html` and trailing
 slashes; legacy addresses redirect to the canonical pages.
@@ -143,15 +143,15 @@ HTML files cannot conflict with the newly generated SSG routes. Likewise,
 local rebuilds should preserve the previous prepared `public` directory
 elsewhere before invoking `dx build` again.
 
-From `docs-web/`, generate the static pages without a browser application:
+From `docs-web/`, build the static pages and the interactive homepage together:
 
 ```sh
-dx build --release --server --no-default-features --features server --inject-loading-scripts false --locked
-../.venv/bin/python scripts/render_static.py target/dx/cosmol-viewer-docs-web/release/web/server
+dx build --release --web --fullstack true --ssg --features ssg --locked --force-sequential --debug-symbols false
 ```
 
-The native renderer runs only during generation and exits afterwards. Deploy
-only its `public/` directory, not the native executable.
+Dioxus prerenders the route list during the build. Deployment uses the generated
+`public/` directory. The homepage uses the Dioxus browser bundle, and a direct
+visit to a documentation article uses its prerendered HTML.
 
 ## SEO deployment artifacts
 
@@ -241,3 +241,33 @@ cargo test --manifest-path docs-web/Cargo.toml --lib --no-default-features --fea
 
 For Windows Sphinx generation, use the checked-in runner described in
 [the documentation build instructions](../docs/README.md).
+
+
+## Homepage gallery
+
+The Dioxus documentation homepage places its quick starts alongside one rotating
+protein structure. Below it are four interactive applications: docking pose
+review, conformer playback, antibody–antigen interface inspection, and a
+comparison of open and closed protein structures. Each application starts when
+its canvas approaches the viewport. The guides, API references, and COSMol
+ecosystem links follow the examples.
+See [dataset provenance](data/showcase/README.md).
+
+The homepage's RSX components mount `cosmol_viewer::App` into their canvases
+using `eframe::WebRunner`. Play, seek, pose selection, and fullscreen use Rust
+event handlers. The Dioxus build includes this code in the browser application.
+For local development, run this from `docs-web/`:
+
+```sh
+dx serve --web --port 8099
+```
+
+To check the built homepage in a real browser (requires Playwright and an installed
+browser), run:
+
+```sh
+python docs-web/scripts/check_gallery_browser.py docs-web/target/dx/cosmol-viewer-docs-web/release/web/public --channel msedge
+```
+
+This checks hero rotation, pose controls, frame playback and seeking, interface
+focus, structure overlays, fullscreen, mobile layout and load errors.

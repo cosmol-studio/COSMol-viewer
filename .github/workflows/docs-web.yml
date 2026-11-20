@@ -101,8 +101,7 @@ jobs:
                   if [ -d "$public_dir" ]; then
                       mv "$public_dir" "$RUNNER_TEMP/docs-web-public-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
                   fi
-                  dx build --release --server --no-default-features --features server --inject-loading-scripts false --locked
-                  ../.venv/bin/python scripts/render_static.py target/dx/cosmol-viewer-docs-web/release/web/server
+                  dx build --release --web --fullstack true --ssg --features ssg --locked --force-sequential --debug-symbols false
 
             - name: Prepare deployment files
               run: |

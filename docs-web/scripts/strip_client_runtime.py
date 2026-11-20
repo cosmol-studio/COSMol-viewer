@@ -1,10 +1,4 @@
-"""Remove the Dioxus hydration runtime from the static documentation artifact.
-
-The documentation site is intentionally a static presentation surface. Its
-routes are complete HTML documents and do not require client state or server
-functions, so shipping the hydration bundle would only add a second render
-tree when a browser mounts it.
-"""
+"""Serve documentation article routes as static HTML and keep the live homepage."""
 
 from __future__ import annotations
 
@@ -25,15 +19,12 @@ CLIENT_PRELOAD = re.compile(
 CLIENT_MODULE = re.compile(
     r'<script type="module"[^>]*cosmol-viewer-docs-web[^>]*></script>', re.DOTALL
 )
-CLIENT_ASSET = re.compile(
-    r"cosmol-viewer-docs-web(?:_bg)?(?:-[-\w]+)?\.(?:js|wasm)(?:\.map)?(?:\.(?:br|gz))?"
-)
 
 
 def strip_client_runtime(public: Path) -> int:
     changed = 0
     for page in public.rglob("*.html"):
-        if not page.is_file():
+        if page == public / "index.html" or not page.is_file():
             continue
         source = page.read_text(encoding="utf-8")
         result = HYDRATION_SCRIPT.sub("", source)
@@ -43,13 +34,6 @@ def strip_client_runtime(public: Path) -> int:
         if result != source:
             page.write_text(result, encoding="utf-8")
             changed += 1
-    # Removing HTML references does not remove files from the upload artifact.
-    # Delete only this application's unused hydration bundle, not search assets.
-    assets = public / "assets"
-    if assets.is_dir():
-        for asset in assets.iterdir():
-            if asset.is_file() and CLIENT_ASSET.fullmatch(asset.name):
-                asset.unlink()
     return changed
 
 

@@ -78,7 +78,7 @@ class DeploymentTests(unittest.TestCase):
         for route in ROUTES:
             self.page(f"{route}/index.html", route, runtime=True)
         self.assertEqual(flatten_html_routes(self.public), len(ROUTES))
-        self.assertEqual(strip_client_runtime(self.public), len(ROUTES) + 1)
+        self.assertEqual(strip_client_runtime(self.public), len(ROUTES))
         docs_web = Path(__file__).resolve().parents[1]
         (self.public / "social-card.png").write_bytes(PNG_HEADER)
         for name in ("404.html",):
@@ -103,20 +103,19 @@ class DeploymentTests(unittest.TestCase):
         self.assertEqual(flatten_html_routes(self.public), 0)
         self.assertEqual(strip_client_runtime(self.public), 0)
 
-    def test_unused_client_bundle_removed_but_search_preserved(self):
+    def test_client_bundle_loads_on_homepage_only(self):
         assets = self.public / "assets"
         assets.mkdir()
-        removed = ["cosmol-viewer-docs-web-dxh123.js",
-                   "cosmol-viewer-docs-web_bg-dxh456.wasm",
-                   "cosmol-viewer-docs-web-dxh123.js.map",
-                   "cosmol-viewer-docs-web_bg-dxh456.wasm.br"]
-        retained = ["docs_search-fixture.js", "docs_search_bg-fixture.wasm",
-                    "cosmol-viewer-docs-web.css"]
-        for name in removed + retained:
+        files = ["cosmol-viewer-docs-web-dxh123.js", "cosmol-viewer-docs-web_bg-dxh456.wasm",
+                 "docs_search-fixture.js", "docs_search_bg-fixture.wasm"]
+        for name in files:
             (assets / name).write_bytes(b"fixture")
-        self.page("index.html", "", runtime=True)
+        home = self.page("index.html", "", runtime=True)
+        article = self.page("python.html", "python", runtime=True)
         self.assertEqual(strip_client_runtime(self.public), 1)
-        self.assertEqual(sorted(p.name for p in assets.iterdir()), sorted(retained))
+        self.assertIn("cosmol-viewer-docs-web.js", home.read_text(encoding="utf-8"))
+        self.assertNotIn("cosmol-viewer-docs-web.js", article.read_text(encoding="utf-8"))
+        self.assertEqual(sorted(p.name for p in assets.iterdir()), sorted(files))
         self.assertEqual(strip_client_runtime(self.public), 0)
 
     def test_shared_sphinx_assets_do_not_publish_python_modules_as_javascript(self):

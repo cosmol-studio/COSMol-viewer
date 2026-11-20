@@ -33,7 +33,7 @@ cosmol_viewer_derive.workspace = true
 cosmolkit = { workspace = true, features = ["cap-smiles"] }
 
 [build-dependencies]
-resvg = "0.48.1"
+resvg = "0.50.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 iceoryx2 = "=0.10.0"

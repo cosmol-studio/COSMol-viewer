@@ -11,6 +11,7 @@ from route_contract import ROUTES, PAGES, SEARCH_PATH, SOCIAL_IMAGE_URL, redirec
 from generate_sitemap import BASE_URL, EXCLUDED_ROUTES, SITEMAP_NAMESPACE, canonical_for
 from html_metadata import read_metadata
 from prepare_deployment import validate_social_image
+from strip_client_runtime import CLIENT_MODULE
 from version_catalog import check_version_assets, load_catalog
 
 INDEXNOW_KEY = "1d047fb8-319c-41ca-8fa0-3955d72ece0f"
@@ -170,6 +171,10 @@ def check_output(public: Path) -> int:
             raise ValueError(f"unflattened route would cause a trailing slash: {route}")
         html = page.read_text(encoding="utf-8")
         metadata = read_metadata(page)
+        has_gallery = "gallery-stage" in metadata.ids
+        has_client = CLIENT_MODULE.search(html) is not None
+        if has_gallery and not has_client:
+            raise ValueError(f"{relative}: missing the Dioxus client for the live homepage")
         expected_versions = [(entry["version"], entry["url"]) for entry in load_catalog()["versions"]]
         if metadata.version_links != expected_versions or not {
             "docs-version-switch", "docs-version-options", "docs-version-current",
@@ -183,16 +188,16 @@ def check_output(public: Path) -> int:
                 raise ValueError(f"{relative}: archive stylesheets must use relative URLs")
         main_count = metadata.main_count
         stylesheet_count = len(metadata.stylesheets)
-        if main_count != 1 or metadata.main_role_count != 1 or stylesheet_count != 3:
+        if main_count != 1 or metadata.main_role_count != 1 or stylesheet_count != (4 if has_gallery else 3):
             raise ValueError(
                 f"invalid SSG shell for {relative}: "
                 f"main={main_count}, main roles={metadata.main_role_count}, stylesheets={stylesheet_count}"
             )
         # Archive hostnames may legitimately contain "cosmol-viewer-docs-web";
         # detect executable runtime dependencies, not plain version links.
-        if any(marker in html for marker in (
+        if route and (has_client or any(marker in html for marker in (
             "hydrate_queue", "initial_dioxus_hydration_data",
-        )) or any("cosmol-viewer-docs-web" in script.get("src", "") for script in metadata.scripts):
+        ))):
             raise ValueError(f"client runtime was not stripped from {relative}")
         expected = BASE_URL + route
         if canonical_for(page) != expected:

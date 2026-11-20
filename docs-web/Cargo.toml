@@ -28,11 +28,18 @@ web-sys = { version = "=0.3.105", optional = true, features = [
     "HtmlButtonElement", "Node", "Event", "EventTarget", "History", "Location",
     "Url", "UrlSearchParams", "NodeList", "HtmlLinkElement", "StyleSheet", "console",
     "MutationObserver", "MutationObserverInit",
+    "HtmlCanvasElement", "HtmlSelectElement", "DomRect",
+    "IntersectionObserver", "IntersectionObserverEntry", "IntersectionObserverInit",
 ] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+cosmol_viewer = { path = "../cosmol_viewer", optional = true }
+cosmolkit = { version = "=0.6.2", default-features = false, features = ["cap-bio", "cap-io", "cap-kekulize", "cap-transforms"], optional = true }
+futures-channel = { version = "0.3", optional = true }
 
 [features]
 default = ["web"]
-web = ["dep:dioxus", "dioxus/web", "dep:web-sys", "dep:wasm-bindgen", "dep:js-sys", "dep:serde_json"]
-ssg = []
+web = ["dep:dioxus", "dioxus/web", "dep:web-sys", "dep:wasm-bindgen", "dep:js-sys", "dep:serde_json", "dep:cosmol_viewer", "dep:cosmolkit", "dep:futures-channel"]
+ssg = ["dioxus/fullstack"]
 server = ["dep:dioxus", "dioxus/server", "dioxus/fullstack", "dep:serde_json"]
 search-engine = ["dep:serde", "dep:serde_json", "dep:wasm-bindgen", "dep:js-sys", "dep:web-sys"]

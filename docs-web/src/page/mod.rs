@@ -1,5 +1,6 @@
 mod home;
 mod python;
+pub(crate) mod showcase;
 
 pub(crate) use home::Home;
 include!(concat!(env!("OUT_DIR"), "/sphinx_exports.rs"));

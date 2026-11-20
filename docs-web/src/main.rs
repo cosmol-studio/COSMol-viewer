@@ -1,4 +1,6 @@
 mod component;
+#[cfg(all(target_arch = "wasm32", feature = "web"))]
+mod gallery;
 mod page;
 mod route;
 
@@ -22,9 +24,7 @@ fn main() {
                                 .expect("server executable directory")
                                 .join("public"),
                         )
-                        // SSG output is a deployable artifact; never reuse a
-                        // route from an older build when source or head data changed.
-                        .clear_cache(true),
+                        .clear_cache(false),
                 )
         })
         .launch(App);
@@ -51,9 +51,9 @@ fn App() -> Element {
 #[component]
 fn InitialLoader() -> Element {
     #[allow(unused_mut)]
-    let mut visible = use_signal(|| cfg!(target_arch = "wasm32"));
+    let mut visible = use_signal(|| cfg!(all(target_arch = "wasm32", not(feature = "ssg"))));
 
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(target_arch = "wasm32", not(feature = "ssg")))]
     use_effect(move || visible.set(false));
 
     if !visible() {

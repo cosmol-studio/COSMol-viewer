@@ -1213,6 +1213,8 @@ impl Shader {
         self.zoom_disabled = scene.zoom_disabled;
         self.depth_cue = scene.depth_cue;
         self.depth_cue_color = scene.depth_cue.color.unwrap_or(scene.background_color);
+        self.u_model = scene.model_matrix();
+        self.u_normal_matrix = scene.normal_matrix();
         self.vertex3d.clear();
         self.indices.clear();
         self.alpha_coverage = SceneAlphaCoverage::default();
