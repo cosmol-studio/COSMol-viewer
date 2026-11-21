@@ -31,7 +31,7 @@ mod cosmol_viewer {
     #[pymodule_export]
     use super::shapes::{PySphere, PyStick};
     #[pymodule_export]
-    use super::styles::{BallAndStick, Cartoon, SphereStyle, StickStyle, Surface};
+    use super::styles::{BallAndStick, Cartoon, MoleculeColors, SphereStyle, StickStyle, Surface};
     #[pymodule_export]
     use super::{Animation, Scene, Viewer, binding_contract_json};
 }

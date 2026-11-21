@@ -9,11 +9,10 @@ Installation
 
 .. code-block:: shell
 
-   npm install @cosmol-studio/cosmol-viewer@0.6.2 @cosmol-studio/cosmolkit@0.6.2
+   npm install @cosmol-studio/cosmol-viewer @cosmol-studio/cosmolkit
 
-Use the package entry point so native constructors and scientific inputs are
-registered. Importing Viewer automatically initializes both Viewer and the same
-COSMolKit module; no explicit initialization calls are needed.
+Import both packages through their entry points to initialize WebAssembly and
+share the same COSMolKit constructors.
 
 Place a canvas in your HTML at the desired location:
 

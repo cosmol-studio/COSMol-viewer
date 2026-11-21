@@ -60,3 +60,46 @@ Scientific styles support ``color()``, ``opacity()``, ``roughness()``, and
 
 ``roughness`` and ``metallic`` use values from 0 to 1. Scientific data stays in
 COSMolKit; display styles do not change molecule coordinates or chemistry.
+
+Molecular colors
+----------------
+
+.. include:: ../shared/molecular_colors.inc
+
+The code below uses three positioned CK molecules, ``molecule``, ``first``,
+and ``second``. The last two share atom IDs for reuse of one highlight
+scheme. Python accepts hex strings or RGB byte sequences.
+
+.. code-block:: python
+
+   from cosmol_viewer import MoleculeColors, Scene, StickStyle
+
+   scene = Scene()
+   palette = MoleculeColors(elements={"C": "#5CCBE5"})
+   scene.set_molecule_palette(palette)
+   scene.set("reference", molecule, StickStyle())
+
+   shared = palette.with_atom_colors({0: "#FFD166"})
+   highlighted = StickStyle().colors(shared)
+   scene.set("first", first, highlighted)
+   scene.set("second", second, highlighted)
+
+   # Give only the second display a different atom color.
+   pink = palette.with_atom_colors({0: "#F283CB"})
+   scene.set("second", second, StickStyle().colors(pink))
+
+   defaults = MoleculeColors.default()
+   scene.set("second", second, StickStyle().colors(defaults))
+   scene.set_molecule_palette(defaults)
+
+Run the `Python example <https://github.com/cosmol-studio/COSMol-viewer/blob/main/cosmol_viewer/examples/molecule_colors.py>`_
+from the repository root.
+
+.. code-block:: shell
+
+   python cosmol_viewer/examples/molecule_colors.py
+
+The example opens an interactive viewer and exports ``molecule_colors.png``
+and ``molecule_colors_builtin.png`` offscreen into ``cosmol_viewer/``.
+In the custom image, top left uses the scene palette, top right and bottom
+left share yellow highlights, and bottom right uses a separate pink scheme.

@@ -188,6 +188,26 @@ class InstalledCosmolkitTests(unittest.TestCase):
     def molecule(self):
         return self.ck.Molecule.from_smiles("CO").with_added_3d_conformer([[0, 0, 1], [2, 0, 3]])
 
+    def test_molecular_color_schemes_are_reusable_and_validated(self):
+        first = self.molecule()
+        second = self.molecule()
+        scene = cv.Scene()
+        palette = cv.MoleculeColors(elements={"C": "#72849A"})
+        highlight = palette.with_atom_colors({1: [0, 255, 0]})
+        scene.set_molecule_palette(palette)
+        scene.set("first", first, cv.StickStyle().colors(highlight))
+        scene.set("second", second, cv.BallAndStick().colors(highlight))
+        before = repr(scene)
+        with self.assertRaisesRegex(ValueError, "atom ID 2"):
+            scene.set("first", first, cv.StickStyle().colors(palette.with_atom_colors({2: "#FFFFFF"})))
+        self.assertEqual(repr(scene), before)
+        with self.assertRaisesRegex(ValueError, "element colors only"):
+            scene.set_molecule_palette(highlight)
+        with self.assertRaisesRegex(ValueError, "unknown element"):
+            cv.MoleculeColors(elements={"invalid": "#FFFFFF"})
+        scene.set_molecule_palette(cv.MoleculeColors.default())
+        scene.set("first", first, cv.StickStyle())
+
     def test_real_source_selection_multiple_styles_and_named_replacement(self):
         ck = self.ck
         source = self.molecule()

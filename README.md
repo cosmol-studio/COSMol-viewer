@@ -6,6 +6,9 @@ It supports both in-notebook visualization and native desktop rendering, with sm
   <a href="https://pypi.org/project/cosmol-viewer/">
     <img src="https://img.shields.io/pypi/v/cosmol-viewer.svg" alt="PyPi Latest Release" />
   </a>
+  <a href="https://anaconda.org/channels/cosmol-studio/packages/cosmol-viewer/overview">
+    <img src="https://anaconda.org/cosmol-studio/cosmol-viewer/badges/version.svg" alt="conda package version badge"/>
+  </a>
   <a href="https://viewer.cosmol.org/">
     <img src="https://img.shields.io/badge/docs-latest-blue.svg" alt="Documentation Status" />
   </a>

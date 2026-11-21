@@ -14,7 +14,7 @@ mod molecular;
 mod protein;
 mod protein_molecular;
 
-use crate::styles::Representation;
+use crate::styles::{DisplayStyle, MoleculeColors, Representation};
 use crate::utils::{InstanceGroups, Interpolatable, Logger, MeshData};
 use cosmolkit as ck;
 use glam::Vec3;
@@ -27,6 +27,10 @@ pub enum DisplayError {
     ProteinChemistry(String),
     #[error("positioned shapes already carry their style; omit the representation argument")]
     ShapeStyle,
+    #[error("molecular colors require a molecule or a molecular selection")]
+    MoleculeColorsRequireMolecule,
+    #[error("the scene default palette accepts element colors only")]
+    PaletteContainsAtomColors,
     #[error("radius must be finite and positive")]
     InvalidRadius,
     #[error("selection is not available for this source/entity kind")]
@@ -140,28 +144,78 @@ pub trait ProjectSource<I> {
         crate::styles::Sphere::default().into()
     }
     fn project(&self, ids: &[I], style: Representation) -> Result<Display, DisplayError>;
+
+    #[doc(hidden)]
+    fn project_with_palette(
+        &self,
+        ids: &[I],
+        style: DisplayStyle,
+        _palette: Option<&MoleculeColors>,
+    ) -> Result<Display, DisplayError> {
+        if style.molecule_colors.is_some() {
+            return Err(DisplayError::MoleculeColorsRequireMolecule);
+        }
+        self.project(ids, style.representation)
+    }
 }
 
 /// Scene content, optionally paired with an explicit scientific representation.
 /// Defaults and geometry validation are shared by every language binding.
 pub trait SceneItem {
     fn to_shape(&self, style: Option<Representation>) -> Result<crate::utils::Shape, DisplayError>;
+
+    #[doc(hidden)]
+    fn to_shape_with_palette(
+        &self,
+        style: Option<DisplayStyle>,
+        _palette: Option<&MoleculeColors>,
+    ) -> Result<crate::utils::Shape, DisplayError> {
+        if style.as_ref().is_some_and(|s| s.molecule_colors.is_some()) {
+            return Err(DisplayError::MoleculeColorsRequireMolecule);
+        }
+        self.to_shape(style.map(|s| s.representation))
+    }
 }
 impl<T: SceneItem + ?Sized> SceneItem for &T {
     fn to_shape(&self, style: Option<Representation>) -> Result<crate::utils::Shape, DisplayError> {
         (**self).to_shape(style)
     }
+    fn to_shape_with_palette(
+        &self,
+        style: Option<DisplayStyle>,
+        palette: Option<&MoleculeColors>,
+    ) -> Result<crate::utils::Shape, DisplayError> {
+        (**self).to_shape_with_palette(style, palette)
+    }
 }
-impl<T: SceneItem, S: Into<Representation> + Copy> SceneItem for (T, S) {
+impl<T: SceneItem, S: Into<DisplayStyle> + Clone> SceneItem for (T, S) {
     fn to_shape(&self, style: Option<Representation>) -> Result<crate::utils::Shape, DisplayError> {
-        self.0
-            .to_shape(Some(style.unwrap_or_else(|| self.1.into())))
+        self.to_shape_with_palette(style.map(Into::into), None)
+    }
+    fn to_shape_with_palette(
+        &self,
+        style: Option<DisplayStyle>,
+        palette: Option<&MoleculeColors>,
+    ) -> Result<crate::utils::Shape, DisplayError> {
+        self.0.to_shape_with_palette(
+            Some(style.unwrap_or_else(|| self.1.clone().into())),
+            palette,
+        )
     }
 }
 impl SceneItem for ck::Molecule {
     fn to_shape(&self, style: Option<Representation>) -> Result<crate::utils::Shape, DisplayError> {
+        self.to_shape_with_palette(style.map(Into::into), None)
+    }
+    fn to_shape_with_palette(
+        &self,
+        style: Option<DisplayStyle>,
+        palette: Option<&MoleculeColors>,
+    ) -> Result<crate::utils::Shape, DisplayError> {
         let style = style.unwrap_or_else(|| crate::styles::BallAndStick::default().into());
-        crate::selection::select(self).atoms().to_shape(Some(style))
+        crate::selection::select(self)
+            .atoms()
+            .to_shape_with_palette(Some(style), palette)
     }
 }
 impl SceneItem for ck::Protein {
@@ -177,8 +231,19 @@ impl SceneItem for ck::Protein {
 }
 impl<S: ProjectSource<I> + ?Sized, I> SceneItem for crate::selection::Selection<'_, S, I> {
     fn to_shape(&self, style: Option<Representation>) -> Result<crate::utils::Shape, DisplayError> {
+        self.to_shape_with_palette(style.map(Into::into), None)
+    }
+    fn to_shape_with_palette(
+        &self,
+        style: Option<DisplayStyle>,
+        palette: Option<&MoleculeColors>,
+    ) -> Result<crate::utils::Shape, DisplayError> {
         self.source()
-            .project(self.ids(), style.unwrap_or_else(S::default_style))
+            .project_with_palette(
+                self.ids(),
+                style.unwrap_or_else(|| S::default_style().into()),
+                palette,
+            )
             .map(crate::utils::Shape::Display)
     }
 }
@@ -250,8 +315,20 @@ impl CenterSource for ck::Protein {
 
 impl ProjectSource<ck::AtomId> for ck::Molecule {
     fn project(&self, ids: &[ck::AtomId], style: Representation) -> Result<Display, DisplayError> {
-        let (instances, center) =
-            molecular::project_atoms(&input::MoleculeInput::from(self), ids, style)?;
+        self.project_with_palette(ids, style.into(), None)
+    }
+    fn project_with_palette(
+        &self,
+        ids: &[ck::AtomId],
+        style: DisplayStyle,
+        palette: Option<&MoleculeColors>,
+    ) -> Result<Display, DisplayError> {
+        let (instances, center) = molecular::project_atoms(
+            &input::MoleculeInput::from(self),
+            ids,
+            style.representation,
+            style.molecule_colors.as_ref().or(palette),
+        )?;
         Ok(Display {
             mesh: MeshData::default(),
             instances,
@@ -268,8 +345,20 @@ impl ProjectSource<ck::BondId> for ck::Molecule {
         crate::styles::Stick::default().into()
     }
     fn project(&self, ids: &[ck::BondId], style: Representation) -> Result<Display, DisplayError> {
-        let (instances, center) =
-            molecular::project_bonds(&input::MoleculeInput::from(self), ids, style)?;
+        self.project_with_palette(ids, style.into(), None)
+    }
+    fn project_with_palette(
+        &self,
+        ids: &[ck::BondId],
+        style: DisplayStyle,
+        palette: Option<&MoleculeColors>,
+    ) -> Result<Display, DisplayError> {
+        let (instances, center) = molecular::project_bonds(
+            &input::MoleculeInput::from(self),
+            ids,
+            style.representation,
+            style.molecule_colors.as_ref().or(palette),
+        )?;
         Ok(Display {
             mesh: MeshData::default(),
             instances,

@@ -12,15 +12,16 @@ const playwright = process.env.PLAYWRIGHT_MODULE || join(root, "target/browser-c
 const { chromium } = await import(pathToFileURL(playwright));
 
 test("typed JS scenes render/update/screenshot and animations play in a real browser", { timeout: 60000 }, async () => {
+    const ckRoot = join(pkg, "node_modules/@cosmol-studio/cosmolkit");
     const files = new Map([
         ["index.js", join(pkg, "index.js")],
         ["protein.cif", join(root, "cosmol_viewer/examples/6fi1.cif")],
         ["cosmol_viewer_wasm.js", join(pkg, "cosmol_viewer_wasm.js")],
         ["cosmol_viewer_wasm_bg.wasm", join(pkg, "cosmol_viewer_wasm_bg.wasm")],
-        ["ck/cosmolkit_wasm.js", join(pkg, "node_modules/@cosmol-studio/cosmolkit/cosmolkit_wasm.js")],
-        ["ck/cosmolkit_wasm_bg.wasm", join(pkg, "node_modules/@cosmol-studio/cosmolkit/cosmolkit_wasm_bg.wasm")],
+        ["ck/index.js", join(ckRoot, "index.js")],
+        ["ck/cosmolkit_wasm.js", join(ckRoot, "cosmolkit_wasm.js")],
+        ["ck/cosmolkit_wasm_bg.wasm", join(ckRoot, "cosmolkit_wasm_bg.wasm")],
     ]);
-    const ckRoot = join(pkg, "node_modules/@cosmol-studio/cosmolkit");
     for (const file of await readdir(join(ckRoot, "snippets"), { recursive: true, withFileTypes: true })) {
         if (file.isFile()) {
             const path = join(file.parentPath, file.name);
@@ -33,7 +34,7 @@ test("typed JS scenes render/update/screenshot and animations play in a real bro
         const name = request.url.slice(1);
         if (request.url === "/") {
             response.setHeader("Content-Type", "text/html");
-            response.end('<!doctype html><html><head><script type="importmap">{"imports":{"@cosmol-studio/cosmol-viewer":"/index.js","@cosmol-studio/cosmolkit":"/ck/cosmolkit_wasm.js"}}</script></head><body><section id="viewport"><canvas id="viewer" width="128" height="128"></canvas></section><canvas id="mounted" width="128" height="128"></canvas><canvas id="animation" width="128" height="128"></canvas></body></html>');
+            response.end('<!doctype html><html><head><script type="importmap">{"imports":{"@cosmol-studio/cosmol-viewer":"/index.js","@cosmol-studio/cosmolkit":"/ck/index.js"}}</script></head><body><section id="viewport"><canvas id="viewer" width="128" height="128"></canvas></section><canvas id="mounted" width="128" height="128"></canvas><canvas id="animation" width="128" height="128"></canvas></body></html>');
         } else if (files.has(name)) {
             try {
                 response.setHeader("Content-Type", name.endsWith(".wasm") ? "application/wasm" : "text/javascript");
@@ -63,9 +64,12 @@ test("typed JS scenes render/update/screenshot and animations play in a real bro
             const hasDefaultInit = "default" in cv;
             const molecule = ck.Molecule.fromSmiles("CO").withAdded3dConformer([[0, 0, 0], [2, 0, 0]]);
             const molecularScene = cv.Scene.new();
+            const palette = cv.MoleculeColors.new({C: new Uint8Array([114, 132, 154])});
+            molecularScene.setMoleculePalette(palette);
             molecularScene.add(molecule);
             const molecularShapes = molecularScene.shapeCount();
             molecularScene.free();
+            palette.free();
             molecule.free();
             const scene = cv.Scene.new();
             scene.set("sphere", cv.Sphere.new(new Float32Array([0, 0, 0]), 1));

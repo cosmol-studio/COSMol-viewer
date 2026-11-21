@@ -87,9 +87,9 @@ extern "C" {
     pub type StyleInput;
 }
 impl StyleInput {
-    pub(crate) fn representation(
+    pub(crate) fn display_style(
         &self,
-    ) -> Result<cosmol_viewer_core::styles::Representation, JsValue> {
+    ) -> Result<cosmol_viewer_core::styles::DisplayStyle, JsValue> {
         if !viewer_instance(self.as_ref(), |types| &types.style)? {
             return Err(error("expected Style"));
         }

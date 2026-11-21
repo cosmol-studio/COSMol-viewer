@@ -218,6 +218,21 @@ impl MeshData {
 #[derive(Debug, Clone, Copy)]
 pub struct Color(pub Vec3);
 
+impl Color {
+    pub fn from_hex(value: &str) -> Result<Self, &'static str> {
+        let hex = value.strip_prefix('#').unwrap_or(value);
+        if hex.len() != 6 || !hex.is_ascii() {
+            return Err("Hex color must contain six ASCII hex digits");
+        }
+        let mut rgb = [0; 3];
+        for (index, output) in rgb.iter_mut().enumerate() {
+            *output = u8::from_str_radix(&hex[index * 2..index * 2 + 2], 16)
+                .map_err(|_| "Invalid hex color")?;
+        }
+        Ok(Self::from(rgb))
+    }
+}
+
 impl From<Vec3> for Color {
     fn from(c: Vec3) -> Self {
         Color(c)

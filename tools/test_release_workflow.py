@@ -87,6 +87,8 @@ const github = {
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual("--prerelease" in result.stdout, "-" in tag)
             self.assertEqual("--latest=false" in result.stdout, "-" in tag)
+            arguments = result.stdout.splitlines()
+            self.assertEqual(arguments[arguments.index("--title") + 1], f"COSMol Viewer V{tag[1:]}")
 
     def test_untagged_or_different_commit_is_skipped(self):
         for tags in ([], [self.tag(sha="other")], [self.tag(name="non-version")]):

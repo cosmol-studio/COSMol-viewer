@@ -39,6 +39,7 @@ impl<T: Clone> SourceReferences<T> {
     }
 }
 
+use crate::styles::MoleculeColors;
 use crate::utils::Color;
 use crate::utils::InstanceGroups;
 use crate::utils::Logger;
@@ -81,6 +82,10 @@ pub struct Scene {
     pub viewport: Option<[usize; 2]>,
     pub scene_center: [f32; 3],
     pub camera_lights: Option<Lighting>,
+    /// Default element colors for new molecular displays.
+    #[serde(skip)]
+    #[doc(hidden)]
+    pub molecule_palette: Option<MoleculeColors>,
 }
 
 #[derive(Error, Debug)]
@@ -106,6 +111,7 @@ impl Default for Scene {
             viewport: None,
             scene_center: [0.0, 0.0, 0.0],
             camera_lights: None,
+            molecule_palette: None,
         }
     }
 }
@@ -194,7 +200,7 @@ impl Scene {
         &mut self,
         item: T,
     ) -> Result<(), crate::display::DisplayError> {
-        let shape = item.to_shape(None)?;
+        let shape = item.to_shape_with_palette(None, self.molecule_palette.as_ref())?;
         self.unnamed_shapes.push(shape);
         Ok(())
     }
@@ -205,8 +211,21 @@ impl Scene {
         name: impl Into<String>,
         item: T,
     ) -> Result<(), crate::display::DisplayError> {
-        let shape = item.to_shape(None)?;
+        let shape = item.to_shape_with_palette(None, self.molecule_palette.as_ref())?;
         self.named_shapes.insert(name.into(), shape);
+        Ok(())
+    }
+
+    /// Set the default element colors for subsequent molecular displays.
+    /// Pass `MoleculeColors::default()` to restore the built-in colors.
+    pub fn set_molecule_palette(
+        &mut self,
+        colors: &MoleculeColors,
+    ) -> Result<(), crate::display::DisplayError> {
+        if colors.atom_ids().next().is_some() {
+            return Err(crate::display::DisplayError::PaletteContainsAtomColors);
+        }
+        self.molecule_palette = Some(colors.clone());
         Ok(())
     }
 
@@ -453,6 +472,7 @@ impl Interpolatable for Scene {
             viewport: self.viewport,
             scene_center: [scene_center.x, scene_center.y, scene_center.z],
             camera_lights: None,
+            molecule_palette: self.molecule_palette.clone(),
         }
     }
 }

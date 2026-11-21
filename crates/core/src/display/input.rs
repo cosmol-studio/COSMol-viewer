@@ -263,6 +263,7 @@ impl SourceInput {
                     m,
                     &ids.iter().copied().map(ck::AtomId::new).collect::<Vec<_>>(),
                     style,
+                    None,
                 )?;
                 (MeshData::default(), groups, center)
             }
@@ -271,6 +272,7 @@ impl SourceInput {
                     m,
                     &ids.iter().copied().map(ck::BondId::new).collect::<Vec<_>>(),
                     style,
+                    None,
                 )?;
                 (MeshData::default(), groups, center)
             }

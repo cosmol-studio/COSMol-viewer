@@ -1,5 +1,6 @@
 use crate::input::ColorInput;
 use crate::selection::NativeSource;
+use crate::styles::MoleculeColors;
 use cosmol_viewer_core::scene::{Scene as _Scene, default_light_color};
 use pyo3::prelude::*;
 
@@ -44,7 +45,7 @@ impl Scene {
     ) -> PyResult<()> {
         let source = item.with_native(|item| {
             match style {
-                Some(style) => self.inner.add((item, style.representation())),
+                Some(style) => self.inner.add((item, style.display_style())),
                 None => self.inner.add(item),
             }
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
@@ -62,13 +63,20 @@ impl Scene {
     ) -> PyResult<()> {
         let source = item.with_native(|item| {
             match style {
-                Some(style) => self.inner.set(name, (item, style.representation())),
+                Some(style) => self.inner.set(name, (item, style.display_style())),
                 None => self.inner.set(name, item),
             }
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
         })?;
         self.sources.set(name, source);
         Ok(())
+    }
+    /// Set the element palette for subsequent molecular displays.
+    /// Use ``MoleculeColors.default()`` to restore the built-in palette.
+    pub fn set_molecule_palette(&mut self, colors: &MoleculeColors) -> PyResult<()> {
+        self.inner
+            .set_molecule_palette(&colors.inner)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
     }
     pub(crate) fn recenter_on(
         &mut self,

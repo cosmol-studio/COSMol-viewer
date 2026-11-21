@@ -17,6 +17,12 @@ scientificScene.set("protein", protein, Style.cartoon().rainbowResidues());
 scientificScene.recenterOn(molecule);
 scientificScene.add(molecule, Style.ballAndStick());
 scientificScene.add(protein, Style.surface());
+const palette = cv.MoleculeColors.new({C: new Uint8Array([114, 132, 154])});
+scientificScene.setMoleculePalette(palette);
+scientificScene.set("molecule", molecule, Style.stick().colors(palette.withAtomColors({0: new Uint8Array([255, 180, 84])})));
+scientificScene.setMoleculePalette(cv.MoleculeColors.default());
+// @ts-expect-error Atom color entries use the same RGB bytes as Style.color().
+palette.withAtomColors({0: [255, 180, 84]});
 // @ts-expect-error Invalid scene inputs must not collapse to any.
 scientificScene.add({}, Style.cartoon());
 // @ts-expect-error Foreign source types must not collapse to any.

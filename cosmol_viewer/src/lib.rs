@@ -6,7 +6,7 @@ pub use cosmol_viewer_core::{RenderQuality, parser, scene::Animation, scene::Sce
 pub use cosmolkit;
 
 pub use cosmol_viewer_core::selection;
-pub use cosmol_viewer_core::styles::{BallAndStick, Cartoon, Surface};
+pub use cosmol_viewer_core::styles::{BallAndStick, Cartoon, MoleculeColors, Surface};
 pub use cosmol_viewer_core::{display, styles};
 pub use selection::{Selectable, select};
 

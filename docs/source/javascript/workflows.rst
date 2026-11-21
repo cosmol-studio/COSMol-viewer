@@ -27,6 +27,46 @@ retain their own references. Failed replacements preserve the old content and
 ownership. ``recenterOn`` stores only the center. After all owners release an
 import, passing the CK object again imports its current data.
 
+Molecular colors
+----------------
+
+.. include:: ../shared/molecular_colors.inc
+
+The code below uses three positioned CK molecules, ``molecule``, ``first``,
+and ``second``. The last two share atom IDs for reuse of one highlight
+scheme. JavaScript accepts RGB colors as ``Uint8Array`` values.
+
+.. code-block:: javascript
+
+   const coloredScene = cv.Scene.new();
+   const palette = cv.MoleculeColors.new({C: new Uint8Array([92, 203, 229])});
+   coloredScene.setMoleculePalette(palette);
+   const sticks = cv.Style.stick();
+   coloredScene.set("reference", molecule, sticks);
+
+   const shared = palette.withAtomColors({0: new Uint8Array([255, 209, 102])});
+   const highlighted = sticks.colors(shared);
+   coloredScene.set("first", first, highlighted);
+   coloredScene.set("second", second, highlighted);
+
+   // Give only the second display a different atom color.
+   const pink = palette.withAtomColors({0: new Uint8Array([242, 131, 203])});
+   const pinkSticks = sticks.colors(pink);
+   coloredScene.set("second", second, pinkSticks);
+
+   const defaults = cv.MoleculeColors.default();
+   const builtinSticks = sticks.colors(defaults);
+   coloredScene.set("second", second, builtinSticks);
+   coloredScene.setMoleculePalette(defaults);
+   for (const value of [builtinSticks, defaults, pinkSticks, pink, highlighted, shared, sticks, palette]) {
+       value.free();
+   }
+
+Run the `browser example <https://github.com/cosmol-studio/COSMol-viewer/tree/main/wasm/examples/browser>`_
+and select **Molecular colors**. Top left uses the scene palette, top right and
+bottom left share yellow highlights, and bottom right uses a separate pink
+scheme. Use **Restore built-in colors** to compare with the original appearance.
+
 Selections
 ----------
 

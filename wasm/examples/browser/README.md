@@ -33,6 +33,11 @@ not load the WASM modules and scientific data.
 The page demonstrates:
 
 - **Molecule:** a CK molecule, atom/element selections and multiple display styles.
+- **Molecular colors:** four ligand copies compare a scene palette, shared
+  yellow atom colors, and a separate pink scheme. Use **Restore built-in
+  colors** to reset the scene and replace the four displays, then **Apply
+  custom colors** to switch back. The Rust and Python `molecule_colors`
+  examples use the same layout and export both versions offscreen.
 - **Protein + ligand:** CK Protein and Molecule objects in the same scene, with
   a residue cartoon and molecular ball-and-stick display.
 - **Highlight residues:** continuous Cartoon ribbon with residues 10?14 in red,
@@ -45,8 +50,8 @@ The page demonstrates:
 - `scene.recenterOn(molecule)`, FPS/camera overlays and PNG screenshots.
 
 The scientific inputs reuse `cosmol_viewer/examples/6fi1.cif` and
-`6fi1_ligand.sdf`. Importing Viewer's `index.js` initializes CK and Viewer. The HTML import map
-makes the example and Viewer resolve exactly the same CK module, so foreign
+`6fi1_ligand.sdf`. CK and Viewer initialize their WASM modules on import. The
+HTML import map makes the example and Viewer resolve the same CK entry point, so foreign
 object identity checks work without copying or patching generated bindings.
 
 See [main.js](main.js) for the API calls. Switching examples closes the previous

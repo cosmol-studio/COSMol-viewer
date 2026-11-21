@@ -149,6 +149,20 @@ binding_contract! {
             javascript: Projection::supported("Scene.setBackgroundColor", &[Browser]),
         },
         {
+            semantic_id: "MoleculeColors.default", rust: crate::styles::MoleculeColors::default,
+            signature: fn() -> crate::styles::MoleculeColors, receiver: none, platforms: &[Native, Browser],
+            python: Projection::supported("MoleculeColors.default", &[Native, Notebook]),
+            javascript: Projection::supported("MoleculeColors.default", &[Browser]),
+        },
+        {
+            semantic_id: "Scene.set_molecule_palette", rust: crate::scene::Scene::set_molecule_palette,
+            signature: fn(scene: &mut crate::scene::Scene, colors: &crate::styles::MoleculeColors) -> Result<(), crate::display::DisplayError>,
+            receiver: mutable, platforms: &[Native, Browser],
+            python: Projection::supported("Scene.set_molecule_palette", &[Native, Notebook]),
+            javascript: Projection::supported("Scene.setMoleculePalette", &[Browser]),
+            notes: "Element colors for subsequent molecular displays. Already projected displays retain their colors.",
+        },
+        {
             semantic_id: "Scene.set_transparent_background", rust: crate::scene::Scene::set_transparent_background,
             signature: fn(scene: &mut crate::scene::Scene, enabled: bool), receiver: mutable, platforms: &[Native, Browser],
             python: Projection::supported("Scene.set_transparent_background", &[Native, Notebook]),

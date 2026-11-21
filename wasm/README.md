@@ -95,8 +95,8 @@ bond selections use Stick and residue selections use Cartoon.
 
 ## COSMolKit scientific objects
 
-In a browser application, importing the Viewer npm entry initializes both CK
-and Viewer WASM modules automatically:
+In a browser application, CK and Viewer each initialize their WASM module on
+import:
 
 ```js
 import * as ck from "@cosmol-studio/cosmolkit";

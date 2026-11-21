@@ -30,20 +30,7 @@ pub enum ColorInput {
 impl ColorInput {
     pub(crate) fn into_color(self) -> PyResult<Color> {
         match self {
-            Self::Hex(value) => {
-                let hex = value.strip_prefix('#').unwrap_or(&value);
-                if hex.len() != 6 || !hex.is_ascii() {
-                    return Err(PyValueError::new_err(
-                        "Hex color must contain six ASCII hex digits",
-                    ));
-                }
-                let mut rgb = [0; 3];
-                for (index, output) in rgb.iter_mut().enumerate() {
-                    *output = u8::from_str_radix(&hex[index * 2..index * 2 + 2], 16)
-                        .map_err(|_| PyValueError::new_err("Invalid hex color"))?;
-                }
-                Ok(Color::from(rgb))
-            }
+            Self::Hex(value) => Color::from_hex(&value).map_err(PyValueError::new_err),
             Self::Rgb(values) => {
                 let mut rgb = [0; 3];
                 for (output, input) in rgb.iter_mut().zip(values) {

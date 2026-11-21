@@ -3,7 +3,7 @@
 use super::input::MoleculeInput;
 use super::{DisplayError, center, position};
 use crate::shapes::{SphereInstance, StickInstance};
-use crate::styles::{Coordinates, MolecularOptions, Representation};
+use crate::styles::{Coordinates, MolecularOptions, MoleculeColors, Representation};
 use crate::utils::{InstanceGroups, Material, OutlineInstanceGroup};
 use cosmolkit::{self as ck, AtomId, BondId, Element};
 use glam::Vec3;
@@ -142,6 +142,7 @@ pub(super) fn project_atoms(
     molecule: &MoleculeInput,
     ids: &[AtomId],
     style: Representation,
+    colors: Option<&MoleculeColors>,
 ) -> Result<(InstanceGroups, Vec3), DisplayError> {
     let (mode, options) = configuration(style, "molecule atoms")?;
     let mut atom_mask = vec![false; molecule.elements.len()];
@@ -159,7 +160,9 @@ pub(super) fn project_atoms(
         .iter()
         .map(|bond| atom_mask[bond.begin] && atom_mask[bond.end])
         .collect();
-    project(molecule, &atom_mask, &bond_mask, mode, options, false)
+    project(
+        molecule, &atom_mask, &bond_mask, mode, options, false, colors,
+    )
 }
 
 /// Partition complete bonds at their midpoint, preserving connections between
@@ -190,13 +193,14 @@ pub(super) fn project_protein_atoms(
         .iter()
         .map(|b| atom_mask[b.begin] || atom_mask[b.end])
         .collect::<Vec<_>>();
-    project(molecule, &atom_mask, &bond_mask, mode, options, true)
+    project(molecule, &atom_mask, &bond_mask, mode, options, true, None)
 }
 
 pub(super) fn project_bonds(
     molecule: &MoleculeInput,
     ids: &[BondId],
     style: Representation,
+    colors: Option<&MoleculeColors>,
 ) -> Result<(InstanceGroups, Vec3), DisplayError> {
     let (mode, options) = configuration(style, "molecule bonds")?;
     let mut atom_mask = vec![false; molecule.elements.len()];
@@ -213,7 +217,9 @@ pub(super) fn project_bonds(
         atom_mask[bond.begin] = true;
         atom_mask[bond.end] = true;
     }
-    project(molecule, &atom_mask, &bond_mask, mode, options, false)
+    project(
+        molecule, &atom_mask, &bond_mask, mode, options, false, colors,
+    )
 }
 
 fn project(
@@ -223,7 +229,16 @@ fn project(
     mode: MolecularMode,
     options: MolecularOptions,
     partition_bonds: bool,
+    colors: Option<&MoleculeColors>,
 ) -> Result<(InstanceGroups, Vec3), DisplayError> {
+    if let Some(colors) = colors
+        && let Some(index) = colors.atom_ids().find(|&id| id >= molecule.elements.len())
+    {
+        return Err(DisplayError::InvalidEntity {
+            kind: "atom",
+            index,
+        });
+    }
     if !atom_mask.iter().any(|x| *x) {
         return Ok((InstanceGroups::default(), Vec3::ZERO));
     }
@@ -271,7 +286,13 @@ fn project(
             if !atom_mask[i] {
                 continue;
             }
-            let color = atom_color(molecule, i, options.material, atom_colors.as_deref());
+            let color = atom_color(
+                molecule,
+                i,
+                options.material,
+                colors,
+                atom_colors.as_deref(),
+            );
             groups.spheres.push(SphereInstance::new(
                 [pos[0] * scale, pos[1] * scale, pos[2] * scale],
                 vdw_radius(&molecule.elements[i])
@@ -307,8 +328,8 @@ fn project(
                 continue;
             };
 
-            let color_a = bond_color(molecule, *a, options.material);
-            let color_b = bond_color(molecule, *b, options.material);
+            let color_a = bond_color(molecule, *a, options.material, colors);
+            let color_b = bond_color(molecule, *b, options.material, colors);
             let color_a = [color_a[0], color_a[1], color_a[2], alpha];
             let color_b = [color_b[0], color_b[1], color_b[2], alpha];
 
@@ -458,22 +479,35 @@ fn atom_color(
     molecule: &MoleculeInput,
     index: usize,
     material: Material,
+    scheme: Option<&MoleculeColors>,
     colors: Option<&[Option<Vec3>]>,
 ) -> Vec3 {
-    material
-        .color
+    let element = &molecule.elements[index];
+    scheme
+        .and_then(|scheme| scheme.atom(index))
+        .or(material.color)
         .or_else(|| colors.and_then(|colors| colors.get(index).copied().flatten()))
-        .unwrap_or_else(|| element_color(&molecule.elements[index]))
+        .or_else(|| scheme.and_then(|scheme| scheme.element(element)))
+        .unwrap_or_else(|| element_color(element))
 }
-fn bond_color(molecule: &MoleculeInput, index: usize, material: Material) -> Vec3 {
-    material.color.unwrap_or_else(|| {
-        let element = molecule.elements[index];
-        if element == Element::C {
-            Vec3::splat(0.75)
-        } else {
-            element_color(&element)
-        }
-    })
+fn bond_color(
+    molecule: &MoleculeInput,
+    index: usize,
+    material: Material,
+    scheme: Option<&MoleculeColors>,
+) -> Vec3 {
+    let element = &molecule.elements[index];
+    scheme
+        .and_then(|scheme| scheme.atom(index))
+        .or(material.color)
+        .or_else(|| scheme.and_then(|scheme| scheme.element(element)))
+        .unwrap_or_else(|| {
+            if *element == Element::C {
+                Vec3::splat(0.75)
+            } else {
+                element_color(element)
+            }
+        })
 }
 
 fn scaled_point(point: [f32; 3], scale: f32) -> [f32; 3] {

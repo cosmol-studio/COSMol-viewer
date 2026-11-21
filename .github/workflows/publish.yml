@@ -92,7 +92,7 @@ jobs:
                   cp wasm/js/* wasm/README.md LICENSE wasm/pkg/
                   npm pkg set --prefix wasm/pkg \
                       name=@cosmol-studio/cosmol-viewer type=module main=index.js types=index.d.ts \
-                      'sideEffects[]=./index.js' dependencies.@cosmol-studio/cosmolkit=0.6.2 \
+                      'sideEffects[]=./index.js' dependencies.@cosmol-studio/cosmolkit=0.6.3 \
                       publishConfig.access=public \
                       "publishConfig.tag=$(node -p "require('./wasm/pkg/package.json').version.split('-')[1]?.split('.')[0] || 'latest'")"
                   npm pkg set --prefix wasm/pkg 'files[]=index.js'

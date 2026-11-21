@@ -2,7 +2,7 @@ use cosmol_viewer_core::{
     display::DisplayError,
     scene::Scene,
     selection::select,
-    styles::{BallAndStick, Cartoon, Coordinates, Sphere, Stick, Surface},
+    styles::{BallAndStick, Cartoon, Coordinates, MoleculeColors, Sphere, Stick, Surface},
     utils::{Interpolatable, RustLogger},
 };
 use cosmolkit as ck;
@@ -22,6 +22,59 @@ fn molecule(smiles: &str, xyz: Vec<[f64; 3]>) -> ck::Molecule {
 
 fn carbon_oxygen() -> ck::Molecule {
     molecule("CO", vec![[1.0, 2.0, 3.0], [2.2, 2.0, 3.0]])
+}
+
+#[test]
+fn reusable_molecular_colors_cover_atom_glyphs_and_bond_halves() {
+    let mol = carbon_oxygen();
+    let mut scene = Scene::new();
+    scene.set("mol", &mol).unwrap();
+    let original = serde_json::to_value(&scene).unwrap();
+
+    let palette = MoleculeColors::new([("C", [0, 255, 255].into())]).unwrap();
+    scene.set_molecule_palette(&palette).unwrap();
+    assert_eq!(serde_json::to_value(&scene).unwrap(), original);
+    scene.set("mol", &mol).unwrap();
+    let groups = scene.get_instances_grouped();
+    assert_eq!(groups.spheres[0].color, [0.0, 1.0, 1.0, 1.0]);
+    assert_eq!(groups.sticks[0].color, [0.0, 1.0, 1.0, 1.0]);
+
+    let highlight = palette.with_atom_colors([(1, [0, 255, 0].into())]).unwrap();
+    scene
+        .set(
+            "mol",
+            (
+                &mol,
+                BallAndStick::default().color("#0000FF").colors(&highlight),
+            ),
+        )
+        .unwrap();
+    let groups = scene.get_instances_grouped();
+    assert_eq!(groups.spheres[0].color, [0.0, 0.0, 1.0, 1.0]);
+    assert_eq!(groups.spheres[1].color, [0.0, 1.0, 0.0, 1.0]);
+    assert_eq!(groups.sticks[0].color, groups.spheres[0].color);
+    assert_eq!(groups.sticks[1].color, groups.spheres[1].color);
+
+    let before = serde_json::to_value(&scene).unwrap();
+    let invalid = palette.with_atom_colors([(2, [255, 0, 0].into())]).unwrap();
+    assert!(matches!(
+        scene.set("mol", (&mol, Stick::default().colors(&invalid))),
+        Err(DisplayError::InvalidEntity {
+            kind: "atom",
+            index: 2
+        })
+    ));
+    assert!(scene.set_molecule_palette(&highlight).is_err());
+    assert_eq!(serde_json::to_value(&scene).unwrap(), before);
+
+    let default = MoleculeColors::default();
+    scene
+        .set("mol", (&mol, BallAndStick::default().colors(&default)))
+        .unwrap();
+    assert_eq!(serde_json::to_value(&scene).unwrap(), original);
+    scene.set_molecule_palette(&default).unwrap();
+    scene.set("mol", &mol).unwrap();
+    assert_eq!(serde_json::to_value(&scene).unwrap(), original);
 }
 
 #[test]

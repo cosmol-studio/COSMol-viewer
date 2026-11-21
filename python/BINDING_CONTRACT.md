@@ -57,7 +57,7 @@ The selection adapter accepts actual `cosmolkit.Molecule` and `cosmolkit.Protein
 objects. The binding imports the source once into this extension's native CK
 value: both Molecule and Protein use `to_transfer_binary()` and the corresponding
 native `ck::Molecule::from_transfer_binary` / `ck::Protein::from_transfer_binary`.
-Rust pins CK `0.6.2` and Python pins `0.6.2` for the transfer format's
+Rust pins CK `0.6.3` and Python pins `0.6.3` for the transfer format's
 exact-version requirement. Protein is decoded directly without mmCIF conversion
 or another protein projection.
 

@@ -62,14 +62,14 @@ npm --prefix wasm/pkg pkg set 'type=module'
 npm --prefix wasm/pkg pkg set 'main=index.js'
 npm --prefix wasm/pkg pkg set 'types=index.d.ts'
 npm --prefix wasm/pkg pkg set 'sideEffects[]=./index.js'
-npm --prefix wasm/pkg pkg set 'dependencies.@cosmol-studio/cosmolkit=0.6.2'
+npm --prefix wasm/pkg pkg set 'dependencies.@cosmol-studio/cosmolkit=0.6.3'
 ```
 
 The CK dependency must match
 `package.metadata.javascript.dependencies` in `wasm/Cargo.toml`.
-CK and Viewer are separate packages. The copied entry point registers CK's
-classes after automatically initializing both WASM modules; it does not bundle
-CK into Viewer. The `sideEffects` entry preserves this initialization when a
+CK and Viewer are separate packages. CK initializes its own WASM module on
+import. The Viewer entry point initializes Viewer WASM and registers CK's
+classes. The `sideEffects` entry preserves this initialization when a
 bundler removes unused exports. `index.d.ts` re-exports generated types without
 advertising a default initializer.
 

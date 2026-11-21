@@ -34,7 +34,7 @@ web-sys = { version = "=0.3.105", optional = true, features = [
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 cosmol_viewer = { path = "../cosmol_viewer", optional = true }
-cosmolkit = { version = "=0.6.2", default-features = false, features = ["cap-bio", "cap-io", "cap-kekulize", "cap-transforms"], optional = true }
+cosmolkit = { version = "=0.6.3", default-features = false, features = ["cap-bio", "cap-io", "cap-kekulize", "cap-transforms"], optional = true }
 futures-channel = { version = "0.3", optional = true }
 
 [features]

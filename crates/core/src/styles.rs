@@ -1,7 +1,110 @@
 //! Display configuration, independent of scientific objects and selections.
 
 use crate::utils::{Color, Material, OutlineSettings};
+use cosmolkit::Element;
+use glam::Vec3;
 use serde::{Deserialize, Serialize};
+use std::{collections::HashMap, sync::Arc};
+
+/// Reusable element colors and optional overrides by zero-based CK atom ID.
+/// Unspecified elements use the built-in molecular colors.
+#[derive(Debug, Clone, Default)]
+pub struct MoleculeColors {
+    elements: Option<Arc<HashMap<Element, Vec3>>>,
+    atoms: Option<Arc<HashMap<usize, Vec3>>>,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum MoleculeColorError {
+    #[error("unknown element symbol {0:?}")]
+    InvalidElement(String),
+    #[error("RGB components must be finite and between 0 and 1")]
+    InvalidColor,
+    #[error("invalid atom ID {0:?}; expected a nonnegative integer")]
+    InvalidAtomId(String),
+}
+
+impl MoleculeColors {
+    pub fn new(
+        elements: impl IntoIterator<Item = (impl AsRef<str>, Color)>,
+    ) -> Result<Self, MoleculeColorError> {
+        let elements = elements
+            .into_iter()
+            .map(|(symbol, color)| {
+                let symbol = symbol.as_ref();
+                let element = Element::from_symbol(symbol)
+                    .ok_or_else(|| MoleculeColorError::InvalidElement(symbol.to_owned()))?;
+                Ok((element, checked_color(color)?))
+            })
+            .collect::<Result<HashMap<_, _>, _>>()?;
+        Ok(Self {
+            elements: (!elements.is_empty()).then(|| Arc::new(elements)),
+            atoms: None,
+        })
+    }
+
+    /// Return a new scheme with the given atom colors, sharing the element colors.
+    pub fn with_atom_colors(
+        &self,
+        atoms: impl IntoIterator<Item = (usize, Color)>,
+    ) -> Result<Self, MoleculeColorError> {
+        let atoms = atoms
+            .into_iter()
+            .map(|(id, color)| Ok((id, checked_color(color)?)))
+            .collect::<Result<HashMap<_, _>, _>>()?;
+        Ok(Self {
+            elements: self.elements.clone(),
+            atoms: (!atoms.is_empty()).then(|| Arc::new(atoms)),
+        })
+    }
+
+    pub(crate) fn element(&self, element: &Element) -> Option<Vec3> {
+        self.elements.as_ref()?.get(element).copied()
+    }
+
+    pub(crate) fn atom(&self, id: usize) -> Option<Vec3> {
+        self.atoms.as_ref()?.get(&id).copied()
+    }
+
+    pub(crate) fn atom_ids(&self) -> impl Iterator<Item = usize> + '_ {
+        self.atoms.iter().flat_map(|atoms| atoms.keys().copied())
+    }
+}
+
+fn checked_color(color: Color) -> Result<Vec3, MoleculeColorError> {
+    if color.0.to_array().iter().all(|x| (0.0..=1.0).contains(x)) {
+        Ok(color.0)
+    } else {
+        Err(MoleculeColorError::InvalidColor)
+    }
+}
+
+/// A display style paired with an optional reusable color scheme.
+#[derive(Debug, Clone)]
+pub struct DisplayStyle {
+    #[doc(hidden)]
+    pub representation: Representation,
+    #[doc(hidden)]
+    pub molecule_colors: Option<MoleculeColors>,
+}
+
+impl<S: Into<Representation>> From<S> for DisplayStyle {
+    fn from(style: S) -> Self {
+        Self {
+            representation: style.into(),
+            molecule_colors: None,
+        }
+    }
+}
+
+impl DisplayStyle {
+    /// Apply a scheme to a molecular glyph style.
+    pub fn set_molecule_colors(&mut self, colors: &MoleculeColors) -> Result<(), &'static str> {
+        self.representation.molecular_options_mut()?;
+        self.molecule_colors = Some(colors.clone());
+        Ok(())
+    }
+}
 
 /// Which stored molecular coordinates to display. Reads never generate coordinates.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
@@ -47,6 +150,13 @@ macro_rules! molecular_style {
             pub fn color<C: Into<Color>>(mut self, color: C) -> Self {
                 self.options.material.color = Some(color.into().into());
                 self
+            }
+            /// Apply a reusable color scheme to this display.
+            pub fn colors(self, colors: &MoleculeColors) -> DisplayStyle {
+                DisplayStyle {
+                    representation: self.into(),
+                    molecule_colors: Some(colors.clone()),
+                }
             }
             pub fn opacity(mut self, opacity: f32) -> Self {
                 assert!(opacity.is_finite() && (0.0..=1.0).contains(&opacity));

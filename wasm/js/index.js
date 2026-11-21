@@ -2,7 +2,7 @@
 import * as ck from "@cosmol-studio/cosmolkit";
 import initWasm, { __setCkTypes, __setViewerTypes, Selection, Sphere, Stick, Style } from "./cosmol_viewer_wasm.js";
 
-await Promise.all([ck.default(), initWasm()]);
+await initWasm();
 
 __setCkTypes(ck.Molecule, ck.Protein, ck.Element);
 __setViewerTypes(Selection, Sphere, Stick, Style);

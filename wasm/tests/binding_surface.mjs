@@ -15,6 +15,37 @@ ckTypes.initSync({ module: readFileSync(join(pkg, "node_modules/@cosmol-studio/c
 binding.__setCkTypes(ckTypes.Molecule, ckTypes.Protein, ckTypes.Element);
 binding.__setViewerTypes(binding.Selection, binding.Sphere, binding.Stick, binding.Style);
 
+test("reusable molecular colors share the same atom IDs across displays and can be reset", () => {
+    const rgb = (...values) => new Uint8Array(values);
+    const palette = binding.MoleculeColors.new({C: rgb(0, 255, 255)});
+    const highlight = palette.withAtomColors({1: rgb(0, 255, 0)});
+    const defaults = binding.MoleculeColors.default();
+    const scene = binding.Scene.new();
+    const ballAndStick = binding.Style.ballAndStick();
+    const colored = ballAndStick.colors(highlight);
+    const mol = ckTypes.Molecule.fromSmiles("CO").withAdded3dConformer([[0, 0, 0], [2, 0, 0]]);
+    const other = mol.copy();
+    const named = name => JSON.parse(scene.toJson()).named_shapes[name].Display.instances;
+    try {
+        scene.setMoleculePalette(palette);
+        scene.set("default", mol);
+        scene.set("first", mol, colored);
+        scene.set("second", other, colored);
+        assert.deepEqual(named("default").sticks.map(stick => stick.color), [[0, 1, 1, 1], [1, 0, 0, 1]]);
+        assert.deepEqual(named("first").sticks.map(stick => stick.color), [[0, 1, 1, 1], [0, 1, 0, 1]]);
+        assert.deepEqual(named("first"), named("second"));
+        assert.throws(() => binding.MoleculeColors.new({C: [255, 0, 0]}), TypeError);
+        assert.throws(() => palette.withAtomColors({"-1": rgb(0, 0, 0)}), RangeError);
+        assert.throws(() => scene.setMoleculePalette(highlight), /element colors only/);
+        scene.setMoleculePalette(defaults);
+        scene.set("default", mol);
+        assert.deepEqual(named("default").sticks[0].color, [0.75, 0.75, 0.75, 1]);
+        assert.deepEqual(named("first").sticks[0].color, [0, 1, 1, 1]);
+    } finally {
+        for (const value of [scene, colored, ballAndStick, defaults, highlight, palette, other, mol]) value.free();
+    }
+});
+
 test("CK selections project molecules and proteins without viewer chemistry wrappers", async () => {
     const ckPath = join(pkg, "node_modules/@cosmol-studio/cosmolkit");
     const ck = await import(pathToFileURL(join(ckPath, "cosmolkit_wasm.js")));

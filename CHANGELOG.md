@@ -1,14 +1,25 @@
 # Changelog
 
 <!-- release-header:start -->
-**COSMol Viewer** is a molecular visualization library for Rust, Python, and the web.
-
-[Source repository](https://github.com/cosmol-studio/COSMol-viewer) ·
-[Documentation](https://viewer.cosmol.org/) ·
-[Web tools](https://tools.cosmol.org/) ·
-[Rust crate](https://crates.io/crates/cosmol_viewer) ·
-[Python package](https://pypi.org/project/cosmol-viewer/).
+<p align="center">
+  <img src="https://raw.githubusercontent.com/cosmol-studio/COSMol-viewer/main/docs-web/assets/logo.svg" alt="COSMol Viewer Logo" width="110" height="110" />
+</p>
+<h1 align="center">COSMol Viewer</h1>
+<p align="center"><em>Rust-native molecular visualization with Python and JavaScript bindings.</em></p>
 <!-- release-header:end -->
+
+<!-- release-footer:start -->
+---
+
+<p align="center">
+  <a href="https://viewer.cosmol.org/">Documentation</a> ·
+  <a href="https://tools.cosmol.org/">Web tools</a> ·
+  <a href="https://crates.io/crates/cosmol_viewer">Rust</a> ·
+  <a href="https://pypi.org/project/cosmol-viewer/">Python</a> ·
+  <a href="https://www.npmjs.com/package/@cosmol-studio/cosmol-viewer">JavaScript</a> ·
+  <a href="https://github.com/cosmol-studio/COSMol-viewer">Source</a>
+</p>
+<!-- release-footer:end -->
 
 All notable changes to COSMol Viewer are documented in this file.
 
@@ -16,10 +27,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 The manually triggered GitHub Release workflow uses an unreleased `v*` tag on
-the selected commit. It combines the release-header, matching dated version
-section and release-footer without modifying an existing Release.
+the selected commit. Move completed entries from `Unreleased` into a dated
+version section for each release. The workflow combines the release header,
+matching version section and release footer.
 
-## [0.6.3] - 2026-11-18
+## [Unreleased]
+
+## [0.6.3] - 2026-11-21
 
 ### Added
 
@@ -32,6 +46,12 @@ section and release-footer without modifying an existing Release.
   Residue IDs are zero-based CK IDs; sidechain selection includes heavy atoms only.
 - Add Rust, Python and browser examples for continuous Cartoon residue highlighting
   and protein Stick displays with default element colors and highlighted side chains.
+- Add reusable `MoleculeColors` in Rust, Python and JavaScript. A scene palette
+  sets default element colors, and individual displays can share or override
+  colors by atom ID. The examples compare custom and built-in colors.
+- Export Rust embedding APIs from `cosmol_viewer` and use them in the Dioxus
+  documentation homepage, with a rotating structure and interactive examples
+  for docking, conformers, protein interfaces and structural comparison.
 
 ### Changed
 
@@ -40,6 +60,9 @@ section and release-footer without modifying an existing Release.
 - Compute Cartoon geometry from complete chains and share that computation between
   live displays with identical protein inputs, including differently colored selections.
   Displays retain their own selected mesh patches and materials.
+- Upgrade Rust, Python and npm dependencies to COSMolKit 0.6.3. The Viewer npm
+  entry uses COSMolKit's automatic WASM initialization.
+- Upgrade the Viewer WASM bindings and SVG build dependencies.
 
 ### Fixed
 
@@ -47,6 +70,10 @@ section and release-footer without modifying an existing Release.
   introducing independent spline endpoints and caps for each subset.
 - Preserve cross-selection protein bonds in BallAndStick and Stick displays by
   partitioning full-topology bond geometry at bond midpoints.
+- Apply the scene model and normal matrices when updating geometry, so framing
+  follows changes such as switching from a docking pocket to the full receptor.
+
+[Full comparison v0.6.2...v0.6.3](https://github.com/cosmol-studio/COSMol-viewer/compare/v0.6.2...v0.6.3)
 
 ## [0.6.2] - 2026-11-09
 
@@ -173,9 +200,6 @@ section and release-footer without modifying an existing Release.
 [0.2.25]: https://github.com/cosmol-studio/COSMol-viewer/compare/v0.2.24...v0.2.25
 [0.2.26]: https://github.com/cosmol-studio/COSMol-viewer/compare/v0.2.25...v0.2.26
 
-<!-- release-footer:start -->
-Installation and API usage: [COSMol Viewer documentation](https://viewer.cosmol.org/).
-<!-- release-footer:end -->
 [0.3.0]: https://github.com/cosmol-studio/COSMol-viewer/compare/v0.2.26...v0.3.0
 
 [0.6.3]: https://github.com/cosmol-studio/COSMol-viewer/compare/v0.6.2...v0.6.3

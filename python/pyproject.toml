@@ -1,10 +1,10 @@
 [project]
 name = "cosmol-viewer"
-version = "0.6.3rc2"
+version = "0.6.3"
 requires-python = ">=3.9"
 description = "Molecular visualization tools"
 license = { file = "../LICENSE" }
-dependencies = ["cosmolkit==0.6.2"]
+dependencies = ["cosmolkit==0.6.3"]
 authors = [{name = "95028", email = "wjt@cosmol.org"}]
 readme = "README.md"
 

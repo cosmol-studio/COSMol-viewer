@@ -115,8 +115,9 @@ Notebook payload strings are internal transport endpoints, not replacements
 for typed Scene/Animation parameters. Native-only APIs remain absent in JS.
 The core registry audits semantic availability across languages; it does not
 generate signatures or supply a second implementation.
-The npm entry point awaits CK and Viewer initialization at module evaluation,
-then registers their constructors for instance checks. Its `index.d.ts` re-exports
+CK initializes its own WASM module on import. The Viewer npm entry point
+initializes Viewer WASM at module evaluation, then registers both packages'
+constructors for instance checks. Its `index.d.ts` re-exports
 the official declarations without a default initializer. The official generated
 ES module has no runtime CK import and is embedded
 directly by Python, as before the CK JavaScript adapters were introduced.

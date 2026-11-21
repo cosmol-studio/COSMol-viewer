@@ -13,7 +13,9 @@ pub struct Scene {
     #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
     sources: std::rc::Rc<
         std::cell::RefCell<
-            cosmol_viewer_core::scene::SourceReferences<std::rc::Rc<crate::selection::ImportedSource>>,
+            cosmol_viewer_core::scene::SourceReferences<
+                std::rc::Rc<crate::selection::ImportedSource>,
+            >,
         >,
     >,
 }
@@ -241,7 +243,7 @@ impl Scene {
         item: &crate::selection::SceneInput,
         style: Option<crate::selection::StyleInput>,
     ) -> Result<(), wasm_bindgen::JsValue> {
-        let style = style.as_ref().map(|s| s.representation()).transpose()?;
+        let style = style.as_ref().map(|s| s.display_style()).transpose()?;
         let source = item.with_native(|item| {
             match style {
                 Some(style) => self.state.lock().unwrap().add((item, style)),
@@ -260,7 +262,7 @@ impl Scene {
         style: Option<crate::selection::StyleInput>,
     ) -> Result<(), wasm_bindgen::JsValue> {
         let name = crate::input::read::<String>(name)?;
-        let style = style.as_ref().map(|s| s.representation()).transpose()?;
+        let style = style.as_ref().map(|s| s.display_style()).transpose()?;
         let source = item.with_native(|item| {
             match style {
                 Some(style) => self.state.lock().unwrap().set(&name, (item, style)),
@@ -270,6 +272,20 @@ impl Scene {
         })?;
         self.sources.borrow_mut().set(&name, source);
         Ok(())
+    }
+
+    /// Set the element palette for subsequent molecular displays.
+    /// Use MoleculeColors.default() to restore the built-in palette.
+    #[wasm_bindgen(js_name = setMoleculePalette)]
+    pub fn set_molecule_palette(
+        &self,
+        colors: &crate::styles::MoleculeColors,
+    ) -> Result<(), wasm_bindgen::JsValue> {
+        self.state
+            .lock()
+            .unwrap()
+            .set_molecule_palette(&colors.inner)
+            .map_err(|e| js_sys::RangeError::new(&e.to_string()).into())
     }
 }
 
