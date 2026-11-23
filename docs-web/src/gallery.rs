@@ -279,7 +279,7 @@ impl Timeline {
                 "conformer",
                 (
                     &self.molecule,
-                    BallAndStick::default().outline("#91ACC9", 0.018),
+                    BallAndStick::default().silhouettes("#91ACC9", 1.0),
                 ),
             )
             .map_err(error)?;

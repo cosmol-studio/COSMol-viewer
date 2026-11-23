@@ -1,7 +1,7 @@
 use crate::input::ColorInput;
 use crate::selection::NativeSource;
 use crate::styles::MoleculeColors;
-use cosmol_viewer_core::scene::{Scene as _Scene, default_light_color};
+use cosmol_viewer_core::scene::{Multishadow, Scene as _Scene, Silhouettes, default_light_color};
 use pyo3::prelude::*;
 
 #[derive(Clone)]
@@ -239,6 +239,38 @@ color : tuple[int, int, int] or str
         let color = color.into_color()?;
         self.inner.set_depth_cue_color(color);
         Ok(())
+    }
+
+    /// Enable scene-wide depth outlines for visible ribbons, surfaces, and atom and bond shapes.
+    /// Width is in output pixels. The default depth jump is 3% of the scene depth.
+    #[pyo3(signature = (enabled=true, *, color=None, width=None, depth_jump=None))]
+    pub fn set_silhouettes(
+        &mut self,
+        enabled: bool,
+        color: Option<ColorInput>,
+        width: Option<f32>,
+        depth_jump: Option<f32>,
+    ) -> PyResult<()> {
+        let mut settings = Silhouettes::default();
+        if let Some(color) = color {
+            settings.color = color.into_color()?.into();
+        }
+        settings.width = width.unwrap_or(settings.width);
+        settings.depth_jump = depth_jump.unwrap_or(settings.depth_jump);
+        self.inner
+            .set_silhouettes(enabled.then_some(settings))
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+    }
+
+    /// Toggle Multishadow ambient occlusion. More directions improve smoothness at a GPU cost.
+    #[pyo3(signature = (enabled=true, *, directions=None))]
+    pub fn set_multishadow(&mut self, enabled: bool, directions: Option<u8>) -> PyResult<()> {
+        let settings = directions.map_or_else(Multishadow::default, |directions| Multishadow {
+            directions,
+        });
+        self.inner
+            .set_multishadow(enabled.then_some(settings))
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
     }
 
     #[doc = r##"

@@ -5,14 +5,14 @@ use flate2::{Compression, bufread::GzDecoder, write::GzEncoder};
 use serde::{Serialize, de::DeserializeOwned};
 use std::io::{Read, Write};
 
-pub const PAYLOAD_VERSION: &str = "CMV2";
+pub const PAYLOAD_VERSION: &str = "CMV3";
 pub const MIN_COMPRESSION_BYTES: usize = 1024;
 /// Maximum serialized bytes accepted by the default decoder (not object heap size).
 pub const DEFAULT_MAX_PAYLOAD_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(thiserror::Error, Debug)]
 pub enum PayloadError {
-    #[error("payload decode failed: expected CMV2:R:<base64> or CMV2:G:<base64>")]
+    #[error("payload decode failed: expected CMV3:R:<base64> or CMV3:G:<base64>")]
     InvalidHeader,
     #[error("unsupported payload version: {0}")]
     UnsupportedVersion(String),
@@ -48,10 +48,21 @@ pub fn encode_payload<T: Serialize>(value: &T) -> Result<String, PayloadError> {
     ))
 }
 
-/// Decode a CMV2 notebook payload, accepting at most 64 MiB of postcard bytes.
-/// Old unprefixed and CMV1 payloads are rejected; sender/receiver versions must match.
+/// Decode a current-format notebook payload, accepting at most 64 MiB of postcard bytes.
 pub fn decode_payload<T: DeserializeOwned>(payload: &str) -> Result<T, PayloadError> {
     decode_payload_with_limit(payload, DEFAULT_MAX_PAYLOAD_BYTES)
+}
+
+pub(crate) fn decode_notebook_payload<T, V2>(payload: &str) -> Result<T, PayloadError>
+where
+    T: DeserializeOwned,
+    V2: DeserializeOwned + Into<T>,
+{
+    if payload.trim_start().starts_with("CMV2:") {
+        decode_version::<V2>(payload, DEFAULT_MAX_PAYLOAD_BYTES, "CMV2").map(Into::into)
+    } else {
+        decode_payload(payload)
+    }
 }
 
 /// Decode with an explicit serialized-byte limit, checked before deserialization.
@@ -62,11 +73,19 @@ pub fn decode_payload_with_limit<T: DeserializeOwned>(
     payload: &str,
     max_decoded_bytes: usize,
 ) -> Result<T, PayloadError> {
+    decode_version(payload, max_decoded_bytes, PAYLOAD_VERSION)
+}
+
+fn decode_version<T: DeserializeOwned>(
+    payload: &str,
+    max_decoded_bytes: usize,
+    expected_version: &str,
+) -> Result<T, PayloadError> {
     let (version, body) = payload
         .trim()
         .split_once(':')
         .ok_or(PayloadError::InvalidHeader)?;
-    if version != PAYLOAD_VERSION {
+    if version != expected_version {
         return Err(PayloadError::UnsupportedVersion(version.into()));
     }
     let (encoding, encoded) = body.split_once(':').ok_or(PayloadError::InvalidHeader)?;
@@ -119,6 +138,37 @@ pub fn decode_payload_with_limit<T: DeserializeOwned>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_saved_v2_animation() {
+        use cosmol_viewer_core::scene::Animation;
+        // Exported by 0.6.3 with a static scene and two populated frames.
+        let payload = concat!(
+            "CMV2:R:AQAAgD8AAIA/AACAPwAAAAAAoEEAAAAAPwAAgD8AAAEJcmVmZXJlbmNlAAAAAAAAAAAAAAAAAAAAgD8CAAAAgD8BZmYmPwAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAA",
+            "IAAIA/AACAPwAAgD8AAAAAAKBBAAAAAD8AAIA/AAABBnNhbXBsZQAAAIA/AAAAAAAAAAAAAAA/AgAAAIA/AWZmJj8AAAAAAAAAAAAAAIA/AAAAAAAAAAAAAAAAAAAAAIA/AACAPwAAgD8AAAAAAKBBAAAAAD8AAIA/AAABBnNhbXBsZQAAAIA/AAAAAAAAAAAAAAA/AgAAAIA/AWZmJj8AAAAAAAAAAAAAAIA/AAAAAAAAAAAAAAAAAAAyBAE=",
+        );
+        let animation: Animation =
+            decode_notebook_payload::<_, crate::protocol::AnimationV2>(payload).unwrap();
+        assert!(
+            animation
+                .static_scene
+                .unwrap()
+                .named_shapes
+                .contains_key("reference")
+        );
+        assert_eq!(animation.frames.len(), 2);
+        assert!(
+            animation
+                .frames
+                .iter()
+                .all(|frame| frame.silhouettes.is_none()
+                    && frame.multishadow.is_none()
+                    && frame.named_shapes.contains_key("sample"))
+        );
+        assert_eq!(animation.interval, 50);
+        assert_eq!(animation.loops, 2);
+        assert!(animation.interpolate);
+    }
     use crate::protocol::ViewerCommand;
     use cosmol_viewer_core::scene::{Animation, Scene};
 
@@ -126,7 +176,7 @@ mod tests {
     fn small_commands_use_raw_postcard() {
         let command = ViewerCommand::CameraParameterLogging { enabled: true };
         let payload = encode_payload(&command).unwrap();
-        assert!(payload.starts_with("CMV2:R:"));
+        assert!(payload.starts_with("CMV3:R:"));
         assert_eq!(payload.len(), 11);
         assert!(matches!(
             decode_payload(&payload).unwrap(),
@@ -148,7 +198,7 @@ mod tests {
             animation.add_frame(scene.clone());
         }
         let payload = encode_payload(&animation).unwrap();
-        assert!(payload.starts_with("CMV2:G:"));
+        assert!(payload.starts_with("CMV3:G:"));
         let decoded: Animation = decode_payload(&payload).unwrap();
         assert_eq!(
             postcard::to_allocvec(&animation).unwrap(),
@@ -162,8 +212,8 @@ mod tests {
         let at = vec![0_u8; 1022];
         assert_eq!(postcard::to_allocvec(&below).unwrap().len(), 1023);
         assert_eq!(postcard::to_allocvec(&at).unwrap().len(), 1024);
-        assert!(encode_payload(&below).unwrap().starts_with("CMV2:R:"));
-        assert!(encode_payload(&at).unwrap().starts_with("CMV2:G:"));
+        assert!(encode_payload(&below).unwrap().starts_with("CMV3:R:"));
+        assert!(encode_payload(&at).unwrap().starts_with("CMV3:G:"));
     }
 
     #[test]
@@ -178,7 +228,7 @@ mod tests {
             })
             .collect();
         let payload = encode_payload(&bytes).unwrap();
-        assert!(payload.starts_with("CMV2:G:"));
+        assert!(payload.starts_with("CMV3:G:"));
         assert_eq!(decode_payload::<Vec<u8>>(&payload).unwrap(), bytes);
     }
 
@@ -195,7 +245,7 @@ mod tests {
             Err(PayloadError::InvalidHeader)
         ));
         assert!(matches!(
-            decode_payload::<Vec<u8>>("CMV2:X:AAAA"),
+            decode_payload::<Vec<u8>>("CMV3:X:AAAA"),
             Err(PayloadError::UnsupportedEncoding(_))
         ));
     }
@@ -203,18 +253,18 @@ mod tests {
     #[test]
     fn invalid_base64_gzip_and_postcard_are_errors() {
         assert!(matches!(
-            decode_payload::<u8>("CMV2:R:!"),
+            decode_payload::<u8>("CMV3:R:!"),
             Err(PayloadError::Base64(_))
         ));
         assert!(matches!(
-            decode_payload::<u8>("CMV2:G:AAAA"),
+            decode_payload::<u8>("CMV3:G:AAAA"),
             Err(PayloadError::Gzip(_))
         ));
         assert!(matches!(
-            decode_payload::<u8>("CMV2:R:"),
+            decode_payload::<u8>("CMV3:R:"),
             Err(PayloadError::Postcard(_))
         ));
-        assert_eq!(decode_payload::<()>("CMV2:R:").unwrap(), ());
+        assert_eq!(decode_payload::<()>("CMV3:R:").unwrap(), ());
     }
 
     #[test]
@@ -236,7 +286,7 @@ mod tests {
             decode_payload_with_limit::<Vec<u8>>(&bomb, 32),
             Err(PayloadError::TooLarge { limit: 32 })
         ));
-        let huge_wire = format!("CMV2:R:{}", "A".repeat(100));
+        let huge_wire = format!("CMV3:R:{}", "A".repeat(100));
         assert!(matches!(
             decode_payload_with_limit::<Vec<u8>>(&huge_wire, 8),
             Err(PayloadError::TooLarge { limit: 8 })
@@ -247,11 +297,11 @@ mod tests {
     fn corrupted_gzip_and_trailing_data_are_rejected() {
         let payload = encode_payload(&vec![0_u8; 2048]).unwrap();
         let mut compressed = base64::engine::general_purpose::STANDARD
-            .decode(payload.strip_prefix("CMV2:G:").unwrap())
+            .decode(payload.strip_prefix("CMV3:G:").unwrap())
             .unwrap();
         *compressed.last_mut().unwrap() ^= 1;
         let broken = format!(
-            "CMV2:G:{}",
+            "CMV3:G:{}",
             base64::engine::general_purpose::STANDARD.encode(compressed)
         );
         assert!(matches!(
@@ -259,7 +309,7 @@ mod tests {
             Err(PayloadError::Gzip(_))
         ));
         let raw = format!(
-            "CMV2:R:{}",
+            "CMV3:R:{}",
             base64::engine::general_purpose::STANDARD.encode([1, 2])
         );
         assert!(matches!(
@@ -267,11 +317,11 @@ mod tests {
             Err(PayloadError::TrailingData)
         ));
         let mut compressed = base64::engine::general_purpose::STANDARD
-            .decode(payload.strip_prefix("CMV2:G:").unwrap())
+            .decode(payload.strip_prefix("CMV3:G:").unwrap())
             .unwrap();
         compressed.push(0);
         let extra = format!(
-            "CMV2:G:{}",
+            "CMV3:G:{}",
             base64::engine::general_purpose::STANDARD.encode(compressed)
         );
         assert!(matches!(

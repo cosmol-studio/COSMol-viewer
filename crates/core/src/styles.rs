@@ -1,6 +1,7 @@
 //! Display configuration, independent of scientific objects and selections.
 
-use crate::utils::{Color, Material, OutlineSettings};
+use crate::scene::{SceneError, Silhouettes};
+use crate::utils::{Color, Material};
 use cosmolkit::Element;
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
@@ -122,18 +123,21 @@ pub enum Coordinates {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub(crate) struct MolecularOptions {
     pub material: Material,
-    pub outline: OutlineSettings,
+    pub silhouettes: Option<Silhouettes>,
     pub coordinates: Coordinates,
     pub radius_scale: f32,
+    #[serde(default)]
+    pub collapse_bond_orders: bool,
 }
 
 impl Default for MolecularOptions {
     fn default() -> Self {
         Self {
             material: Material::default(),
-            outline: OutlineSettings::default(),
+            silhouettes: None,
             coordinates: Coordinates::Auto,
             radius_scale: 1.0,
+            collapse_bond_orders: false,
         }
     }
 }
@@ -179,13 +183,9 @@ macro_rules! molecular_style {
                 self.options.radius_scale = scale;
                 self
             }
-            pub fn outline<C: Into<Color>>(mut self, color: C, width: f32) -> Self {
-                assert!(width.is_finite() && width >= 0.0);
-                self.options.outline = OutlineSettings {
-                    enabled: width > 0.0,
-                    color: color.into().into(),
-                    width,
-                };
+            /// Override scene silhouettes for this display. Width is in pixels.
+            pub fn silhouettes(mut self, color: impl Into<Color>, width: f32) -> Self {
+                self.options.silhouettes = Some(Silhouettes::for_shape(color, width).unwrap());
                 self
             }
             pub fn coordinates(mut self, coordinates: Coordinates) -> Self {
@@ -209,11 +209,28 @@ molecular_style!(
     "Bond-order sticks with rounded ends; not a primitive stick."
 );
 
+impl Stick {
+    /// When disabled, draw one stick per bond regardless of its order.
+    pub fn show_bond_order(mut self, show: bool) -> Self {
+        self.options.collapse_bond_orders = !show;
+        self
+    }
+}
+
+impl BallAndStick {
+    /// When disabled, draw one stick per bond regardless of its order.
+    pub fn show_bond_order(mut self, show: bool) -> Self {
+        self.options.collapse_bond_orders = !show;
+        self
+    }
+}
+
 /// Protein backbone ribbons. Scientific residue identities stay in COSMolKit.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Cartoon {
     pub(crate) material: Material,
     pub(crate) rainbow: bool,
+    pub(crate) silhouettes: Option<Silhouettes>,
 }
 
 impl Default for Cartoon {
@@ -224,11 +241,18 @@ impl Default for Cartoon {
                 ..Default::default()
             },
             rainbow: false,
+            silhouettes: None,
         }
     }
 }
 
 impl Cartoon {
+    /// Override scene silhouettes for this display. Width is in pixels.
+    pub fn silhouettes(mut self, color: impl Into<Color>, width: f32) -> Self {
+        self.silhouettes = Some(Silhouettes::for_shape(color, width).unwrap());
+        self
+    }
+
     pub fn rainbow_residues(mut self) -> Self {
         self.rainbow = true;
         self.material.color = None;
@@ -245,6 +269,7 @@ pub struct Surface {
     pub grid_spacing: f32,
     pub solvent_accessible: bool,
     pub sharp_boundaries: bool,
+    pub(crate) silhouettes: Option<Silhouettes>,
 }
 
 impl Default for Surface {
@@ -258,10 +283,19 @@ impl Default for Surface {
             grid_spacing: 0.5,
             solvent_accessible: false,
             sharp_boundaries: true,
+            silhouettes: None,
         }
     }
 }
 crate::impl_stylable_methods!(Surface, material);
+
+impl Surface {
+    /// Override scene silhouettes for this display. Width is in pixels.
+    pub fn silhouettes(mut self, color: impl Into<Color>, width: f32) -> Self {
+        self.silhouettes = Some(Silhouettes::for_shape(color, width).unwrap());
+        self
+    }
+}
 
 /// A display style. Incompatible selection/style combinations fail explicitly.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -323,20 +357,42 @@ impl Representation {
         self.molecular_options_mut()?.radius_scale = value;
         Ok(())
     }
+    pub fn set_show_bond_order(&mut self, show: bool) -> Result<(), &'static str> {
+        match self {
+            Self::BallAndStick(style) => *style = style.show_bond_order(show),
+            Self::Stick(style) => *style = style.show_bond_order(show),
+            _ => return Err("bond order requires a Stick or BallAndStick style"),
+        }
+        Ok(())
+    }
     pub fn set_coordinates(&mut self, value: Coordinates) -> Result<(), &'static str> {
         self.molecular_options_mut()?.coordinates = value;
         Ok(())
     }
-    pub fn set_outline(&mut self, color: impl Into<Color>, width: f32) -> Result<(), &'static str> {
-        if !width.is_finite() || width < 0.0 {
-            return Err("outline width must be finite and nonnegative");
-        }
-        self.molecular_options_mut()?.outline = OutlineSettings {
-            enabled: width > 0.0,
-            color: color.into().into(),
-            width,
-        };
+    pub fn set_silhouettes(
+        &mut self,
+        color: impl Into<Color>,
+        width: f32,
+    ) -> Result<(), SceneError> {
+        let settings = Silhouettes::for_shape(color, width)?;
+        *match self {
+            Self::BallAndStick(s) => &mut s.options.silhouettes,
+            Self::Sphere(s) => &mut s.options.silhouettes,
+            Self::Stick(s) => &mut s.options.silhouettes,
+            Self::Cartoon(s) => &mut s.silhouettes,
+            Self::Surface(s) => &mut s.silhouettes,
+        } = Some(settings);
         Ok(())
+    }
+
+    pub(crate) fn silhouette_settings(self) -> Option<Silhouettes> {
+        match self {
+            Self::BallAndStick(s) => s.options.silhouettes,
+            Self::Sphere(s) => s.options.silhouettes,
+            Self::Stick(s) => s.options.silhouettes,
+            Self::Cartoon(s) => s.silhouettes,
+            Self::Surface(s) => s.silhouettes,
+        }
     }
     pub fn set_rainbow_residues(&mut self) -> Result<(), &'static str> {
         match self {

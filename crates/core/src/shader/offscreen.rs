@@ -9,6 +9,7 @@ use surfman::{
 use crate::{Scene, shader::CameraState};
 
 use super::canvas::Shader;
+use super::silhouette::Destination;
 
 surfman::declare_surfman!();
 
@@ -263,7 +264,17 @@ impl OffscreenGl {
             }
 
             gl.viewport(0, 0, width as i32, height as i32);
-            shader.paint(gl, aspect_ratio, &camera_state, true);
+            shader.paint(
+                gl,
+                aspect_ratio,
+                &camera_state,
+                true,
+                Destination {
+                    framebuffer: Some(msaa_framebuffer),
+                    viewport: [0, 0, width as i32, height as i32],
+                    scissor_enabled: false,
+                },
+            );
             gl.finish();
 
             let resolve_framebuffer = gl.create_framebuffer().map_err(|err| err.to_string())?;
@@ -427,7 +438,17 @@ unsafe fn render_single_sample(
 
     offscreen_trace("painting single-sample framebuffer");
     gl.viewport(0, 0, width as i32, height as i32);
-    shader.paint(gl, aspect_ratio, camera_state, false);
+    shader.paint(
+        gl,
+        aspect_ratio,
+        camera_state,
+        false,
+        Destination {
+            framebuffer: Some(framebuffer),
+            viewport: [0, 0, width as i32, height as i32],
+            scissor_enabled: false,
+        },
+    );
     offscreen_trace("finishing single-sample framebuffer");
     gl.finish();
 

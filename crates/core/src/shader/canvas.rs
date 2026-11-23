@@ -12,15 +12,19 @@ use eframe::{
 use glam::{EulerRot, Quat, Vec3};
 
 use crate::Scene;
-use crate::scene::{Animation, AutoRotate, DepthCue, Lighting};
+use crate::scene::{Animation, AutoRotate, DepthCue, Lighting, Multishadow, Silhouettes};
 use crate::shapes::Sphere;
 use crate::shapes::SphereInstance;
 use crate::shapes::Stick;
 use crate::shapes::StickInstance;
-use crate::utils::InstanceGroups;
+use crate::utils::{InstanceGroups, IntoInstanceGroups, MeshData, ToMesh};
 use crate::utils::{Interpolatable, Logger};
 
+use super::multishadow::MultishadowPass;
+use super::silhouette::{Destination, SilhouettePass};
+
 const OPAQUE_ALPHA_THRESHOLD: f32 = 0.99;
+const SILHOUETTE_ATTRIBUTE: u32 = 10;
 
 #[derive(Clone, Copy)]
 enum SceneRenderPass {
@@ -72,7 +76,7 @@ impl SceneAlphaCoverage {
     }
 }
 
-struct SceneUniforms {
+pub(super) struct SceneUniforms {
     model: Option<glow::UniformLocation>,
     view: Option<glow::UniformLocation>,
     projection: Option<glow::UniformLocation>,
@@ -93,7 +97,7 @@ struct SceneUniforms {
 
 impl SceneUniforms {
     #[allow(unsafe_op_in_unsafe_fn)]
-    unsafe fn new(gl: &glow::Context, program: glow::Program) -> Self {
+    pub(super) unsafe fn new(gl: &glow::Context, program: glow::Program) -> Self {
         use glow::HasContext as _;
 
         Self {
@@ -114,6 +118,56 @@ impl SceneUniforms {
             depth_cue_enabled: gl.get_uniform_location(program, "u_depth_cue_enabled"),
             depth_cue_color: gl.get_uniform_location(program, "u_depth_cue_color"),
             depth_cue_range: gl.get_uniform_location(program, "u_depth_cue_range"),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum GeometryKind {
+    Mesh,
+    Sphere,
+    Stick,
+}
+
+impl GeometryKind {
+    pub(super) fn vertex_source(self) -> &'static str {
+        match self {
+            Self::Mesh => include_str!("vertex.glsl"),
+            Self::Sphere => include_str!("vertex_sphere.glsl"),
+            Self::Stick => include_str!("vertex_stick.glsl"),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct GeometryDraw {
+    pub(super) kind: GeometryKind,
+    vao: glow::VertexArray,
+    indices: i32,
+    pub(super) instances: Option<(i32, glow::Buffer)>,
+    coverage: AlphaCoverage,
+}
+
+impl GeometryDraw {
+    pub(super) fn opaque(&self) -> bool {
+        self.coverage.opaque
+    }
+
+    #[allow(unsafe_op_in_unsafe_fn)]
+    pub(super) unsafe fn draw(&self, gl: &glow::Context) {
+        use glow::HasContext as _;
+
+        gl.bind_vertex_array(Some(self.vao));
+        if let Some((instances, _)) = self.instances {
+            gl.draw_elements_instanced(
+                glow::TRIANGLES,
+                self.indices,
+                glow::UNSIGNED_INT,
+                0,
+                instances,
+            );
+        } else {
+            gl.draw_elements(glow::TRIANGLES, self.indices, glow::UNSIGNED_INT, 0);
         }
     }
 }
@@ -147,9 +201,9 @@ impl SceneBounds {
         !self.min.is_finite() || !self.max.is_finite()
     }
 
-    fn depth_range(self, model: Mat4, view: Mat4, depth_cue: DepthCue) -> [f32; 2] {
+    fn eye_depth_range(self, model: Mat4, view: Mat4) -> Option<[f32; 2]> {
         if self.is_empty() {
-            return [0.0, 1.0];
+            return None;
         }
 
         let mut near_depth = f32::INFINITY;
@@ -166,9 +220,15 @@ impl SceneBounds {
         }
 
         if !near_depth.is_finite() || !far_depth.is_finite() || far_depth <= near_depth {
-            return [0.0, 1.0];
+            return None;
         }
+        Some([near_depth, far_depth])
+    }
 
+    fn depth_range(self, model: Mat4, view: Mat4, depth_cue: DepthCue) -> [f32; 2] {
+        let Some([near_depth, far_depth]) = self.eye_depth_range(model, view) else {
+            return [0.0, 1.0];
+        };
         [
             near_depth + (far_depth - near_depth) * depth_cue.start,
             near_depth + (far_depth - near_depth) * depth_cue.end,
@@ -440,10 +500,21 @@ impl<L: Logger> Canvas<L> {
         let aspect_ratio = rect.width() / rect.height();
         let camera_state = self.camera_state.clone();
 
-        let cb = egui_glow::CallbackFn::new(move |_info, painter| {
+        let cb = egui_glow::CallbackFn::new(move |info, painter| {
+            let viewport = info.viewport_in_pixels();
+            let destination = Destination {
+                framebuffer: painter.intermediate_fbo(),
+                viewport: [
+                    viewport.left_px,
+                    viewport.from_bottom_px,
+                    viewport.width_px,
+                    viewport.height_px,
+                ],
+                scissor_enabled: true,
+            };
             shader
                 .lock()
-                .paint(painter.gl(), aspect_ratio, &camera_state, true);
+                .paint(painter.gl(), aspect_ratio, &camera_state, true, destination);
         });
 
         let callback = egui::PaintCallback {
@@ -537,6 +608,10 @@ impl<L: Logger> Canvas<L> {
         self.shader.lock().transparent_background()
     }
 
+    pub(crate) fn release_render_effects(&mut self, gl: &glow::Context) {
+        self.shader.lock().release_render_effects(gl);
+    }
+
     fn log_camera_parameters_if_changed(&mut self, ui: &egui::Ui) {
         if !self.camera_parameter_logging {
             return;
@@ -563,6 +638,11 @@ impl<L: Logger> Canvas<L> {
     }
 }
 
+struct ScopedSilhouettes {
+    styles: Vec<Silhouettes>,
+    tags: [Vec<u32>; 3],
+}
+
 pub(super) struct Shader {
     program: Option<glow::Program>,
     program_bg: glow::Program,
@@ -572,13 +652,9 @@ pub(super) struct Shader {
     mesh_uniforms: Option<SceneUniforms>,
     sphere_uniforms: Option<SceneUniforms>,
     stick_uniforms: Option<SceneUniforms>,
-    program_sphere_outline: Option<glow::Program>,
-    program_stick_outline: Option<glow::Program>,
     vao_mesh: Option<glow::VertexArray>,
     vao_sphere: Option<glow::VertexArray>,
     vao_stick: Option<glow::VertexArray>,
-    vao_sphere_outline: Option<glow::VertexArray>,
-    vao_stick_outline: Option<glow::VertexArray>,
     camera_lighting: Lighting,
     vertex3d: Vec<Vertex3d>,
     indices: Vec<u32>,
@@ -588,6 +664,14 @@ pub(super) struct Shader {
     zoom_disabled: bool,
     depth_cue: DepthCue,
     depth_cue_color: Vec3,
+    silhouettes: Option<Silhouettes>,
+    scoped_silhouettes: Option<ScopedSilhouettes>,
+    silhouette_tags: [Option<glow::Buffer>; 3],
+    silhouette_pass: Option<SilhouettePass>,
+    multishadow: Option<Multishadow>,
+    multishadow_pass: MultishadowPass,
+    multishadow_dirty: bool,
+    geometry_dirty: bool,
     scene_bounds: SceneBounds,
     vbo: glow::Buffer,
     ebo: glow::Buffer,
@@ -595,8 +679,6 @@ pub(super) struct Shader {
     sphere_ebo: glow::Buffer,
     stick_vbo: glow::Buffer,
     stick_ebo: glow::Buffer,
-    outline_quad_vbo: glow::Buffer,
-    stick_outline_quad_vbo: glow::Buffer,
     sphere_instance_buffer: glow::Buffer,
     stick_instance_buffer: glow::Buffer,
     instance_groups: Option<InstanceGroups>,
@@ -608,7 +690,7 @@ pub(super) struct Shader {
 #[expect(unsafe_code)] // we need unsafe code to use glow
 impl Shader {
     #[allow(unsafe_op_in_unsafe_fn)]
-    unsafe fn compile_program(
+    pub(super) unsafe fn compile_program(
         gl: &glow::Context,
         shader_version: egui_glow::ShaderVersion,
         label: &str,
@@ -647,6 +729,31 @@ impl Shader {
         })
         .collect::<Vec<_>>();
 
+        // The color and depth variants must address the same VAOs, even when
+        // the depth program's linker eliminates unused attributes.
+        for (index, name) in [
+            "a_position",
+            "a_normal",
+            "a_color",
+            "a_material",
+            "i_position",
+            "i_start",
+            "i_end",
+            "i_radius",
+            "i_color",
+            "i_material",
+            "a_silhouette_style",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            gl.bind_attrib_location(program, index as u32, name);
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if !shader_version.is_embedded() {
+            gl.bind_frag_data_location(program, 0, "FragColor");
+            gl.bind_frag_data_location(program, 1, "SilhouetteStyle");
+        }
         gl.link_program(program);
         assert!(
             gl.get_program_link_status(program),
@@ -786,41 +893,6 @@ impl Shader {
                 .create_buffer()
                 .expect("Cannot create sphere instance buffer");
 
-            let outline_quad_vertices: [[f32; 2]; 6] = [
-                [-1.0, -1.0],
-                [1.0, -1.0],
-                [-1.0, 1.0],
-                [-1.0, 1.0],
-                [1.0, -1.0],
-                [1.0, 1.0],
-            ];
-            let stick_outline_quad_vertices: [[f32; 2]; 6] = [
-                [-1.0, -1.0],
-                [1.0, -1.0],
-                [-1.0, 1.0],
-                [-1.0, 1.0],
-                [1.0, 1.0],
-                [-1.0, -1.0],
-            ];
-            let outline_quad_vbo = gl
-                .create_buffer()
-                .expect("Cannot create outline quad vertex buffer");
-            gl.bind_buffer(glow::ARRAY_BUFFER, Some(outline_quad_vbo));
-            gl.buffer_data_u8_slice(
-                glow::ARRAY_BUFFER,
-                bytemuck::cast_slice(&outline_quad_vertices),
-                glow::STATIC_DRAW,
-            );
-            let stick_outline_quad_vbo = gl
-                .create_buffer()
-                .expect("Cannot create stick outline quad vertex buffer");
-            gl.bind_buffer(glow::ARRAY_BUFFER, Some(stick_outline_quad_vbo));
-            gl.buffer_data_u8_slice(
-                glow::ARRAY_BUFFER,
-                bytemuck::cast_slice(&stick_outline_quad_vertices),
-                glow::STATIC_DRAW,
-            );
-
             // =========================
             // 8. Create shader instance struct
             // =========================
@@ -833,16 +905,12 @@ impl Shader {
                 mesh_uniforms: None,
                 sphere_uniforms: None,
                 stick_uniforms: None,
-                program_sphere_outline: None,
-                program_stick_outline: None,
                 vertex3d: vec![],
                 indices: vec![],
                 camera_lighting: Lighting::default(),
                 vao_mesh: None,
                 vao_sphere: None,
                 vao_stick: None,
-                vao_sphere_outline: None,
-                vao_stick_outline: None,
                 sphere_instance_buffer,
                 stick_instance_buffer,
                 sphere_index_count: indices_sphere.len(),
@@ -851,6 +919,16 @@ impl Shader {
                 zoom_disabled: scene.zoom_disabled,
                 depth_cue: scene.depth_cue,
                 depth_cue_color: scene.depth_cue.color.unwrap_or(scene.background_color),
+                silhouettes: scene
+                    .silhouettes
+                    .filter(|settings| settings.validate().is_ok()),
+                scoped_silhouettes: None,
+                silhouette_tags: [None; 3],
+                silhouette_pass: None,
+                multishadow: None,
+                multishadow_pass: MultishadowPass::default(),
+                multishadow_dirty: false,
+                geometry_dirty: false,
                 scene_bounds: SceneBounds::empty(),
                 vbo,
                 ebo,
@@ -858,8 +936,6 @@ impl Shader {
                 sphere_ebo,
                 stick_vbo,
                 stick_ebo,
-                outline_quad_vbo,
-                stick_outline_quad_vbo,
                 instance_groups: None,
                 alpha_coverage: SceneAlphaCoverage::default(),
                 u_model: scene.model_matrix(),
@@ -888,7 +964,7 @@ impl Shader {
             gl,
             shader_version,
             "custom_3d_glow",
-            include_str!("./vertex.glsl"),
+            GeometryKind::Mesh.vertex_source(),
             include_str!("./fragment.glsl"),
         );
 
@@ -939,7 +1015,7 @@ impl Shader {
             gl,
             shader_version,
             "custom_3d_glow_sphere",
-            include_str!("./vertex_sphere.glsl"),
+            GeometryKind::Sphere.vertex_source(),
             include_str!("./fragment.glsl"),
         );
 
@@ -1005,7 +1081,7 @@ impl Shader {
             gl,
             shader_version,
             "custom_3d_glow_stick",
-            include_str!("./vertex_stick.glsl"),
+            GeometryKind::Stick.vertex_source(),
             include_str!("./fragment.glsl"),
         );
 
@@ -1092,116 +1168,6 @@ impl Shader {
         self.vao_stick = Some(vao);
     }
 
-    #[allow(unsafe_op_in_unsafe_fn)]
-    unsafe fn ensure_sphere_outline_pipeline(&mut self, gl: &glow::Context) {
-        use glow::HasContext as _;
-
-        if self.program_sphere_outline.is_some() {
-            return;
-        }
-
-        let shader_version = egui_glow::ShaderVersion::get(gl);
-        let program = Self::compile_program(
-            gl,
-            shader_version,
-            "custom_3d_glow_sphere_outline",
-            include_str!("./vertex_sphere_outline.glsl"),
-            include_str!("./fragment_sphere_outline.glsl"),
-        );
-
-        let vao = gl
-            .create_vertex_array()
-            .expect("Cannot create sphere outline vertex array");
-        gl.bind_vertex_array(Some(vao));
-
-        let corner_loc = gl.get_attrib_location(program, "a_corner").unwrap();
-        let i_pos_loc = gl.get_attrib_location(program, "i_position").unwrap();
-        let i_radius_loc = gl.get_attrib_location(program, "i_radius").unwrap();
-
-        gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.outline_quad_vbo));
-        gl.enable_vertex_attrib_array(corner_loc);
-        gl.vertex_attrib_pointer_f32(corner_loc, 2, glow::FLOAT, false, 2 * 4, 0);
-        gl.vertex_attrib_divisor(corner_loc, 0);
-
-        gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.sphere_instance_buffer));
-        let stride_instance = std::mem::size_of::<SphereInstance>() as i32;
-        gl.enable_vertex_attrib_array(i_pos_loc);
-        gl.vertex_attrib_pointer_f32(i_pos_loc, 3, glow::FLOAT, false, stride_instance, 0);
-        gl.vertex_attrib_divisor(i_pos_loc, 1);
-        gl.enable_vertex_attrib_array(i_radius_loc);
-        gl.vertex_attrib_pointer_f32(i_radius_loc, 1, glow::FLOAT, false, stride_instance, 3 * 4);
-        gl.vertex_attrib_divisor(i_radius_loc, 1);
-
-        gl.bind_vertex_array(None);
-
-        self.program_sphere_outline = Some(program);
-        self.vao_sphere_outline = Some(vao);
-    }
-
-    #[allow(unsafe_op_in_unsafe_fn)]
-    unsafe fn ensure_stick_outline_pipeline(&mut self, gl: &glow::Context) {
-        use glow::HasContext as _;
-
-        if self.program_stick_outline.is_some() {
-            return;
-        }
-
-        let shader_version = egui_glow::ShaderVersion::get(gl);
-        let program = Self::compile_program(
-            gl,
-            shader_version,
-            "custom_3d_glow_stick_outline",
-            include_str!("./vertex_stick_outline.glsl"),
-            include_str!("./fragment_stick_outline.glsl"),
-        );
-
-        let vao = gl
-            .create_vertex_array()
-            .expect("Cannot create stick outline vertex array");
-        gl.bind_vertex_array(Some(vao));
-
-        let corner_loc = gl.get_attrib_location(program, "a_corner").unwrap();
-        let instance_i_start = gl.get_attrib_location(program, "i_start").unwrap();
-        let instance_i_end = gl.get_attrib_location(program, "i_end").unwrap();
-        let instance_i_radius = gl.get_attrib_location(program, "i_radius").unwrap();
-
-        gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.stick_outline_quad_vbo));
-        gl.enable_vertex_attrib_array(corner_loc);
-        gl.vertex_attrib_pointer_f32(corner_loc, 2, glow::FLOAT, false, 2 * 4, 0);
-        gl.vertex_attrib_divisor(corner_loc, 0);
-
-        gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.stick_instance_buffer));
-        let stride_instance = std::mem::size_of::<StickInstance>() as i32;
-        gl.enable_vertex_attrib_array(instance_i_start);
-        gl.vertex_attrib_pointer_f32(instance_i_start, 3, glow::FLOAT, false, stride_instance, 0);
-        gl.vertex_attrib_divisor(instance_i_start, 1);
-        gl.enable_vertex_attrib_array(instance_i_end);
-        gl.vertex_attrib_pointer_f32(
-            instance_i_end,
-            3,
-            glow::FLOAT,
-            false,
-            stride_instance,
-            3 * 4,
-        );
-        gl.vertex_attrib_divisor(instance_i_end, 1);
-        gl.enable_vertex_attrib_array(instance_i_radius);
-        gl.vertex_attrib_pointer_f32(
-            instance_i_radius,
-            1,
-            glow::FLOAT,
-            false,
-            stride_instance,
-            6 * 4,
-        );
-        gl.vertex_attrib_divisor(instance_i_radius, 1);
-
-        gl.bind_vertex_array(None);
-
-        self.program_stick_outline = Some(program);
-        self.vao_stick_outline = Some(vao);
-    }
-
     fn update_scene(&mut self, scene_opt: Option<&Scene>, _static_scene_opt: Option<&Scene>) {
         let scene = if let Some(scene_data) = scene_opt {
             scene_data
@@ -1213,6 +1179,14 @@ impl Shader {
         self.zoom_disabled = scene.zoom_disabled;
         self.depth_cue = scene.depth_cue;
         self.depth_cue_color = scene.depth_cue.color.unwrap_or(scene.background_color);
+        self.silhouettes = scene
+            .silhouettes
+            .filter(|settings| settings.validate().is_ok());
+        self.multishadow = scene
+            .multishadow
+            .filter(|settings| settings.validate().is_ok());
+        self.multishadow_dirty = true;
+        self.geometry_dirty = true;
         self.u_model = scene.model_matrix();
         self.u_normal_matrix = scene.normal_matrix();
         self.vertex3d.clear();
@@ -1220,38 +1194,13 @@ impl Shader {
         self.alpha_coverage = SceneAlphaCoverage::default();
         self.scene_bounds = SceneBounds::empty();
 
-        let mut vertex_offset = 0u32;
-
-        for mesh in scene._get_meshes() {
-            self.vertex3d
-                .extend(mesh.vertices.iter().enumerate().map(|(i, pos)| {
-                    Vertex3d {
-                        position: *pos,
-                        normal: mesh.normals[i],
-                        color: mesh
-                            .colors
-                            .as_ref()
-                            .map(|x| x[i].into())
-                            .unwrap_or([1.0; 4]),
-                        material: mesh
-                            .material_params
-                            .as_ref()
-                            .and_then(|params| params.get(i).copied())
-                            .unwrap_or([0.65, 0.0]),
-                    }
-                }));
-
-            self.indices
-                .extend(mesh.indices.iter().map(|&i| i + vertex_offset));
-            vertex_offset += mesh.vertices.len() as u32;
-        }
+        let instance_groups = self.collect_geometry(scene);
 
         for vertex in &self.vertex3d {
             self.alpha_coverage.meshes.include(vertex.color[3]);
             self.scene_bounds.include_point(vertex.position);
         }
 
-        let instance_groups = scene.get_instances_grouped();
         for sphere in &instance_groups.spheres {
             self.alpha_coverage.spheres.include(sphere.color[3]);
             self.scene_bounds
@@ -1274,9 +1223,81 @@ impl Shader {
         }
     }
 
+    fn collect_geometry(&mut self, scene: &Scene) -> InstanceGroups {
+        let shapes = scene.named_shapes.values().chain(&scene.unnamed_shapes);
+        if !shapes
+            .clone()
+            .any(|shape| shape.silhouette_settings().is_some())
+        {
+            self.scoped_silhouettes = None;
+            for mesh in scene._get_meshes() {
+                self.append_mesh(&mesh);
+            }
+            return scene.get_instances_grouped();
+        }
+
+        // Tag zero is the scene default. Only explicitly styled shapes need their own entry.
+        let mut scopes = ScopedSilhouettes {
+            styles: vec![self.silhouettes.unwrap_or(Silhouettes {
+                width: 0.0,
+                ..Silhouettes::default()
+            })],
+            tags: std::array::from_fn(|_| Vec::new()),
+        };
+        let mut groups = InstanceGroups::default();
+        for shape in shapes {
+            let tag = if let Some(settings) = shape.silhouette_settings() {
+                scopes.styles.push(settings);
+                (scopes.styles.len() - 1) as u32
+            } else {
+                0
+            };
+            self.append_mesh(&shape.to_mesh(scene.scale));
+            groups.merge(shape.to_instance_group(scene.scale));
+            // Tags use the same batching order as the uploaded render geometry.
+            for (tags, len) in scopes.tags.iter_mut().zip([
+                self.vertex3d.len(),
+                groups.spheres.len(),
+                groups.sticks.len(),
+            ]) {
+                tags.resize(len, tag);
+            }
+        }
+        self.scoped_silhouettes = Some(scopes);
+        groups
+    }
+
+    fn append_mesh(&mut self, mesh: &MeshData) {
+        let offset = self.vertex3d.len() as u32;
+        self.vertex3d
+            .extend(mesh.vertices.iter().enumerate().map(|(i, pos)| {
+                Vertex3d {
+                    position: *pos,
+                    normal: mesh.normals[i],
+                    color: mesh
+                        .colors
+                        .as_ref()
+                        .map(|colors| colors[i].into())
+                        .unwrap_or([1.0; 4]),
+                    material: mesh
+                        .material_params
+                        .as_ref()
+                        .and_then(|params| params.get(i).copied())
+                        .unwrap_or([0.65, 0.0]),
+                }
+            }));
+        self.indices
+            .extend(mesh.indices.iter().map(|&index| index + offset));
+    }
+
     #[allow(unsafe_op_in_unsafe_fn)]
     unsafe fn prepare_scene_geometry(&mut self, gl: &glow::Context) {
         use glow::HasContext as _;
+
+        if !self.geometry_dirty {
+            return;
+        }
+        self.geometry_dirty = false;
 
         if !self.indices.is_empty() {
             self.ensure_mesh_pipeline(gl);
@@ -1327,7 +1348,80 @@ impl Shader {
             );
         }
 
+        gl.vertex_attrib_4_u32(SILHOUETTE_ATTRIBUTE, 0, 0, 0, 1);
+        for (index, vao) in [self.vao_mesh, self.vao_sphere, self.vao_stick]
+            .into_iter()
+            .enumerate()
+        {
+            let Some(vao) = vao else { continue };
+            let buffer = &mut self.silhouette_tags[index];
+            if let Some(scopes) = &self.scoped_silhouettes {
+                let buffer = buffer.get_or_insert_with(|| {
+                    gl.create_buffer().expect("Cannot create silhouette tags")
+                });
+                gl.bind_vertex_array(Some(vao));
+                gl.bind_buffer(glow::ARRAY_BUFFER, Some(*buffer));
+                gl.buffer_data_u8_slice(
+                    glow::ARRAY_BUFFER,
+                    bytemuck::cast_slice(&scopes.tags[index]),
+                    glow::DYNAMIC_DRAW,
+                );
+                gl.enable_vertex_attrib_array(SILHOUETTE_ATTRIBUTE);
+                gl.vertex_attrib_pointer_i32(
+                    SILHOUETTE_ATTRIBUTE,
+                    1,
+                    glow::UNSIGNED_INT,
+                    size_of::<u32>() as i32,
+                    0,
+                );
+                gl.vertex_attrib_divisor(SILHOUETTE_ATTRIBUTE, u32::from(index != 0));
+            } else if let Some(buffer) = buffer.take() {
+                gl.bind_vertex_array(Some(vao));
+                gl.disable_vertex_attrib_array(SILHOUETTE_ATTRIBUTE);
+                gl.delete_buffer(buffer);
+            }
+        }
         gl.bind_vertex_array(None);
+    }
+
+    fn geometry_draws(&self) -> [Option<GeometryDraw>; 3] {
+        let spheres = self
+            .instance_groups
+            .as_ref()
+            .map_or(0, |groups| groups.spheres.len());
+        let sticks = self
+            .instance_groups
+            .as_ref()
+            .map_or(0, |groups| groups.sticks.len());
+        [
+            self.vao_mesh
+                .filter(|_| !self.indices.is_empty())
+                .map(|vao| GeometryDraw {
+                    kind: GeometryKind::Mesh,
+                    vao,
+                    indices: self.indices.len() as i32,
+                    instances: None,
+                    coverage: self.alpha_coverage.meshes,
+                }),
+            self.vao_sphere
+                .filter(|_| spheres != 0)
+                .map(|vao| GeometryDraw {
+                    kind: GeometryKind::Sphere,
+                    vao,
+                    indices: self.sphere_index_count as i32,
+                    instances: Some((spheres as i32, self.sphere_instance_buffer)),
+                    coverage: self.alpha_coverage.spheres,
+                }),
+            self.vao_stick
+                .filter(|_| sticks != 0)
+                .map(|vao| GeometryDraw {
+                    kind: GeometryKind::Stick,
+                    vao,
+                    indices: self.stick_index_count as i32,
+                    instances: Some((sticks as i32, self.stick_instance_buffer)),
+                    coverage: self.alpha_coverage.sticks,
+                }),
+        ]
     }
 
     #[allow(unsafe_op_in_unsafe_fn)]
@@ -1409,11 +1503,24 @@ impl Shader {
         depth_cue_range: [f32; 2],
         pass: SceneRenderPass,
     ) {
-        use glow::HasContext as _;
-
-        if !self.indices.is_empty() && self.alpha_coverage.meshes.is_drawn_in(pass) {
-            let program = self.program.unwrap();
-            let uniforms = self.mesh_uniforms.as_ref().unwrap();
+        let programs = [
+            (self.program, self.mesh_uniforms.as_ref()),
+            (self.program_sphere, self.sphere_uniforms.as_ref()),
+            (self.program_stick, self.stick_uniforms.as_ref()),
+        ];
+        for draw in self.geometry_draws().into_iter().flatten() {
+            if !draw.coverage.is_drawn_in(pass) {
+                continue;
+            }
+            let shadow_program = if matches!(pass, SceneRenderPass::TransparentDepth) {
+                None
+            } else {
+                self.multishadow_pass.lighting_program(draw.kind)
+            };
+            let (program, uniforms) = shadow_program.unwrap_or_else(|| {
+                let (program, uniforms) = programs[draw.kind as usize];
+                (program.unwrap(), uniforms.unwrap())
+            });
             self.set_scene_uniforms(
                 gl,
                 program,
@@ -1431,76 +1538,10 @@ impl Shader {
                 depth_cue_range,
                 pass,
             );
-            gl.bind_vertex_array(self.vao_mesh);
-            gl.draw_elements(
-                glow::TRIANGLES,
-                self.indices.len() as i32,
-                glow::UNSIGNED_INT,
-                0,
-            );
-        }
-
-        if let Some(instance_groups) = self.instance_groups.as_ref() {
-            if !instance_groups.spheres.is_empty() && self.alpha_coverage.spheres.is_drawn_in(pass)
-            {
-                let program = self.program_sphere.unwrap();
-                let uniforms = self.sphere_uniforms.as_ref().unwrap();
-                self.set_scene_uniforms(
-                    gl,
-                    program,
-                    uniforms,
-                    u_view,
-                    u_projection,
-                    u_view_pos,
-                    light_dir_world,
-                    light_color,
-                    light_intensity,
-                    ambient_light_color,
-                    ambient_light_intensity,
-                    diffuse_light_intensity,
-                    specular_light_intensity,
-                    depth_cue_range,
-                    pass,
-                );
-                gl.bind_vertex_array(self.vao_sphere);
-                gl.draw_elements_instanced(
-                    glow::TRIANGLES,
-                    self.sphere_index_count as i32,
-                    glow::UNSIGNED_INT,
-                    0,
-                    instance_groups.spheres.len() as i32,
-                );
+            if shadow_program.is_some() {
+                self.multishadow_pass.set_uniforms(gl, draw.kind);
             }
-
-            if !instance_groups.sticks.is_empty() && self.alpha_coverage.sticks.is_drawn_in(pass) {
-                let program = self.program_stick.unwrap();
-                let uniforms = self.stick_uniforms.as_ref().unwrap();
-                self.set_scene_uniforms(
-                    gl,
-                    program,
-                    uniforms,
-                    u_view,
-                    u_projection,
-                    u_view_pos,
-                    light_dir_world,
-                    light_color,
-                    light_intensity,
-                    ambient_light_color,
-                    ambient_light_intensity,
-                    diffuse_light_intensity,
-                    specular_light_intensity,
-                    depth_cue_range,
-                    pass,
-                );
-                gl.bind_vertex_array(self.vao_stick);
-                gl.draw_elements_instanced(
-                    glow::TRIANGLES,
-                    self.stick_index_count as i32,
-                    glow::UNSIGNED_INT,
-                    0,
-                    instance_groups.sticks.len() as i32,
-                );
-            }
+            draw.draw(gl);
         }
     }
 
@@ -1510,6 +1551,7 @@ impl Shader {
         aspect_ratio: f32,
         camera_state: &CameraState,
         multisample: bool,
+        destination: Destination,
     ) {
         let (u_view, u_projection, u_view_pos) = camera_state.matrices(aspect_ratio);
 
@@ -1535,6 +1577,61 @@ impl Shader {
             .depth_range(self.u_model, u_view, self.depth_cue);
 
         unsafe {
+            self.prepare_scene_geometry(gl);
+            if std::mem::take(&mut self.multishadow_dirty) {
+                if let Some(settings) = self.multishadow.filter(|_| !self.scene_bounds.is_empty()) {
+                    let draws = self.geometry_draws();
+                    let center = (self.scene_bounds.min + self.scene_bounds.max) * 0.5;
+                    let radius = (self.scene_bounds.max - center).length();
+                    if radius > 0.0 && radius.is_finite() {
+                        if let Err(error) = self.multishadow_pass.rebuild(
+                            gl,
+                            &destination,
+                            settings,
+                            center,
+                            radius,
+                            &draws,
+                        ) {
+                            crate::RustLogger.warn(error);
+                        }
+                    } else {
+                        self.multishadow_pass.release_atlas(gl);
+                    }
+                } else {
+                    self.multishadow_pass.release_atlas(gl);
+                }
+            }
+
+            let styles = self
+                .scoped_silhouettes
+                .as_ref()
+                .map_or(&[][..], |scope| scope.styles.as_slice());
+            let silhouette =
+                if self.silhouettes.is_some() || styles.iter().any(|style| style.width > 0.0) {
+                    let pass = self
+                        .silhouette_pass
+                        .get_or_insert_with(|| SilhouettePass::new(gl));
+                    match pass.begin(gl, &destination, styles) {
+                        Ok(true) => {
+                            let [near, far] = self
+                                .scene_bounds
+                                .eye_depth_range(self.u_model, u_view)
+                                .unwrap_or([0.0, 1.0]);
+                            Some(far - near)
+                        }
+                        Ok(false) => return,
+                        Err(error) => {
+                            crate::RustLogger.warn(error);
+                            None
+                        }
+                    }
+                } else {
+                    if let Some(pass) = &mut self.silhouette_pass {
+                        pass.release(gl);
+                    }
+                    None
+                };
+
             gl.color_mask(true, true, true, true);
             gl.depth_mask(true);
             gl.depth_func(glow::LESS);
@@ -1545,7 +1642,7 @@ impl Shader {
 
             gl.enable(glow::DEPTH_TEST);
             #[cfg(not(target_arch = "wasm32"))]
-            if multisample {
+            if multisample && silhouette.is_none() {
                 gl.enable(glow::MULTISAMPLE);
             } else {
                 gl.disable(glow::MULTISAMPLE);
@@ -1572,7 +1669,11 @@ impl Shader {
             gl.enable(glow::DEPTH_TEST);
             gl.depth_mask(true);
             gl.depth_func(glow::LESS);
-            self.prepare_scene_geometry(gl);
+            self.multishadow_pass.bind(gl);
+            let silhouette_pass = silhouette.map(|_| self.silhouette_pass.as_ref().unwrap());
+            if let Some(pass) = silhouette_pass {
+                pass.write_style_tags(gl, false);
+            }
 
             self.draw_scene_pass(
                 gl,
@@ -1591,9 +1692,21 @@ impl Shader {
             );
 
             if self.alpha_coverage.has_transparent() {
+                if let Some(depth_span) = silhouette {
+                    // Leave opaque edges visible through the transparent layer.
+                    silhouette_pass.unwrap().draw_edges(
+                        gl,
+                        self.vao_bg,
+                        self.silhouettes,
+                        u_projection,
+                        depth_span,
+                    );
+                }
                 // ChimeraX-style single-layer transparency: first record only
                 // the nearest transparent depth, then shade that exact layer.
-                gl.color_mask(false, false, false, false);
+                let write_tags =
+                    silhouette_pass.is_some_and(|pass| pass.write_style_tags(gl, true));
+                gl.color_mask(write_tags, write_tags, write_tags, write_tags);
                 gl.disable(glow::BLEND);
                 gl.depth_func(glow::LESS);
                 self.draw_scene_pass(
@@ -1613,6 +1726,9 @@ impl Shader {
                 );
 
                 gl.color_mask(true, true, true, true);
+                if let Some(pass) = silhouette_pass {
+                    pass.use_color_only(gl);
+                }
                 gl.depth_func(glow::LEQUAL);
                 gl.enable(glow::BLEND);
                 gl.blend_func_separate(
@@ -1641,127 +1757,12 @@ impl Shader {
                 gl.depth_func(glow::LESS);
             }
 
-            if self
-                .instance_groups
-                .as_ref()
-                .is_some_and(|groups| !groups.outlines.is_empty())
-            {
-                gl.disable(glow::CULL_FACE);
-                gl.depth_mask(false);
-                gl.depth_func(glow::LEQUAL);
-                gl.enable(glow::BLEND);
-                gl.blend_func_separate(
-                    glow::SRC_ALPHA,
-                    glow::ONE_MINUS_SRC_ALPHA,
-                    glow::ONE,
-                    glow::ONE_MINUS_SRC_ALPHA,
-                );
+            self.multishadow_pass.unbind(gl);
 
-                let outline_groups = self
-                    .instance_groups
-                    .as_ref()
-                    .map(|groups| groups.outlines.clone())
-                    .unwrap_or_default();
-
-                for outline_group in outline_groups {
-                    let outline_width = outline_group.settings.width;
-                    if outline_width <= 0.0 {
-                        continue;
-                    }
-
-                    if !outline_group.spheres.is_empty() {
-                        self.ensure_sphere_outline_pipeline(gl);
-                        let program = self.program_sphere_outline.unwrap();
-
-                        gl.use_program(Some(program));
-                        gl.uniform_matrix_4_f32_slice(
-                            gl.get_uniform_location(program, "u_model").as_ref(),
-                            false,
-                            (self.u_model).as_ref(),
-                        );
-                        gl.uniform_matrix_4_f32_slice(
-                            gl.get_uniform_location(program, "u_view").as_ref(),
-                            false,
-                            (u_view).as_ref(),
-                        );
-                        gl.uniform_matrix_4_f32_slice(
-                            gl.get_uniform_location(program, "u_projection").as_ref(),
-                            false,
-                            (u_projection).as_ref(),
-                        );
-                        gl.uniform_1_f32(
-                            gl.get_uniform_location(program, "u_outline_width").as_ref(),
-                            outline_width,
-                        );
-                        gl.uniform_3_f32_slice(
-                            gl.get_uniform_location(program, "u_outline_color").as_ref(),
-                            outline_group.settings.color.as_ref(),
-                        );
-
-                        gl.bind_vertex_array(self.vao_sphere_outline);
-                        gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.sphere_instance_buffer));
-                        gl.buffer_data_u8_slice(
-                            glow::ARRAY_BUFFER,
-                            bytemuck::cast_slice(&outline_group.spheres),
-                            glow::DYNAMIC_DRAW,
-                        );
-                        gl.draw_arrays_instanced(
-                            glow::TRIANGLES,
-                            0,
-                            6,
-                            outline_group.spheres.len() as i32,
-                        );
-                    }
-
-                    if !outline_group.sticks.is_empty() {
-                        self.ensure_stick_outline_pipeline(gl);
-                        let program = self.program_stick_outline.unwrap();
-
-                        gl.use_program(Some(program));
-                        gl.uniform_matrix_4_f32_slice(
-                            gl.get_uniform_location(program, "u_model").as_ref(),
-                            false,
-                            (self.u_model).as_ref(),
-                        );
-                        gl.uniform_matrix_4_f32_slice(
-                            gl.get_uniform_location(program, "u_view").as_ref(),
-                            false,
-                            (u_view).as_ref(),
-                        );
-                        gl.uniform_matrix_4_f32_slice(
-                            gl.get_uniform_location(program, "u_projection").as_ref(),
-                            false,
-                            (u_projection).as_ref(),
-                        );
-                        gl.uniform_1_f32(
-                            gl.get_uniform_location(program, "u_outline_width").as_ref(),
-                            outline_width,
-                        );
-                        gl.uniform_3_f32_slice(
-                            gl.get_uniform_location(program, "u_outline_color").as_ref(),
-                            outline_group.settings.color.as_ref(),
-                        );
-
-                        gl.bind_vertex_array(self.vao_stick_outline);
-                        gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.stick_instance_buffer));
-                        gl.buffer_data_u8_slice(
-                            glow::ARRAY_BUFFER,
-                            bytemuck::cast_slice(&outline_group.sticks),
-                            glow::DYNAMIC_DRAW,
-                        );
-                        gl.draw_arrays_instanced(
-                            glow::TRIANGLES,
-                            0,
-                            6,
-                            outline_group.sticks.len() as i32,
-                        );
-                    }
-                }
-
-                gl.depth_mask(true);
-                gl.disable(glow::BLEND);
-                gl.enable(glow::CULL_FACE);
-                gl.cull_face(glow::BACK);
+            if let Some(depth_span) = silhouette {
+                let pass = silhouette_pass.unwrap();
+                pass.draw_edges(gl, self.vao_bg, self.silhouettes, u_projection, depth_span);
+                pass.finish(gl, self.vao_bg, destination);
             }
 
             gl.color_mask(true, true, true, true);
@@ -1775,6 +1776,20 @@ impl Shader {
 
     pub(super) fn set_background_color(&mut self, background_color: Vec4) {
         self.background_color = background_color;
+    }
+
+    fn release_render_effects(&mut self, gl: &glow::Context) {
+        use glow::HasContext as _;
+
+        unsafe {
+            std::mem::take(&mut self.multishadow_pass).destroy(gl);
+            if let Some(pass) = self.silhouette_pass.take() {
+                pass.destroy(gl);
+            }
+            for buffer in self.silhouette_tags.iter_mut().filter_map(Option::take) {
+                gl.delete_buffer(buffer);
+            }
+        }
     }
 
     pub(super) fn transparent_background(&self) -> bool {

@@ -5,6 +5,10 @@ const status = document.querySelector("#status");
 const buttons = [...document.querySelectorAll("[data-mode]")];
 const update = document.querySelector("#update");
 const highlight = document.querySelector("#oxygen");
+const silhouettes = document.querySelector("#silhouettes");
+const surface = document.querySelector("#surface");
+const silhouetteColor = new Uint8Array([80, 80, 80]);
+const silhouetteWidth = 4;
 const fps = document.querySelector("#fps");
 const camera = document.querySelector("#camera");
 const screenshot = document.querySelector("#screenshot");
@@ -18,6 +22,7 @@ let oxygens;
 let mode;
 let tinted = false;
 let toggleMoleculeColors;
+let toggleSurface;
 const handles = [];
 
 // Keep the API calls below explicit while releasing WASM handles on demo changes.
@@ -35,10 +40,11 @@ function dispose() {
     while (handles.length) handles.pop().free();
     scene = molecule = atoms = oxygens = undefined;
     toggleMoleculeColors = undefined;
+    toggleSurface = undefined;
 }
 
-async function text(name) {
-    const response = await fetch(new URL(name, files));
+async function text(name, base = files) {
+    const response = await fetch(new URL(name, base));
     if (!response.ok) throw new Error(`Cannot load ${name}: HTTP ${response.status}`);
     return response.text();
 }
@@ -58,6 +64,8 @@ async function perform(action) {
         const ligandControls = viewer && (mode === "molecule" || mode === "protein");
         update.disabled = !viewer || (!ligandControls && !toggleMoleculeColors);
         highlight.disabled = !ligandControls;
+        silhouettes.disabled = !viewer || mode !== "silhouettes";
+        surface.disabled = !viewer || !toggleSurface;
     }
 }
 
@@ -109,21 +117,101 @@ function showMoleculeColors(ligand) {
 
 const molecularColorsLegend = "Top left: scene palette. Top right and bottom left: shared atom colors. Bottom right: separate atom colors.";
 
+async function showSilhouetteExample() {
+    const protein = own(ck.Protein.fromMmcif(await text("6fi1.cif")));
+    const ligand = own(molecule.withKekulizedBonds());
+    const cartoon = own(cv.Style.cartoon());
+    const white = new Uint8Array([255, 255, 255]);
+    const whiteCartoon = own(cartoon.color(white));
+    scene.set("protein", protein, own(whiteCartoon.roughness(0.85)));
+    const sticks = own(cv.Style.stick());
+    scene.set("ligand", ligand, own(sticks.silhouettes(silhouetteColor, silhouetteWidth)));
+    scene.setBackgroundColor(white);
+    scene.setLighting(0.55, 0.55, 0.14, 1, white);
+    scene.recenterOn(protein);
+    scene.setScale(0.18);
+    scene.setCameraView(-90, -20, 0, 32, new Float32Array([0, 0, 0]), 15);
+    scene.setSilhouettes(true, silhouetteColor, silhouetteWidth);
+
+    const selector = own(cv.select(protein));
+    const surfaceAtoms = own(selector.atoms());
+    const surfaceStyle = own(cv.Style.surface());
+    const paleBlue = own(surfaceStyle.color(new Uint8Array([169, 203, 226])));
+    const shell = own(paleBlue.opacity(0.30));
+    toggleSurface = () => {
+        if (surface.checked) scene.set("surface", surfaceAtoms, shell);
+        else scene.removeShape("surface");
+    };
+}
+
+function showFlatLighting(ligand) {
+    const white = new Uint8Array([255, 255, 255]);
+    const colors = own(cv.MoleculeColors.new({ C: new Uint8Array([255, 197, 50]) }));
+    const balls = own(cv.Style.ballAndStick());
+    scene.set("ligand", ligand, own(balls.colors(colors)));
+    scene.recenterOn(ligand);
+    scene.setCameraView(-55, 20, 0, 22, new Float32Array([0, 0, 0]), 22);
+    scene.setBackgroundColor(white);
+    scene.setLighting(1, 0, 0, 1, white);
+    scene.setSilhouettes(true, new Uint8Array([64, 64, 64]), silhouetteWidth, 0.03);
+}
+
+async function showFlatBindingSite() {
+    const assets = new URL("../../../docs-web/data/showcase/", import.meta.url);
+    const [pdb, poses] = await Promise.all([
+        text("1iep-receptor.pdb", assets),
+        text("imatinib-poses.sdf", assets),
+    ]);
+    const protein = own(ck.Protein.fromPdb(pdb));
+    // The first SDF record is the crystallographic ligand.
+    const ligand = own(ck.Molecule.fromSdf(poses.split("$$$$", 1)[0] + "$$$$\n"));
+    const green = new Uint8Array([165, 255, 161]);
+    const colors = own(cv.MoleculeColors.new({ C: green, N: new Uint8Array([67, 93, 242]), O: green }));
+    const outline = new Uint8Array([64, 64, 64]);
+    const cartoon = own(cv.Style.cartoon());
+    const blue = own(cartoon.color(new Uint8Array([116, 172, 255])));
+    const ribbon = own(blue.silhouettes(outline, silhouetteWidth));
+    const sticks = own(cv.Style.stick());
+    const singleSticks = own(sticks.showBondOrder(false));
+    const scaled = own(singleSticks.scale(1.45));
+    const outlined = own(scaled.silhouettes(outline, silhouetteWidth));
+    scene.set("receptor", protein, ribbon);
+    scene.set("ligand", ligand, own(outlined.colors(colors)));
+    scene.recenterOn(ligand);
+    scene.setScale(0.8);
+    scene.setCameraView(77, -22, 53, 34, new Float32Array([0, 0, 0]), 22);
+    const white = new Uint8Array([255, 255, 255]);
+    scene.setBackgroundColor(white);
+    scene.setLighting(1, 0, 0, 1, white);
+    scene.setDepthCue(true);
+}
+
 async function showExample(nextMode) {
     dispose();
     mode = nextMode;
     tinted = false;
     highlight.checked = false;
+    silhouettes.checked = true;
+    surface.checked = false;
+    silhouettes.parentElement.hidden = surface.parentElement.hidden = mode !== "silhouettes";
     status.textContent = "Loading scene…";
     update.textContent = mode === "colors" ? "Restore built-in colors" : "Update ligand color";
     for (const button of buttons) button.setAttribute("aria-pressed", String(button.dataset.mode === mode));
 
     // Scientific data belongs to CK; the viewer never creates a molecule wrapper.
-    molecule = own(ck.Molecule.fromSdf(await text("6fi1_ligand.sdf")));
     scene = own(cv.Scene.new());
     scene.setBackgroundColor(new Uint8Array([2, 21, 41]));
-    if (mode === "colors") {
+    if (mode !== "binding-site") {
+        molecule = own(ck.Molecule.fromSdf(await text("6fi1_ligand.sdf")));
+    }
+    if (mode === "binding-site") {
+        await showFlatBindingSite();
+    } else if (mode === "colors") {
         toggleMoleculeColors = showMoleculeColors(own(molecule.withKekulizedBonds()));
+    } else if (mode === "silhouettes") {
+        await showSilhouetteExample();
+    } else if (mode === "flat") {
+        showFlatLighting(own(molecule.withKekulizedBonds()));
     } else {
         const selector = own(cv.select(molecule));
         atoms = own(selector.atoms());
@@ -198,6 +286,9 @@ async function showExample(nextMode) {
         mode === "colors" ? molecularColorsLegend :
         mode === "residues" ? "Cartoon - residues 10-14 highlighted" :
         mode === "sidechains" ? "Protein sticks - side chains of residues 10-14 highlighted" :
+        mode === "silhouettes" ? "Protein cartoon and ligand" :
+        mode === "flat" ? "Flat element colors and depth silhouettes" :
+        mode === "binding-site" ? "1IEP · Imatinib binding site" :
         mode === "protein" ? "Protein + ligand ready" : `Molecule ready · ${atoms.len()} atoms`;
 }
 
@@ -227,6 +318,16 @@ highlight.addEventListener("change", () => perform(() => {
     }
     viewer.update(scene);
     status.textContent = highlight.checked ? `Highlighted ${oxygens.len()} oxygen atoms` : "Oxygen highlight removed";
+}));
+
+silhouettes.addEventListener("change", () => perform(() => {
+    scene.setSilhouettes(silhouettes.checked, silhouetteColor, silhouetteWidth);
+    viewer.update(scene);
+}));
+
+surface.addEventListener("change", () => perform(() => {
+    toggleSurface();
+    viewer.update(scene);
 }));
 
 fps.addEventListener("change", () => perform(() => viewer.showFps(fps.checked)));

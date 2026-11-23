@@ -117,7 +117,7 @@ the serialized copy; this method does not modify the animation object.
 Returns
 -------
 str
-    A CMV2 Base64-encoded postcard payload, optionally gzip-compressed.
+    A CMV3 Base64-encoded postcard payload, optionally gzip-compressed.
 
 Raises
 ------

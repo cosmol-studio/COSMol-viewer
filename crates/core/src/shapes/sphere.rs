@@ -51,6 +51,12 @@ impl Into<Shape> for Sphere {
 }
 
 impl Sphere {
+    /// Set this shape's silhouette width in pixels.
+    pub fn silhouettes(self, color: impl Into<crate::utils::Color>, width: f32) -> Shape {
+        Shape::Sphere(self)
+            .with_silhouettes(crate::scene::Silhouettes::for_shape(color, width).unwrap())
+    }
+
     pub fn new(center: [f32; 3], radius: f32) -> Self {
         Self {
             center,

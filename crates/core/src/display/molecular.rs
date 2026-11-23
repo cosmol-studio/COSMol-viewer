@@ -4,7 +4,7 @@ use super::input::MoleculeInput;
 use super::{DisplayError, center, position};
 use crate::shapes::{SphereInstance, StickInstance};
 use crate::styles::{Coordinates, MolecularOptions, MoleculeColors, Representation};
-use crate::utils::{InstanceGroups, Material, OutlineInstanceGroup};
+use crate::utils::{InstanceGroups, Material};
 use cosmolkit::{self as ck, AtomId, BondId, Element};
 use glam::Vec3;
 use std::collections::VecDeque;
@@ -259,27 +259,33 @@ fn project(
         .iter()
         .map(|bond| [bond.begin, bond.end])
         .collect();
-    let glyphs: Vec<_> = molecule
-        .bonds
-        .iter()
-        .map(|bond| match bond.order {
-            ck::BondOrder::Single => BondGlyph::Single,
-            ck::BondOrder::Double => BondGlyph::Double,
-            ck::BondOrder::Triple => BondGlyph::Triple,
-            ck::BondOrder::Aromatic => BondGlyph::Aromatic,
-            _ => BondGlyph::Unknown,
-        })
-        .collect();
+    let (glyphs, aromatic_offsets) = if options.collapse_bond_orders {
+        // With no order-specific glyphs, each bond uses the single-stick fallback.
+        (Vec::new(), Vec::new())
+    } else {
+        let glyphs: Vec<_> = molecule
+            .bonds
+            .iter()
+            .map(|bond| match bond.order {
+                ck::BondOrder::Single => BondGlyph::Single,
+                ck::BondOrder::Double => BondGlyph::Double,
+                ck::BondOrder::Triple => BondGlyph::Triple,
+                ck::BondOrder::Aromatic => BondGlyph::Aromatic,
+                _ => BondGlyph::Unknown,
+            })
+            .collect();
+        let offsets = aromatic_ring_offsets(&positions, &bond_indices, &glyphs);
+        (glyphs, offsets)
+    };
     let scale = 1.0;
     let mut groups = InstanceGroups {
         spheres: Vec::with_capacity(positions.len()),
         sticks: Vec::with_capacity(bond_indices.len() * 6),
-        outlines: Vec::new(),
+        ..InstanceGroups::default()
     };
 
     let alpha = options.material.opacity.clamp(0.0, 1.0);
     let material = [options.material.roughness, options.material.metallic];
-    let aromatic_offsets = aromatic_ring_offsets(&positions, &bond_indices, &glyphs);
 
     if matches!(mode, MolecularMode::BallAndStick | MolecularMode::Sphere) {
         for (i, pos) in positions.iter().enumerate() {
@@ -462,15 +468,6 @@ fn project(
                 }
             }
         }
-    }
-    if options.outline.enabled && options.outline.width > 0.0 {
-        let mut settings = options.outline;
-        settings.width *= scale;
-        groups.outlines.push(OutlineInstanceGroup {
-            settings,
-            spheres: groups.spheres.clone(),
-            sticks: groups.sticks.clone(),
-        });
     }
     Ok((groups, display_center))
 }

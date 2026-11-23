@@ -153,6 +153,43 @@ test("typed JS scenes render/update/screenshot and animations play in a real bro
             proteinScene.removeShape("highlight");
             mounted.update(proteinScene);
             const withoutSidechain = Array.from(await mounted.takeScreenshot());
+            const cartoon = cv.Style.cartoon();
+            proteinScene.set("rest", protein, cartoon);
+            proteinScene.setSilhouettes(true, new Uint8Array([220, 17, 155]));
+            mounted.update(proteinScene);
+            const outlinePng = await mounted.takeScreenshot();
+            const countSilhouettes = async (png, [r, g, b]) => {
+                const bitmap = await createImageBitmap(new Blob([png], { type: "image/png" }));
+                const readback = new OffscreenCanvas(bitmap.width, bitmap.height).getContext("2d");
+                readback.drawImage(bitmap, 0, 0);
+                const pixels = readback.getImageData(0, 0, bitmap.width, bitmap.height).data;
+                let count = 0;
+                for (let i = 0; i < pixels.length; i += 4) {
+                    if (pixels[i] === r && pixels[i + 1] === g && pixels[i + 2] === b) count++;
+                }
+                bitmap.close();
+                return count;
+            };
+            const silhouettePixels = await countSilhouettes(outlinePng, [220, 17, 155]);
+            proteinScene.setMultishadow(true, 16);
+            mounted.update(proteinScene);
+            const shadowPng = await mounted.takeScreenshot();
+            proteinScene.setMultishadow(false);
+            mounted.update(proteinScene);
+            const restoredPng = await mounted.takeScreenshot();
+            const shadowChanged = !shadowPng.every((byte, i) => byte === outlinePng[i]);
+            const shadowRestored = restoredPng.length === outlinePng.length
+                && restoredPng.every((byte, i) => byte === outlinePng[i]);
+            const localInk = new Uint8Array([29, 191, 87]);
+            const localCartoon = cartoon.silhouettes(localInk, 2);
+            proteinScene.set("rest", protein, localCartoon);
+            proteinScene.setSilhouettes(false);
+            proteinScene.setMultishadow(true, 8);
+            mounted.update(proteinScene);
+            const localSilhouettePixels = await countSilhouettes(await mounted.takeScreenshot(), localInk);
+            const glError = document.getElementById("mounted").getContext("webgl2").getError();
+            localCartoon.free();
+            cartoon.free();
             for (const handle of [proteinScene, red, balls, rest, sidechain, residues, atoms, selector, protein]) handle.free();
             mounted.close();
             mounted.free();
@@ -188,7 +225,7 @@ test("typed JS scenes render/update/screenshot and animations play in a real bro
             viewer.free();
             animation.free();
             scene.free();
-            return { proteinImage, withoutSidechain, importedAgain, hasDefaultInit, molecularShapes, beforeRender, invalidDispatch, duplicateStart, emptyPlay, renderAfterClose, playAfterClose, staticAfterPlay, staticAgain, first, second, cameraOverlay, combinedOverlay, zeroOverlay,
+            return { proteinImage, withoutSidechain, silhouettePixels, localSilhouettePixels, glError, shadowChanged, shadowRestored, importedAgain, hasDefaultInit, molecularShapes, beforeRender, invalidDispatch, duplicateStart, emptyPlay, renderAfterClose, playAfterClose, staticAfterPlay, staticAgain, first, second, cameraOverlay, combinedOverlay, zeroOverlay,
                 stillZeroOverlay, resumedOverlay, hiddenOverlay, idleDraws, laterIdleDraws, shapes, frames, preservedCanvas,
                 concurrent: concurrent.map(png => Array.from(png.slice(0, 8))),
                 barrier: barrier.map(png => Array.from(png)), closedWait, closedUpdate,
@@ -197,6 +234,11 @@ test("typed JS scenes render/update/screenshot and animations play in a real bro
         });
         assert.deepEqual(errors, [], "Browser startup/renderer reported errors");
         assert.notDeepEqual(result.proteinImage, result.withoutSidechain, "Selected protein sidechains were not rendered");
+        assert.ok(result.silhouettePixels > 32, "Cartoon depth outlines were not drawn");
+        assert.ok(result.localSilhouettePixels > 32, "Local silhouettes were not drawn with the scene default off");
+        assert.equal(result.glError, 0, "WebGL silhouette rendering reported an error");
+        assert.equal(result.shadowChanged, true, "Multishadow did not shade the cartoon");
+        assert.equal(result.shadowRestored, true, "Disabling Multishadow did not restore lighting");
         assert.equal(result.importedAgain, true);
         assert.equal(result.hasDefaultInit, false);
         assert.equal(result.molecularShapes, 1, "CK molecule must work immediately after importing Viewer");

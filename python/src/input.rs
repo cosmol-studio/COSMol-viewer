@@ -13,9 +13,13 @@ pub enum ShapeInput {
 
 impl From<ShapeInput> for Shape {
     fn from(value: ShapeInput) -> Self {
-        match value {
-            ShapeInput::Sphere(value) => value.inner.into(),
-            ShapeInput::Stick(value) => value.inner.into(),
+        let (shape, silhouettes) = match value {
+            ShapeInput::Sphere(value) => (Shape::Sphere(value.inner), value.silhouettes),
+            ShapeInput::Stick(value) => (Shape::Stick(value.inner), value.silhouettes),
+        };
+        match silhouettes {
+            Some(settings) => shape.with_silhouettes(settings),
+            None => shape,
         }
     }
 }

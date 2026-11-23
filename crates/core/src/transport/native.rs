@@ -20,7 +20,7 @@ use std::{
 
 type Sender = Publisher<ipc::Service, [u8], ()>;
 type Receiver = Subscriber<ipc::Service, [u8], ()>;
-const VERSION: &str = env!("CARGO_PKG_VERSION");
+const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "/3");
 
 fn services(
     name: &str,
@@ -63,14 +63,16 @@ fn receive<T: DeserializeOwned>(rx: &Receiver) -> Result<Option<T>> {
     let Some(sample) = rx.receive().map_err(|e| e.to_string())? else {
         return Ok(None);
     };
-    let (version, message): (&str, T) =
-        postcard::from_bytes(sample.payload()).map_err(|e| e.to_string())?;
+    let (version, body): (&str, _) =
+        postcard::take_from_bytes(sample.payload()).map_err(|e| e.to_string())?;
     if version != VERSION {
         return Err(format!(
             "transport protocol mismatch: {version} != {VERSION}"
         ));
     }
-    Ok(Some(message))
+    postcard::from_bytes(body)
+        .map(Some)
+        .map_err(|e| e.to_string())
 }
 
 /// Producer endpoint. Only this backend knows about iceoryx2 ports and samples.

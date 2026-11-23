@@ -23,6 +23,7 @@ Examples
 "#]
 pub struct PySphere {
     pub inner: Sphere,
+    pub(crate) silhouettes: Option<cosmol_viewer_core::scene::Silhouettes>,
 }
 
 #[pymethods]
@@ -31,6 +32,7 @@ impl PySphere {
     pub fn new(center: [f32; 3], radius: f32) -> Self {
         Self {
             inner: Sphere::new(center, radius),
+            silhouettes: None,
         }
     }
 

@@ -135,11 +135,10 @@ endpoints decode Python payloads and enter the same typed render/play paths.
 Notebook updates, camera logging and viewport overlays are encoded one-way `ViewerCommand`
 messages submitted to `viewer.dispatch(payload)`.
 
-Scenes, animations, and commands share the `CMV2:R:<base64>` (raw postcard) or
-`CMV2:G:<base64>` (gzip postcard) format. Postcard data below 1 KiB skips gzip;
-at or above 1 KiB gzip level 1 is always used. The choice depends only on the
-serialized size; there is no compression-ratio check or fallback.
-Old unprefixed and CMV1 formats are rejected: sender and receiver must match.
+Scenes, animations, and commands share the `CMV3:R:<base64>` (raw postcard) or
+`CMV3:G:<base64>` (gzip postcard) format. The notebook endpoints also accept
+saved `CMV2` payloads. Postcard data below 1 KiB uses raw encoding. At or above
+1 KiB the encoder uses gzip level 1. The decoder accepts versioned envelopes.
 The decoder defaults to at most 64 MiB of serialized data; Rust callers can use
 `decode_payload_with_limit` to set another bound. This is a serialized-byte limit,
 not a limit on the final object or GPU memory. Ordinary JS and native IPC do not

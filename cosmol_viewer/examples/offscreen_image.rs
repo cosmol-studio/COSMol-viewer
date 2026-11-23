@@ -7,7 +7,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut scene = Scene::new();
     scene.set(
         "mol",
-        (&mol, BallAndStick::default().outline("#050505", 0.04)),
+        (&mol, BallAndStick::default().silhouettes("#050505", 4.0)),
     )?;
     scene.recenter_on(&mol)?;
 

@@ -15,6 +15,7 @@
     button[aria-pressed="true"] { background: #16324a; color: white; }
     button:disabled { opacity: .5; cursor: wait; }
     label { display: inline-flex; align-items: center; gap: 6px; }
+    label[hidden] { display: none; }
     canvas { display: block; width: 100%; aspect-ratio: 8 / 5; background: #021529; border-radius: 10px; touch-action: none; }
     #status { min-height: 1.6em; }
     #status[data-error="true"] { color: #a02020; }
@@ -39,12 +40,17 @@
     <button data-mode="protein" aria-pressed="false" disabled>Protein + ligand</button>
     <button data-mode="residues" aria-pressed="false" disabled>Highlight residues</button>
     <button data-mode="sidechains" aria-pressed="false" disabled>Protein side chains</button>
+    <button data-mode="silhouettes" aria-pressed="false" disabled>Scene silhouettes</button>
+    <button data-mode="flat" aria-pressed="false" disabled>Flat lighting</button>
+    <button data-mode="binding-site" aria-pressed="false" disabled>Flat binding site</button>
     <button data-mode="animation" aria-pressed="false" disabled>Animation</button>
   </nav>
   <canvas id="viewer" width="800" height="500" aria-label="Molecular scene"></canvas>
   <div class="controls">
     <button id="update" disabled>Update ligand color</button>
     <label><input id="oxygen" type="checkbox" disabled>Highlight oxygen</label>
+    <label hidden><input id="silhouettes" type="checkbox" checked disabled>Scene silhouettes</label>
+    <label hidden><input id="surface" type="checkbox" disabled>Show transparent surface</label>
     <label><input id="fps" type="checkbox" disabled>Show FPS</label>
     <label><input id="camera" type="checkbox" disabled>Show camera parameters</label>
     <button id="screenshot" disabled>Save PNG</button>

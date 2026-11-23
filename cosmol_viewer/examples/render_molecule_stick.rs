@@ -8,7 +8,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut scene = Scene::new();
 
-    scene.set("mol", (&mol, Stick::default().outline("#050505", 0.04)))?;
+    scene.set("mol", (&mol, Stick::default().silhouettes("#050505", 4.0)))?;
     scene.recenter_on(&mol)?;
     scene.set_camera_view(35.0, 20.0, 0.0, 32.0, [0.0, 0.0, 0.0], 18.0);
 

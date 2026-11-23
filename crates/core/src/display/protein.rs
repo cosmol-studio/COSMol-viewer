@@ -112,13 +112,6 @@ pub(super) fn project_atoms(
                     ],
                 ));
             }
-            if style.options.outline.enabled && !groups.spheres.is_empty() {
-                groups.outlines.push(crate::utils::OutlineInstanceGroup {
-                    settings: style.options.outline,
-                    spheres: groups.spheres.clone(),
-                    sticks: Vec::new(),
-                });
-            }
             Ok((MeshData::default(), groups, center(positions.into_iter())))
         }
         Representation::Cartoon(_) => Err(DisplayError::IncompatibleStyle {

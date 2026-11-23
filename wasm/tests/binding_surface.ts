@@ -13,7 +13,7 @@ const selectedAtoms: Selection = selectedSource.atoms().element(oxygen);
 const selectedIds: Uint32Array = selectedAtoms.ids();
 const scientificScene: Scene = Scene.new();
 const shown: void = scientificScene.add(selectedAtoms, Style.sphere().scale(1.4));
-scientificScene.set("protein", protein, Style.cartoon().rainbowResidues());
+scientificScene.set("protein", protein, Style.cartoon().rainbowResidues().silhouettes(new Uint8Array([20, 20, 20]), 2));
 scientificScene.recenterOn(molecule);
 scientificScene.add(molecule, Style.ballAndStick());
 scientificScene.add(protein, Style.surface());

@@ -444,12 +444,12 @@ impl SceneInput {
         if viewer_instance(value, |types| &types.sphere)? {
             let shape = crate::shapes::Sphere::try_from_js_value(call(value, "cloneShape")?)
                 .map_err(|_| error("expected live Sphere"))?;
-            operation(&shape.inner)?;
+            operation(&cosmol_viewer_core::utils::Shape::from(shape))?;
             Ok(None)
         } else if viewer_instance(value, |types| &types.stick)? {
             let shape = crate::shapes::Stick::try_from_js_value(call(value, "cloneShape")?)
                 .map_err(|_| error("expected live Stick"))?;
-            operation(&shape.inner)?;
+            operation(&cosmol_viewer_core::utils::Shape::from(shape))?;
             Ok(None)
         } else if viewer_instance(value, |types| &types.selection)? {
             // Official wasm-bindgen conversion consumes its argument. Convert an

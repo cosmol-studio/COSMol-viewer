@@ -65,6 +65,12 @@ impl Into<Shape> for Stick {
 }
 
 impl Stick {
+    /// Set this shape's silhouette width in pixels.
+    pub fn silhouettes(self, color: impl Into<crate::utils::Color>, width: f32) -> Shape {
+        Shape::Stick(self)
+            .with_silhouettes(crate::scene::Silhouettes::for_shape(color, width).unwrap())
+    }
+
     pub fn new(start: [f32; 3], end: [f32; 3], radius: f32) -> Self {
         Self {
             start,
@@ -270,7 +276,7 @@ pub trait _UpdateStick {
 
 impl _UpdateStick for Scene {
     fn update_stick(&mut self, id: &str, f: impl FnOnce(&mut Stick)) {
-        if let Some(Shape::Stick(stick)) = self.named_shapes.get_mut(id) {
+        if let Some(Shape::Stick(stick)) = self.named_shapes.get_mut(id).map(Shape::geometry_mut) {
             f(stick);
         } else {
             panic!("Stick with ID '{}' not found or is not a Stick", id);

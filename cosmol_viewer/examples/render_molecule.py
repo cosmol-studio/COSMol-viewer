@@ -9,7 +9,7 @@ mol = ck.Molecule.from_sdf(mol_data)
 
 scene = Scene()
 
-scene.set("molecule", mol, BallAndStick().outline("#EEEEEE", 0.04))
+scene.set("molecule", mol, BallAndStick().silhouettes("#EEEEEE", 4))
 scene.recenter_on(mol)
 scene.set_camera_view(azimuth=35, elevation=20, distance=32, fov=18)
 

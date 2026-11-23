@@ -15,12 +15,17 @@ in vec3 i_end;
 in float i_radius;
 in vec4 i_color;
 in vec2 i_material;
+in highp uint a_silhouette_style;
 
 out vec3 v_normal;
 out vec3 v_frag_pos;
 out vec3 v_eye_pos;
 out vec4 v_color;
 out vec2 v_material;
+flat out highp uint v_silhouette_style;
+#ifdef USE_MULTISHADOW
+out highp vec3 v_shadow_pos;
+#endif
 
 void main() {
     // 1️⃣ 棒方向和长度
@@ -38,6 +43,9 @@ void main() {
     // 3️⃣ 顶点缩放 + 旋转 + 平移
     vec3 local_pos = vec3(a_position.x * i_radius, a_position.y * i_radius, a_position.z * len);
     vec4 transformed = vec4(rot * local_pos + i_start, 1.0);
+#ifdef USE_MULTISHADOW
+    v_shadow_pos = transformed.xyz;
+#endif
 
     // 4️⃣ 模型空间 -> 世界空间
     vec4 world_pos = u_model * transformed;
@@ -50,6 +58,7 @@ void main() {
     // 6️⃣ 输出颜色
     v_color = i_color;
     v_material = i_material;
+    v_silhouette_style = a_silhouette_style;
 
     // 7️⃣ 投影
     vec4 eye_pos = u_view * world_pos;

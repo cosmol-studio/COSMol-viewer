@@ -174,15 +174,25 @@ impl Style {
             .map_err(error)?;
         Ok(Self { inner })
     }
-    pub fn outline(&self, rgb: Vec<u8>, width: f32) -> Result<Self, JsValue> {
+    /// When disabled, draw one stick per bond regardless of its order.
+    pub fn show_bond_order(&self, show: bool) -> Result<Self, JsValue> {
+        let mut inner = self.inner.clone();
+        inner
+            .representation
+            .set_show_bond_order(show)
+            .map_err(error)?;
+        Ok(Self { inner })
+    }
+    /// Override scene silhouettes. Width is in pixels. Zero disables this shape's edges.
+    pub fn silhouettes(&self, rgb: Vec<u8>, width: f32) -> Result<Self, JsValue> {
         let rgb: [u8; 3] = rgb
             .try_into()
             .map_err(|_| error("RGB requires three components"))?;
         let mut inner = self.inner.clone();
         inner
             .representation
-            .set_outline(rgb, width)
-            .map_err(error)?;
+            .set_silhouettes(rgb, width)
+            .map_err(|e| js_sys::RangeError::new(&e.to_string()))?;
         Ok(Self { inner })
     }
     pub fn coordinates_2d(&self) -> Result<Self, JsValue> {

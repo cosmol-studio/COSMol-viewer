@@ -97,6 +97,18 @@ macro_rules! style {
                     .map_err(error)?;
                 Ok(slf)
             }
+            /// Override scene silhouettes. Width is in pixels. Zero disables this shape's edges.
+            pub fn silhouettes(
+                mut slf: PyRefMut<'_, Self>,
+                color: ColorInput,
+                width: f32,
+            ) -> PyResult<PyRefMut<'_, Self>> {
+                slf.inner
+                    .representation
+                    .set_silhouettes(color.into_color()?, width)
+                    .map_err(|e| PyValueError::new_err(e.to_string()))?;
+                Ok(slf)
+            }
         }
     };
 }
@@ -126,17 +138,6 @@ macro_rules! glyph {
                     .map_err(error)?;
                 Ok(slf)
             }
-            pub fn outline(
-                mut slf: PyRefMut<'_, Self>,
-                color: ColorInput,
-                width: f32,
-            ) -> PyResult<PyRefMut<'_, Self>> {
-                slf.inner
-                    .representation
-                    .set_outline(color.into_color()?, width)
-                    .map_err(error)?;
-                Ok(slf)
-            }
             pub fn coordinates_2d(mut slf: PyRefMut<'_, Self>) -> PyResult<PyRefMut<'_, Self>> {
                 slf.inner
                     .representation
@@ -160,6 +161,34 @@ macro_rules! glyph {
 glyph!(BallAndStick);
 glyph!(SphereStyle);
 glyph!(StickStyle);
+#[pymethods]
+impl BallAndStick {
+    /// When disabled, draw one stick per bond regardless of its order.
+    pub fn show_bond_order(
+        mut slf: PyRefMut<'_, Self>,
+        show: bool,
+    ) -> PyResult<PyRefMut<'_, Self>> {
+        slf.inner
+            .representation
+            .set_show_bond_order(show)
+            .map_err(error)?;
+        Ok(slf)
+    }
+}
+#[pymethods]
+impl StickStyle {
+    /// When disabled, draw one stick per bond regardless of its order.
+    pub fn show_bond_order(
+        mut slf: PyRefMut<'_, Self>,
+        show: bool,
+    ) -> PyResult<PyRefMut<'_, Self>> {
+        slf.inner
+            .representation
+            .set_show_bond_order(show)
+            .map_err(error)?;
+        Ok(slf)
+    }
+}
 #[pymethods]
 impl Cartoon {
     pub fn rainbow_residues(mut slf: PyRefMut<'_, Self>) -> PyResult<PyRefMut<'_, Self>> {

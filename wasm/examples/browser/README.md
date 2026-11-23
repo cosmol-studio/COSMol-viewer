@@ -45,6 +45,18 @@ The page demonstrates:
   `highlight_residues` examples. The range uses zero-based CK IDs, not CIF residue numbers.
 - **Protein side chains:** whole-protein stick geometry with default element colors with separately colored
   side-chain heavy atoms, using `residueIds`, `sidechain` and `difference`.
+- **Scene silhouettes** shows the same protein cartoon and ligand as the
+  Python and Rust `scene_silhouettes` examples. Toggle **Scene silhouettes**
+  to apply the scene default to the receptor. The ligand has its own
+  4-pixel silhouettes. **Show transparent surface** shows the edges through
+  the surface.
+- **Flat lighting:** the ligand keeps its element colors under uniform white
+  ambient light, with depth silhouettes around the geometry. The Rust and
+  Python `flat_lighting` examples export the same view offscreen.
+- **Flat binding site:** a close-up of the 1IEP imatinib binding site with
+  flat blue ribbons and one green stick per bond (`showBondOrder(false)`).
+  Depth cueing fades distant geometry toward the white background. The Rust
+  and Python `flat_binding_site` examples export the same view offscreen.
 - **Animation:** 32 scene snapshots played with `Animation` and `viewer.play(animation)`.
 - Named display replacement with `set`, followed by `viewer.update(scene)`.
 - `scene.recenterOn(molecule)`, FPS/camera overlays and PNG screenshots.

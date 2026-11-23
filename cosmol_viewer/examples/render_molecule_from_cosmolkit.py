@@ -8,7 +8,7 @@ mol = cosmolkit_mol.with_2d_coordinates()
 
 scene = Scene()
 scene.set_scale(0.8)
-scene.set("molecule", mol, BallAndStick().outline("#EEEEEE", 0.04))
+scene.set("molecule", mol, BallAndStick().silhouettes("#EEEEEE", 4))
 scene.recenter_on(mol)
 
 scene.save_image("render_molecule_from_cosmolkit.png", width=1200, height=900)

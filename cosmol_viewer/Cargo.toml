@@ -16,3 +16,4 @@ cosmolkit.workspace = true
 
 [dev-dependencies]
 cosmolkit = { workspace = true, features = ["conformer", "depict"] }
+image.workspace = true

@@ -16,7 +16,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     scene.set_camera_view(35.0, 22.0, 0.0, 28.0, [0.0, 0.0, 0.0], 18.0);
     scene.set(
         "conformer",
-        (&mol, BallAndStick::default().outline("#050505", 0.04)),
+        (&mol, BallAndStick::default().silhouettes("#050505", 4.0)),
     )?;
     scene.recenter_on(&mol)?;
 

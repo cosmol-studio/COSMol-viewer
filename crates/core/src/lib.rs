@@ -373,7 +373,10 @@ impl<L: Logger> eframe::App for App<L> {
             });
     }
 
-    fn on_exit(&mut self, _: Option<&eframe::glow::Context>) {
+    fn on_exit(&mut self, gl: Option<&eframe::glow::Context>) {
+        if let Some(gl) = gl {
+            self.canvas.release_render_effects(gl);
+        }
         if let Some(transport) = &self.transport {
             let _ = transport.send_feedback(Feedback::Closed);
         }

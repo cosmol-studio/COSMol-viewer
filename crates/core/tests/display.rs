@@ -3,7 +3,7 @@ use cosmol_viewer_core::{
     scene::Scene,
     selection::select,
     styles::{BallAndStick, Cartoon, Coordinates, MoleculeColors, Sphere, Stick, Surface},
-    utils::{Interpolatable, RustLogger},
+    utils::{Interpolatable, RustLogger, Shape},
 };
 use cosmolkit as ck;
 
@@ -231,7 +231,7 @@ fn centering_and_scaling_change_visual_data_only() {
             "ligand",
             (
                 &select(&source).atoms(),
-                BallAndStick::default().outline("#EEEEEE", 0.02),
+                BallAndStick::default().silhouettes("#EEEEEE", 1.0),
             ),
         )
         .unwrap();
@@ -240,11 +240,10 @@ fn centering_and_scaling_change_visual_data_only() {
     scene.set_scale(2.0);
     let groups = scene.get_instances_grouped();
     assert_eq!(groups.spheres[0].position, [2.0, 4.0, 6.0]);
-    assert_eq!(groups.outlines[0].settings.width, 0.04);
-    assert_eq!(
-        groups.outlines[0].spheres[0].position,
-        groups.spheres[0].position
-    );
+    let Shape::Silhouetted(_, settings) = &scene.named_shapes["ligand"] else {
+        panic!("the display must retain its local silhouette settings");
+    };
+    assert_eq!(settings.width, 1.0);
     assert_eq!(source.conformers_3d()[0].coordinates()[0], [1.0, 2.0, 3.0]);
 }
 
@@ -254,7 +253,10 @@ fn scientific_sources_can_be_dropped_after_show_and_transport_contains_only_geom
     {
         let source = carbon_oxygen();
         scene
-            .add((&select(&source).atoms(), BallAndStick::default()))
+            .add((
+                &select(&source).atoms(),
+                BallAndStick::default().silhouettes("#141414", 2.0),
+            ))
             .unwrap();
     }
     let json = serde_json::to_string(&scene).unwrap();
@@ -428,6 +430,15 @@ fn stick_style_preserves_double_and_triple_order_spacing() {
             .iter()
             .any(|s| (s.radius - 0.2 / 3.0).abs() < 1e-6)
     );
+
+    let mut simplified = Scene::new();
+    simplified
+        .add((&source, Stick::default().show_bond_order(false)))
+        .unwrap();
+    let groups = simplified.get_instances_grouped();
+    assert_eq!(groups.sticks.len(), 8);
+    assert_eq!(groups.spheres.len(), 8);
+    assert!(groups.sticks.iter().all(|s| (s.radius - 0.2).abs() < 1e-6));
 }
 
 #[test]
@@ -448,6 +459,25 @@ fn aromatic_ring_keeps_inner_lines_and_bond_selection_has_no_unselected_bonds() 
     let groups = scene.get_instances_grouped();
     assert_eq!(groups.sticks.len(), 24);
     assert_eq!(groups.spheres.len(), 24);
+
+    let mut simplified = Scene::new();
+    simplified
+        .add((
+            &select(&source).bonds().aromatic(),
+            Stick::default().show_bond_order(false),
+        ))
+        .unwrap();
+    let groups = simplified.get_instances_grouped();
+    assert_eq!(groups.sticks.len(), 12);
+    assert_eq!(groups.spheres.len(), 12);
+
+    let mut balls_and_sticks = Scene::new();
+    balls_and_sticks
+        .add((&source, BallAndStick::default().show_bond_order(false)))
+        .unwrap();
+    let groups = balls_and_sticks.get_instances_grouped();
+    assert_eq!(groups.sticks.len(), 16);
+    assert_eq!(groups.spheres.len(), 8);
 }
 
 #[test]

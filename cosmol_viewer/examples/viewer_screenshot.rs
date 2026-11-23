@@ -12,7 +12,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     scene.set(
         "mol",
-        (&mol, BallAndStick::default().outline("#050505", 0.04)),
+        (&mol, BallAndStick::default().silhouettes("#050505", 4.0)),
     )?;
     scene.recenter_on(&mol)?;
     scene.set_auto_rotate(true, 20.0);

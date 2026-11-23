@@ -18,12 +18,54 @@ in vec3 v_frag_pos;
 in vec3 v_eye_pos;
 in vec4 v_color;
 in vec2 v_material;
+flat in highp uint v_silhouette_style;
 
+#ifdef GL_ES
+layout(location = 0) out vec4 FragColor;
+layout(location = 1) out highp uint SilhouetteStyle;
+#else
 out vec4 FragColor;
+out highp uint SilhouetteStyle;
+#endif
+
+#ifdef USE_MULTISHADOW
+in highp vec3 v_shadow_pos;
+uniform highp sampler2DShadow u_shadow_atlas;
+uniform int u_shadow_count;
+uniform highp float u_shadow_normal_bias;
+
+struct ShadowSample {
+    highp mat4 object_to_atlas;
+    vec4 direction;
+};
+layout(std140) uniform MultishadowSamples {
+    ShadowSample u_shadow_samples[MAX_SHADOW_DIRECTIONS];
+};
+
+float ambient_visibility(vec3 normal) {
+    highp vec4 point = vec4(v_shadow_pos + normal * u_shadow_normal_bias, 1.0);
+    float visible = 0.0;
+    float total = 0.0;
+    for (int i = 0; i < u_shadow_count; ++i) {
+        float weight = dot(normal, u_shadow_samples[i].direction.xyz);
+        if (weight > 0.0) {
+            highp vec3 uv = (u_shadow_samples[i].object_to_atlas * point).xyz;
+            visible += weight * texture(u_shadow_atlas, uv);
+            total += weight;
+        }
+    }
+    // Normalize by the unoccluded light, so a finite sample count cannot darken an open surface.
+    return total > 0.0 ? visible / total : 1.0;
+}
+#endif
 
 void main() {
     const float opaque_alpha_threshold = 0.99;
     bool transparent = v_color.a < opaque_alpha_threshold;
+
+    if (v_color.a <= 0.0) {
+        discard;
+    }
 
     if (u_render_pass == 0 && transparent) {
         discard;
@@ -31,6 +73,8 @@ void main() {
     if (u_render_pass != 0 && !transparent) {
         discard;
     }
+
+    SilhouetteStyle = v_silhouette_style;
 
     // The transparent depth pass only records the nearest transparent layer.
     if (u_render_pass == 1) {
@@ -48,6 +92,9 @@ void main() {
 
     // === Ambient ===
     vec3 ambient = u_ambient_light_intensity * u_ambient_light_color * base_color;
+#ifdef USE_MULTISHADOW
+    ambient *= ambient_visibility(N);
+#endif
 
     // === Diffuse ===
     float diff = max(dot(N, L), 0.0);

@@ -1,19 +1,39 @@
 //! Positioned shapes retain their own material; Scene snapshots them on insertion.
 use cosmol_viewer_core::{
     display::SceneItem,
+    scene::Silhouettes,
     shapes::{Sphere as CoreSphere, Stick as CoreStick},
+    utils::Shape,
 };
 use wasm_bindgen::prelude::*;
 #[derive(Clone)]
 #[wasm_bindgen]
 pub struct Sphere {
     pub(crate) inner: CoreSphere,
+    silhouettes: Option<Silhouettes>,
 }
 #[derive(Clone)]
 #[wasm_bindgen]
 pub struct Stick {
     pub(crate) inner: CoreStick,
+    silhouettes: Option<Silhouettes>,
 }
+
+macro_rules! into_scene_shape {
+    ($name:ident) => {
+        impl From<$name> for Shape {
+            fn from(shape: $name) -> Self {
+                let geometry = Shape::$name(shape.inner);
+                match shape.silhouettes {
+                    Some(settings) => geometry.with_silhouettes(settings),
+                    None => geometry,
+                }
+            }
+        }
+    };
+}
+into_scene_shape!(Sphere);
+into_scene_shape!(Stick);
 impl crate::input::NativeOutput for Sphere {}
 impl crate::input::NativeOutput for Stick {}
 #[cosmol_viewer_derive::checked_wasm]
@@ -21,7 +41,10 @@ impl Sphere {
     pub fn new(center: Vec<f32>, radius: f32) -> Result<Self, String> {
         let inner = CoreSphere::new(crate::scene::vector3(center)?, radius);
         inner.to_shape(None).map_err(|e| e.to_string())?;
-        Ok(Self { inner })
+        Ok(Self {
+            inner,
+            silhouettes: None,
+        })
     }
     pub fn clone_shape(&self) -> Self {
         self.clone()
@@ -29,6 +52,7 @@ impl Sphere {
     pub fn color(&self, rgb: Vec<u8>) -> Result<Self, String> {
         Ok(Self {
             inner: self.inner.color(crate::scene::rgb(rgb)?),
+            ..*self
         })
     }
     pub fn opacity(&self, opacity: f32) -> Result<Self, String> {
@@ -37,6 +61,16 @@ impl Sphere {
         }
         Ok(Self {
             inner: self.inner.opacity(opacity),
+            ..*self
+        })
+    }
+    /// Override scene silhouettes with a width in output pixels.
+    pub fn silhouettes(&self, rgb: Vec<u8>, width: f32) -> Result<Self, String> {
+        let settings = Silhouettes::for_shape(crate::scene::rgb(rgb)?, width)
+            .map_err(|error| error.to_string())?;
+        Ok(Self {
+            silhouettes: Some(settings),
+            ..*self
         })
     }
 }
@@ -49,7 +83,10 @@ impl Stick {
             radius,
         );
         inner.to_shape(None).map_err(|e| e.to_string())?;
-        Ok(Self { inner })
+        Ok(Self {
+            inner,
+            silhouettes: None,
+        })
     }
     pub fn clone_shape(&self) -> Self {
         self.clone()
@@ -57,6 +94,7 @@ impl Stick {
     pub fn color(&self, rgb: Vec<u8>) -> Result<Self, String> {
         Ok(Self {
             inner: self.inner.color(crate::scene::rgb(rgb)?),
+            ..*self
         })
     }
     pub fn opacity(&self, opacity: f32) -> Result<Self, String> {
@@ -65,6 +103,16 @@ impl Stick {
         }
         Ok(Self {
             inner: self.inner.opacity(opacity),
+            ..*self
+        })
+    }
+    /// Override scene silhouettes with a width in output pixels.
+    pub fn silhouettes(&self, rgb: Vec<u8>, width: f32) -> Result<Self, String> {
+        let settings = Silhouettes::for_shape(crate::scene::rgb(rgb)?, width)
+            .map_err(|error| error.to_string())?;
+        Ok(Self {
+            silhouettes: Some(settings),
+            ..*self
         })
     }
 }

@@ -24,6 +24,7 @@ Examples
 "#]
 pub struct PyStick {
     pub inner: Stick,
+    pub(crate) silhouettes: Option<cosmol_viewer_core::scene::Silhouettes>,
 }
 
 #[pymethods]
@@ -32,6 +33,7 @@ impl PyStick {
     pub fn new(start: [f32; 3], end: [f32; 3], thickness: f32) -> Self {
         Self {
             inner: Stick::new(start, end, thickness),
+            silhouettes: None,
         }
     }
 

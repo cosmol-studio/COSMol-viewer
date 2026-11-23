@@ -95,3 +95,21 @@ These values approximate the renderer defaults (the default light color is
 stored as floating-point RGB ``[1.0, 0.97, 0.97]``).
 ``set_ambient_light()``,
 ``set_light_intensity()``, and ``set_light_color()`` update individual terms.
+
+Multishadow
+-----------
+
+Enable ambient occlusion to darken creases, overlapping ribbons, and pockets.
+The renderer samples light from multiple directions. Opaque geometry casts
+shadows, and visible surfaces receive them.
+
+.. code-block:: python
+
+   scene.set_multishadow(directions=32)
+   scene.set_lighting(ambient=1.0, diffuse=0.0, specular=0.0)
+   scene.save_image("soft-light.png", width=1200, height=900)
+
+The feature is off by default. The same setting works in a window, a notebook,
+and offscreen export. Use ``scene.set_multishadow(False)`` to disable it. The
+direction count defaults to 32 and accepts 8–64. Fewer directions reduce GPU work
+when geometry changes every frame. Camera motion reuses the shadow maps.

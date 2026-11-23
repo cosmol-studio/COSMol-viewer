@@ -47,16 +47,21 @@ aromatic bonds as a single stick with an inner aromatic line.
 
    A molecular stick rendering produced by COSMol Viewer.
 
-Materials and Outlines
-----------------------
+Materials and Silhouettes
+-------------------------
 
 Scientific styles support ``color()``, ``opacity()``, ``roughness()``, and
-``metallic()``. Apply outlines to the representation:
+``metallic()``. Set silhouettes on an individual display with a width in
+output pixels.
 
 .. code-block:: python
 
-   style = BallAndStick().roughness(0.55).metallic(0.0).outline("#101010", 0.04)
+   style = BallAndStick().roughness(0.55).metallic(0.0).silhouettes("#101010", 2)
    scene.set("molecule", molecule, style)
+
+Use ``scene.set_silhouettes()`` to set the default for the whole scene. Display
+settings take precedence over the scene default. A display width of zero
+disables its silhouettes.
 
 ``roughness`` and ``metallic`` use values from 0 to 1. Scientific data stays in
 COSMolKit; display styles do not change molecule coordinates or chemistry.

@@ -75,6 +75,10 @@ pub struct Scene {
     pub auto_rotate: AutoRotate,
     #[serde(default)]
     pub depth_cue: DepthCue,
+    #[serde(default)]
+    pub silhouettes: Option<Silhouettes>,
+    #[serde(default)]
+    pub multishadow: Option<Multishadow>,
     pub camera_state: Option<CameraState>,
     pub named_shapes: HashMap<String, Shape>,
     pub unnamed_shapes: Vec<Shape>,
@@ -88,12 +92,60 @@ pub struct Scene {
     pub molecule_palette: Option<MoleculeColors>,
 }
 
+/// The scene layout used by saved CMV2 notebook payloads.
+#[doc(hidden)]
+#[derive(Deserialize)]
+pub struct SceneV2 {
+    background_color: Vec3,
+    transparent_background: bool,
+    zoom_disabled: bool,
+    auto_rotate: AutoRotate,
+    depth_cue: DepthCue,
+    camera_state: Option<CameraState>,
+    named_shapes: HashMap<String, Shape>,
+    unnamed_shapes: Vec<Shape>,
+    scale: f32,
+    viewport: Option<[usize; 2]>,
+    scene_center: [f32; 3],
+    camera_lights: Option<Lighting>,
+}
+
+impl From<SceneV2> for Scene {
+    fn from(previous: SceneV2) -> Self {
+        Self {
+            background_color: previous.background_color,
+            transparent_background: previous.transparent_background,
+            zoom_disabled: previous.zoom_disabled,
+            auto_rotate: previous.auto_rotate,
+            depth_cue: previous.depth_cue,
+            silhouettes: None,
+            multishadow: None,
+            camera_state: previous.camera_state,
+            named_shapes: previous.named_shapes,
+            unnamed_shapes: previous.unnamed_shapes,
+            scale: previous.scale,
+            viewport: previous.viewport,
+            scene_center: previous.scene_center,
+            camera_lights: previous.camera_lights,
+            molecule_palette: None,
+        }
+    }
+}
+
 #[derive(Error, Debug)]
 pub enum SceneError {
     #[error("Shape with ID '{0}' not found")]
     ShapeNotFound(String),
     #[error("Failed to parse scene from JSON")]
     ParseError(#[from] serde_json::Error),
+    #[error("silhouette width must be between 1 and 16 pixels")]
+    InvalidSilhouetteWidth,
+    #[error("silhouette depth jump must be greater than 0 and at most 1")]
+    InvalidSilhouetteDepthJump,
+    #[error("silhouette RGB components must be finite and between 0 and 1")]
+    InvalidSilhouetteColor,
+    #[error("Multishadow directions must be between 8 and 64")]
+    InvalidMultishadowDirections,
 }
 
 impl Default for Scene {
@@ -104,6 +156,8 @@ impl Default for Scene {
             zoom_disabled: false,
             auto_rotate: AutoRotate::default(),
             depth_cue: DepthCue::default(),
+            silhouettes: None,
+            multishadow: None,
             camera_state: None,
             named_shapes: HashMap::new(),
             unnamed_shapes: Vec::new(),
@@ -315,6 +369,24 @@ impl Scene {
         self.depth_cue.color = Some(color.into().into());
     }
 
+    /// Set default silhouettes for shapes without an override. Pass `None` to disable the default.
+    pub fn set_silhouettes(&mut self, settings: Option<Silhouettes>) -> Result<(), SceneError> {
+        if let Some(settings) = settings {
+            settings.validate()?;
+        }
+        self.silhouettes = settings;
+        Ok(())
+    }
+
+    /// Attenuate ambient light using multidirectional shadows. Pass `None` to disable it.
+    pub fn set_multishadow(&mut self, settings: Option<Multishadow>) -> Result<(), SceneError> {
+        if let Some(settings) = settings {
+            settings.validate()?;
+        }
+        self.multishadow = settings;
+        Ok(())
+    }
+
     pub fn use_black_background(&mut self) {
         self.background_color = Vec3::ZERO;
     }
@@ -465,6 +537,8 @@ impl Interpolatable for Scene {
             zoom_disabled: self.zoom_disabled,
             auto_rotate: self.auto_rotate,
             depth_cue: self.depth_cue,
+            silhouettes: self.silhouettes,
+            multishadow: self.multishadow,
             camera_state: self.camera_state,
             named_shapes,
             unnamed_shapes,
@@ -508,6 +582,90 @@ impl Default for DepthCue {
             start: 0.5,
             end: 1.0,
             color: None,
+        }
+    }
+}
+
+/// Depth-based silhouette edges with a width in output pixels.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
+pub struct Silhouettes {
+    pub color: Vec3,
+    pub width: f32,
+    /// Minimum depth jump as a fraction of the visible scene's depth range.
+    pub depth_jump: f32,
+}
+
+impl Default for Silhouettes {
+    fn default() -> Self {
+        Self {
+            color: Vec3::ZERO,
+            width: 1.0,
+            depth_jump: 0.03,
+        }
+    }
+}
+
+impl Silhouettes {
+    /// Validate a shape's silhouette override. A width of zero disables its outline.
+    pub fn for_shape(color: impl Into<Color>, width: f32) -> Result<Self, SceneError> {
+        let settings = Self {
+            color: color.into().into(),
+            width,
+            ..Self::default()
+        };
+        settings.validate_shape()?;
+        Ok(settings)
+    }
+
+    pub(crate) fn validate_shape(self) -> Result<(), SceneError> {
+        // Disabled outlines still use a valid color and depth threshold.
+        if self.width == 0.0 {
+            Self { width: 1.0, ..self }.validate()
+        } else {
+            self.validate()
+        }
+    }
+
+    pub(crate) fn validate(self) -> Result<(), SceneError> {
+        if !(1.0..=16.0).contains(&self.width) {
+            return Err(SceneError::InvalidSilhouetteWidth);
+        }
+        if !(self.depth_jump > 0.0 && self.depth_jump <= 1.0) {
+            return Err(SceneError::InvalidSilhouetteDepthJump);
+        }
+        if !self
+            .color
+            .to_array()
+            .iter()
+            .all(|x| (0.0..=1.0).contains(x))
+        {
+            return Err(SceneError::InvalidSilhouetteColor);
+        }
+        Ok(())
+    }
+}
+
+/// Ambient occlusion from directional shadow maps of the scene's opaque geometry.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Multishadow {
+    /// Number of light directions sampled, from 8 to 64.
+    pub directions: u8,
+}
+
+impl Default for Multishadow {
+    fn default() -> Self {
+        Self { directions: 32 }
+    }
+}
+
+impl Multishadow {
+    pub(crate) const MAX_DIRECTIONS: usize = 64;
+
+    pub(crate) fn validate(self) -> Result<(), SceneError> {
+        if (8..=Self::MAX_DIRECTIONS).contains(&usize::from(self.directions)) {
+            Ok(())
+        } else {
+            Err(SceneError::InvalidMultishadowDirections)
         }
     }
 }

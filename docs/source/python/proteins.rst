@@ -49,6 +49,31 @@ display, and changed protein inputs require new geometry.
 
    Protein cartoon geometry rendered by COSMol Viewer.
 
+Scene Silhouettes
+-----------------
+
+Enable depth-based silhouettes around all visible geometry, including overlapping
+ribbons, molecular surfaces, atoms, bonds and positioned shapes. Line width is
+in output pixels (1 to 16). The depth jump is a fraction of the scene's depth
+range.
+
+.. code-block:: python
+
+   scene.set_silhouettes(color="#505050", width=1, depth_jump=0.03)
+   scene.save_image("outlined-protein.png", width=1600, height=1200)
+
+Use ``Cartoon().silhouettes("#505050", 2)`` as the style for a single protein
+display. Surface styles support the same method.
+
+Run the ``scene_silhouettes.py`` example to export the same view with silhouettes
+off, on, and beneath a transparent surface.
+
+.. code-block:: sh
+
+   python cosmol_viewer/examples/scene_silhouettes.py
+
+The example opens an interactive window after exporting the PNGs.
+
 Atoms and Bonds
 ---------------
 

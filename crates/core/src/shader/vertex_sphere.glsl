@@ -14,16 +14,24 @@ in vec3 i_position;  // sphere center
 in float i_radius;   // sphere radius
 in vec4 i_color;     // sphere color
 in vec2 i_material;
+in highp uint a_silhouette_style;
 
 out vec3 v_normal;
 out vec3 v_frag_pos;
 out vec3 v_eye_pos;
 out vec4 v_color;
 out vec2 v_material;
+flat out highp uint v_silhouette_style;
+#ifdef USE_MULTISHADOW
+out highp vec3 v_shadow_pos;
+#endif
 
 void main() {
     // 1️⃣ 顶点缩放 + 平移到实例中心
     vec4 local_pos = vec4(a_position * i_radius + i_position, 1.0);
+#ifdef USE_MULTISHADOW
+    v_shadow_pos = local_pos.xyz;
+#endif
 
     // 2️⃣ 模型空间 -> 世界空间
     vec4 world_pos = u_model * local_pos;
@@ -35,6 +43,7 @@ void main() {
     // 4️⃣ 输出颜色
     v_color = i_color;
     v_material = i_material;
+    v_silhouette_style = a_silhouette_style;
 
     // 5️⃣ 投影
     vec4 eye_pos = u_view * world_pos;

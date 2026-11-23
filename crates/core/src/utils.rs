@@ -2,6 +2,7 @@ use glam::{Mat4, Vec3, Vec4};
 use serde::{Deserialize, Serialize};
 
 use crate::display::Display;
+use crate::scene::Silhouettes;
 use crate::shapes::{Sphere, SphereInstance, Stick, StickInstance};
 
 pub trait Logger: Send + Sync + Copy {
@@ -67,8 +68,40 @@ pub enum Shape {
     Sphere(Sphere),
     Stick(Stick),
     Display(Display),
-    Qudrate, // Custom(CustomShape),
-             // ...
+    Qudrate,
+    Silhouetted(Box<Shape>, Silhouettes),
+}
+
+impl Shape {
+    pub fn with_silhouettes(self, settings: Silhouettes) -> Self {
+        match self {
+            Self::Silhouetted(shape, _) => Self::Silhouetted(shape, settings),
+            shape => Self::Silhouetted(Box::new(shape), settings),
+        }
+    }
+
+    pub(crate) fn geometry(&self) -> &Self {
+        match self {
+            Self::Silhouetted(shape, _) => shape.geometry(),
+            shape => shape,
+        }
+    }
+
+    pub(crate) fn geometry_mut(&mut self) -> &mut Self {
+        match self {
+            Self::Silhouetted(shape, _) => shape.geometry_mut(),
+            shape => shape,
+        }
+    }
+
+    pub(crate) fn silhouette_settings(&self) -> Option<Silhouettes> {
+        match self {
+            Self::Silhouetted(_, settings) => Some(*settings),
+            Self::Display(display) => display.instances.legacy_silhouettes(),
+            _ => None,
+        }
+        .filter(|settings| settings.validate_shape().is_ok())
+    }
 }
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
@@ -86,11 +119,15 @@ pub struct InstanceData {
 
 impl Interpolatable for Shape {
     fn interpolate(&self, other: &Self, t: f32, logger: impl Logger) -> Self {
-        match (self, other) {
+        let geometry = match (self.geometry(), other.geometry()) {
             (Shape::Sphere(a), Shape::Sphere(b)) => Shape::Sphere(a.interpolate(b, t, logger)),
             (Shape::Stick(a), Shape::Stick(b)) => Shape::Stick(a.interpolate(b, t, logger)),
             (Shape::Display(a), Shape::Display(b)) => Shape::Display(a.interpolate(b, t, logger)),
-            _ => self.clone(), // 如果类型不匹配，可以选择不插值或做默认处理
+            (first, _) => first.clone(),
+        };
+        match self {
+            Self::Silhouetted(_, settings) => geometry.with_silhouettes(*settings),
+            _ => geometry,
         }
     }
 }
@@ -99,39 +136,38 @@ impl Interpolatable for Shape {
 pub struct InstanceGroups {
     pub spheres: Vec<SphereInstance>,
     pub sticks: Vec<StickInstance>,
-    pub outlines: Vec<OutlineInstanceGroup>,
+    // Keep the published geometry layout readable by postcard and JSON.
+    #[serde(default, rename = "outlines")]
+    pub(crate) legacy_outlines: Vec<LegacyOutline>,
 }
 
 impl InstanceGroups {
     pub fn merge(&mut self, mut other: InstanceGroups) {
         self.spheres.append(&mut other.spheres);
         self.sticks.append(&mut other.sticks);
-        self.outlines.append(&mut other.outlines);
     }
-}
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
-pub struct OutlineSettings {
-    pub enabled: bool,
-    pub color: Vec3,
-    pub width: f32,
-}
-
-impl Default for OutlineSettings {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            color: Vec3::new(0.02, 0.02, 0.02),
-            width: 0.035,
-        }
+    fn legacy_silhouettes(&self) -> Option<Silhouettes> {
+        let settings = &self.legacy_outlines.first()?.settings;
+        (settings.enabled && settings.width > 0.0).then_some(Silhouettes {
+            color: settings.color,
+            ..Silhouettes::default()
+        })
     }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct OutlineInstanceGroup {
-    pub settings: OutlineSettings,
-    pub spheres: Vec<SphereInstance>,
-    pub sticks: Vec<StickInstance>,
+pub(crate) struct LegacyOutline {
+    settings: LegacyOutlineSettings,
+    spheres: Vec<SphereInstance>,
+    sticks: Vec<StickInstance>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct LegacyOutlineSettings {
+    enabled: bool,
+    color: Vec3,
+    width: f32,
 }
 
 impl IntoInstanceGroups for Shape {
@@ -146,6 +182,7 @@ impl IntoInstanceGroups for Shape {
                 let m_groups = display.instances(scale);
                 groups.merge(m_groups);
             }
+            Shape::Silhouetted(shape, _) => return shape.to_instance_group(scale),
             _ => {}
         }
         groups
@@ -166,6 +203,7 @@ impl ToMesh for Shape {
             Shape::Sphere(s) => s.to_mesh(scale),
             Shape::Stick(s) => s.to_mesh(scale),
             Shape::Display(display) => display.mesh(scale),
+            Shape::Silhouetted(shape, _) => shape.to_mesh(scale),
             Shape::Qudrate => todo!(),
         }
     }

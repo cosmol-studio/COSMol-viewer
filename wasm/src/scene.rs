@@ -237,6 +237,62 @@ pub(crate) fn rgb(values: Vec<u8>) -> Result<[u8; 3], String> {
 #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
 #[wasm_bindgen]
 impl Scene {
+    /// Toggle Multishadow ambient occlusion. Directions default to 32 (range 8 to 64).
+    #[wasm_bindgen(js_name = setMultishadow)]
+    pub fn set_multishadow(
+        &self,
+        enabled: tsify::Ts<crate::input::BoolInput>,
+        directions: Option<tsify::Ts<crate::input::ByteInput>>,
+    ) -> Result<(), wasm_bindgen::JsValue> {
+        use crate::input::read;
+        use cosmol_viewer_core::scene::Multishadow;
+
+        let enabled = read::<bool>(enabled)?;
+        let settings = directions.map(read::<u8>).transpose()?.map_or_else(
+            Multishadow::default,
+            |directions| Multishadow { directions },
+        );
+        self.state
+            .lock()
+            .unwrap()
+            .set_multishadow(enabled.then_some(settings))
+            .map_err(|error| js_sys::RangeError::new(&error.to_string()).into())
+    }
+
+    /// Enable scene-wide depth outlines. The default line is black and one pixel wide.
+    #[wasm_bindgen(js_name = setSilhouettes)]
+    pub fn set_silhouettes(
+        &self,
+        enabled: tsify::Ts<crate::input::BoolInput>,
+        color: Option<tsify::Ts<crate::input::BytesInput>>,
+        width: Option<tsify::Ts<crate::input::FloatInput>>,
+        depth_jump: Option<tsify::Ts<crate::input::FloatInput>>,
+    ) -> Result<(), wasm_bindgen::JsValue> {
+        use crate::input::read;
+        use cosmol_viewer_core::{scene::Silhouettes, utils::Color};
+
+        let enabled = read::<bool>(enabled)?;
+        let mut settings = Silhouettes::default();
+        if let Some(color) = color {
+            let rgb =
+                rgb(read::<Vec<u8>>(color)?).map_err(|error| js_sys::RangeError::new(&error))?;
+            settings.color = Color::from(rgb).into();
+        }
+        settings.width = width
+            .map(read::<f32>)
+            .transpose()?
+            .unwrap_or(settings.width);
+        settings.depth_jump = depth_jump
+            .map(read::<f32>)
+            .transpose()?
+            .unwrap_or(settings.depth_jump);
+        self.state
+            .lock()
+            .unwrap()
+            .set_silhouettes(enabled.then_some(settings))
+            .map_err(|error| js_sys::RangeError::new(&error.to_string()).into())
+    }
+
     #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
     pub fn add(
         &self,

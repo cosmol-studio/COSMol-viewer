@@ -145,6 +145,42 @@ Shapes carry their own material. ``color`` and ``opacity`` return styled copies;
 passing an additional scientific Style to a positioned shape is an error.
 Scene insertion snapshots shape values, so later handle disposal is safe.
 
+Use scene silhouettes to draw edges where visible geometry changes depth,
+including Cartoon ribbons, molecular surfaces, and positioned shapes. The
+optional parameters set the line color, width in pixels, and depth jump as a
+fraction of the scene depth.
+
+.. code-block:: javascript
+
+   scene.setSilhouettes(true, new Uint8Array([80, 80, 80]), 1, 0.03);
+   viewer.update(scene);
+
+Set a display's silhouettes through its style. Width is in output pixels.
+An explicit display setting takes precedence over the scene default, and a
+width of zero disables the display's silhouettes.
+
+.. code-block:: javascript
+
+   const sticks = cv.Style.stick();
+   const ligandStyle = sticks.silhouettes(new Uint8Array([20, 20, 20]), 2);
+   scene.set("ligand", ligand, ligandStyle);
+
+Multishadow
+-----------
+
+Enable ambient occlusion to darken creases, overlapping ribbons, and pockets.
+Opaque geometry casts shadows from multiple directions. The direction count
+defaults to 32 and accepts 8–64. Camera motion reuses the shadow maps.
+
+.. code-block:: javascript
+
+   scene.setMultishadow(true, 32);
+   scene.setLighting(1.0, 0.0, 0.0, 1.0, new Uint8Array([255, 255, 255]));
+   viewer.update(scene);
+
+Multishadow is off by default. Use ``scene.setMultishadow(false)`` to disable it.
+Fewer directions reduce GPU work when geometry changes every frame.
+
 Animation
 ---------
 

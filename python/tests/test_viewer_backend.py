@@ -61,7 +61,8 @@ ATOM      3  C   MSE A   1      13.470  13.079  10.413  1.00 20.00           C
 ATOM      4  O   MSE A   1      14.000  12.500  11.000  1.00 20.00           O
 END
 """)
-    scene.set("protein", select(protein).residues(), Cartoon())
+    scene.set("protein", select(protein).residues(), Cartoon().silhouettes("#141414", 2))
+    scene.set_multishadow(directions=16)
     animation = Animation(interval=0.1, loops=1, interpolate=False)
     animation.add_frame(scene)
 
@@ -137,25 +138,25 @@ END
         if (match := re.search(r"await app\.dispatch\((.+)\);", item.data))
     ]
     assert len(payloads) == 9
-    assert all(payload.startswith(("CMV2:R:", "CMV2:G:")) for payload in payloads)
-    assert payloads[2].startswith("CMV2:R:")
-    assert payloads[3].startswith("CMV2:R:")
+    assert all(payload.startswith(("CMV3:R:", "CMV3:G:")) for payload in payloads)
+    assert payloads[2].startswith("CMV3:R:")
+    assert payloads[3].startswith("CMV3:R:")
     startups = {}
     for variable in ("scene_payload", "animation_payload"):
         startups[variable] = [json.loads(match.group(1)) for item in displays
                              if (match := re.search(rf"const {variable} = (.+);", item.data))]
     assert len(startups["scene_payload"]) == 1
     assert len(startups["animation_payload"]) == 1
-    assert all(payload.startswith(("CMV2:R:", "CMV2:G:"))
+    assert all(payload.startswith(("CMV3:R:", "CMV3:G:"))
                for items in startups.values() for payload in items)
     # Exercise the exported animation encoder and the actual WASM gzip decoder.
     exported = animation.to_payload()
-    assert exported.startswith(("CMV2:R:", "CMV2:G:"))
+    assert exported.startswith(("CMV3:R:", "CMV3:G:"))
     large_animation = Animation(interval=0.1, loops=1, interpolate=False)
     for _ in range(40):
         large_animation.add_frame(scene)
     large_payload = large_animation.to_payload()
-    assert large_payload.startswith("CMV2:G:")
+    assert large_payload.startswith("CMV3:G:")
     startups["animation_payload"].extend([exported, large_payload])
     verify_wasm_receiver(payloads, startups)
 

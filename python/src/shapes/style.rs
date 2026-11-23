@@ -3,6 +3,20 @@ macro_rules! impl_stylable {
     ($wrapper:ident) => {
         #[pyo3::pymethods]
         impl $wrapper {
+            /// Override scene silhouettes with a width in output pixels.
+            pub fn silhouettes(
+                mut slf: pyo3::PyRefMut<'_, Self>,
+                color: $crate::input::ColorInput,
+                width: f32,
+            ) -> pyo3::PyResult<pyo3::PyRefMut<'_, Self>> {
+                use cosmol_viewer_core::scene::Silhouettes;
+                slf.silhouettes = Some(
+                    Silhouettes::for_shape(color.into_color()?, width)
+                        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?,
+                );
+                Ok(slf)
+            }
+
             /// Set RGB/hex color and return this shape for chaining.
             pub fn color<'py>(
                 mut slf: pyo3::PyRefMut<'py, Self>,

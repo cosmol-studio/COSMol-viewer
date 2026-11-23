@@ -11,7 +11,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     scene.set("prot", (&prot, Cartoon::default().rainbow_residues()))?;
     scene.set(
         "ligand",
-        (&ligand, BallAndStick::default().outline("#EEEEEE", 0.02)),
+        (&ligand, BallAndStick::default().silhouettes("#EEEEEE", 4.0)),
     )?;
     scene.recenter_on(&ligand)?;
     scene.set_background_color("#021529");

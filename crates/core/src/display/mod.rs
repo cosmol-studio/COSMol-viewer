@@ -113,7 +113,11 @@ impl Display {
     }
 
     pub(crate) fn instances(&self, scale: f32) -> InstanceGroups {
-        let mut groups = self.instances.clone();
+        let mut groups = InstanceGroups {
+            spheres: self.instances.spheres.clone(),
+            sticks: self.instances.sticks.clone(),
+            ..InstanceGroups::default()
+        };
         fn spheres(spheres: &mut [crate::shapes::SphereInstance], scale: f32) {
             for sphere in spheres {
                 sphere.position = sphere.position.map(|x| x * scale);
@@ -129,11 +133,6 @@ impl Display {
         }
         spheres(&mut groups.spheres, scale);
         sticks(&mut groups.sticks, scale);
-        for outline in &mut groups.outlines {
-            outline.settings.width *= scale;
-            spheres(&mut outline.spheres, scale);
-            sticks(&mut outline.sticks, scale);
-        }
         groups
     }
 }
@@ -238,13 +237,16 @@ impl<S: ProjectSource<I> + ?Sized, I> SceneItem for crate::selection::Selection<
         style: Option<DisplayStyle>,
         palette: Option<&MoleculeColors>,
     ) -> Result<crate::utils::Shape, DisplayError> {
-        self.source()
-            .project_with_palette(
-                self.ids(),
-                style.unwrap_or_else(|| S::default_style().into()),
-                palette,
-            )
-            .map(crate::utils::Shape::Display)
+        let style = style.unwrap_or_else(|| S::default_style().into());
+        let silhouettes = style.representation.silhouette_settings();
+        let shape = self
+            .source()
+            .project_with_palette(self.ids(), style, palette)
+            .map(crate::utils::Shape::Display)?;
+        Ok(match silhouettes {
+            Some(settings) => shape.with_silhouettes(settings),
+            None => shape,
+        })
     }
 }
 impl SceneItem for crate::utils::Shape {
@@ -252,7 +254,7 @@ impl SceneItem for crate::utils::Shape {
         if style.is_some() {
             return Err(DisplayError::ShapeStyle);
         }
-        match self {
+        match self.geometry() {
             Self::Sphere(s) => validate_geometry(&s.center, s.radius)?,
             Self::Stick(s) => {
                 validate_geometry(&s.start, s.thickness_radius)?;
@@ -462,8 +464,7 @@ impl Interpolatable for Display {
             && self.mesh.vertices.len() == other.mesh.vertices.len()
             && self.mesh.normals.len() == other.mesh.normals.len()
             && self.instances.spheres.len() == other.instances.spheres.len()
-            && self.instances.sticks.len() == other.instances.sticks.len()
-            && self.instances.outlines.len() == other.instances.outlines.len();
+            && self.instances.sticks.len() == other.instances.sticks.len();
         if !same_layout {
             // Cartoon/SES topology can change between scientific snapshots.
             // Preserve discrete mesh playback in that case instead of trying
@@ -494,11 +495,6 @@ impl Interpolatable for Display {
                 a.radius = a.radius * (1.0 - t) + b.radius * t;
                 a.color = lerp(a.color, b.color, t);
                 a.material = lerp(a.material, b.material, t);
-            }
-            // Outlines follow the same interpolated instance geometry.
-            for outline in &mut a.outlines {
-                outline.spheres.clone_from(&a.spheres);
-                outline.sticks.clone_from(&a.sticks);
             }
         }
         let mut display = self.clone();

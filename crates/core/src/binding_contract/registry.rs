@@ -191,6 +191,19 @@ binding_contract! {
             defaults: &[BindingDefault { parameter: "enabled", python: "True" }],
         },
         {
+            semantic_id: "Scene.set_silhouettes", rust: crate::scene::Scene::set_silhouettes,
+            signature: fn(scene: &mut crate::scene::Scene, settings: Option<crate::scene::Silhouettes>) -> Result<(), crate::scene::SceneError>, receiver: mutable, platforms: &[Native, Browser],
+            python: Projection::supported("Scene.set_silhouettes", &[Native, Notebook]),
+            javascript: Projection::supported("Scene.setSilhouettes", &[Browser]),
+        },
+        {
+            semantic_id: "Scene.set_multishadow", rust: crate::scene::Scene::set_multishadow,
+            signature: fn(scene: &mut crate::scene::Scene, settings: Option<crate::scene::Multishadow>) -> Result<(), crate::scene::SceneError>, receiver: mutable, platforms: &[Native, Browser],
+            python: Projection::supported("Scene.set_multishadow", &[Native, Notebook]),
+            javascript: Projection::supported("Scene.setMultishadow", &[Browser]),
+            defaults: &[BindingDefault { parameter: "enabled", python: "True" }, BindingDefault { parameter: "directions", python: "None" }],
+        },
+        {
             semantic_id: "Scene.set_depth_cue_range", rust: crate::scene::Scene::set_depth_cue_range,
             signature: fn(scene: &mut crate::scene::Scene, start: f32, end: f32), receiver: mutable, platforms: &[Native, Browser],
             python: Projection::supported("Scene.set_depth_cue_range", &[Native, Notebook]),
