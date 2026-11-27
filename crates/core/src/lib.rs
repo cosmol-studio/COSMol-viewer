@@ -80,6 +80,8 @@ pub enum Request<SceneData = Scene> {
         request_id: u64,
         enabled: bool,
     },
+    #[cfg(not(target_arch = "wasm32"))]
+    Close,
 }
 
 #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -123,6 +125,17 @@ pub fn register_render() {
 /// Call this from a dedicated executable's main thread, not from the producer.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn run_render_child(name: &str) -> eframe::Result<()> {
+    #[cfg(windows)]
+    let transport = {
+        let directory = std::env::var_os(transport::IPC_DIRECTORY);
+        let config = directory
+            .as_deref()
+            .map(|path| transport::ipc_config(std::path::Path::new(path)))
+            .transpose()
+            .map_err(|err| eframe::Error::AppCreation(Box::new(err)))?;
+        RendererTransport::connect_with_config(name, config.as_ref())
+    };
+    #[cfg(not(windows))]
     let transport = RendererTransport::connect(name);
     transport
         .send_feedback(Feedback::Ready {
@@ -138,6 +151,7 @@ pub fn run_render_child(name: &str) -> eframe::Result<()> {
     let (width, height) = match &request {
         Request::InitializeScene { width, height, .. }
         | Request::InitializeAnimation { width, height, .. } => (*width, *height),
+        Request::Close => return Ok(()),
         Request::UpdateScene { .. } => panic!("expected initialization request"),
         Request::TakeScreenshot { .. } => panic!("expected initialization request"),
         Request::CameraParameterLogging { .. } => panic!("expected initialization request"),
@@ -299,13 +313,28 @@ impl<L: Logger> eframe::App for App<L> {
                             .send_feedback(Feedback::Applied { request_id })
                             .unwrap();
                     }
-                    Request::InitializeScene { request_id, scene, .. } => {
+                    Request::InitializeScene {
+                        request_id, scene, ..
+                    } => {
                         self.canvas.render_scene(&scene);
-                        transport.send_feedback(Feedback::Applied { request_id }).unwrap();
+                        transport
+                            .send_feedback(Feedback::Applied { request_id })
+                            .unwrap();
                     }
-                    Request::InitializeAnimation { request_id, animation, .. } => {
+                    Request::InitializeAnimation {
+                        request_id,
+                        animation,
+                        ..
+                    } => {
                         self.canvas.play_animation(animation);
-                        transport.send_feedback(Feedback::Applied { request_id }).unwrap();
+                        transport
+                            .send_feedback(Feedback::Applied { request_id })
+                            .unwrap();
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    Request::Close => {
+                        ui.ctx().send_viewport_cmd(ViewportCommand::Close);
+                        return;
                     }
                 }
                 // Drain batches larger than the per-frame budget without relying
@@ -393,10 +422,30 @@ impl<L: Logger> eframe::App for App<L> {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub struct NativeGuiViewer {
+    child: RefCell<ChildGuard>,
     transport: ViewerTransport,
     request_id: Rc<Cell<u64>>,
     closed: Cell<bool>,
-    child: RefCell<ChildGuard>,
+    // Drop the child and IPC endpoints before removing the session directory.
+    #[cfg(windows)]
+    _ipc_directory: transport::IpcDirectory,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Drop for NativeGuiViewer {
+    fn drop(&mut self) {
+        let child = &mut self.child.get_mut().0;
+        if !matches!(child.try_wait(), Ok(None)) {
+            return;
+        }
+        let _ = self.transport.send_request(Request::<Scene>::Close);
+        // A window close may already be under way even if the request could not
+        // be sent. Give the child time to release its IPC handles before killing it.
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while Instant::now() < deadline && matches!(child.try_wait(), Ok(None)) {
+            thread::sleep(Duration::from_millis(20));
+        }
+    }
 }
 
 #[derive(Error, Debug)]
@@ -516,9 +565,18 @@ impl NativeGuiViewer {
                 .unwrap()
                 .as_nanos()
         );
-        let transport = ViewerTransport::connect(&name);
         let mut command = Command::new(executable.as_ref());
         command.args(["--child", &name]).stdin(Stdio::null());
+        #[cfg(windows)]
+        let ipc_directory = transport::IpcDirectory::new(&name)?;
+        #[cfg(windows)]
+        let transport = {
+            command.env(transport::IPC_DIRECTORY, ipc_directory.path());
+            let config = transport::ipc_config(ipc_directory.path())?;
+            ViewerTransport::connect_with_config(&name, Some(&config))
+        };
+        #[cfg(not(windows))]
+        let transport = ViewerTransport::connect(&name);
         let mut child = ChildGuard(command.spawn()?);
         let pid = match wait_event(&transport, &mut child) {
             Feedback::Ready { pid } => pid,
@@ -535,10 +593,12 @@ impl NativeGuiViewer {
             pid
         );
         Ok(Self {
+            child: RefCell::new(child),
             transport,
             request_id: Rc::new(Cell::new(0)),
             closed: Cell::new(false),
-            child: RefCell::new(child),
+            #[cfg(windows)]
+            _ipc_directory: ipc_directory,
         })
     }
 
@@ -612,8 +672,8 @@ impl NativeGuiViewer {
     /// or the viewer process exits. A successful child exit returns `Ok(())`;
     /// an unsuccessful exit or an I/O failure returns an error.
     ///
-    /// This consumes the viewer. On return its child process is closed and reaped
-    /// by the existing cleanup guard. If the child exits before console input,
+    /// This consumes the viewer. When console input completes, the child receives
+    /// a close request before it is reaped. If the child exits before console input,
     /// the input thread may remain blocked until input arrives or the parent exits.
     pub fn keep_alive(mut self) -> std::io::Result<()> {
         self.keep_alive_impl(wait_for_exit_or_input)

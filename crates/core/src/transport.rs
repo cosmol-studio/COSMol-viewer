@@ -7,6 +7,8 @@ mod native;
 
 #[cfg(target_arch = "wasm32")]
 pub use local::{RendererTransport, ViewerTransport, pair};
+#[cfg(windows)]
+pub(crate) use native::{IPC_DIRECTORY, IpcDirectory, ipc_config};
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::{RendererTransport, ViewerTransport};
 

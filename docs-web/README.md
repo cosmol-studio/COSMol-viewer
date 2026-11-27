@@ -57,9 +57,8 @@ JavaScript are API bindings, not translations; no cross-language canonical or
 ## Documentation versions
 
 `versions.json` is the manually maintained version catalog. `latest` always
-points to `https://viewer.cosmol.org/`. The catalog currently contains only
-`latest`; add a version label and its published archive URL to the `versions` array
-after publishing that archive, keeping `latest` first. URLs must be distinct HTTPS
+points to `https://viewer.cosmol.org/`. Add a version label and its published
+archive URL to the `versions` array, keeping `latest` first. URLs must be distinct HTTPS
 site roots, for example `{"version": "0.6.1", "url": "https://your-archive.example/"}`.
 The example is configuration syntax, not an existing Viewer deployment. No Cargo/package version bump or
 automatic GitHub release lookup is involved.

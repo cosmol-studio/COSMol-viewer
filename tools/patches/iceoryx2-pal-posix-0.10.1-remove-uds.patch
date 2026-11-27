@@ -1,0 +1,10 @@
+--- a/src/windows/stdio.rs
++++ b/src/windows/stdio.rs
+@@ -26,2 +26,7 @@
+ pub unsafe fn remove(pathname: *const c_char) -> int {
++    // Emulated sockets live in the translator and have no file permissions.
++    if HandleTranslator::get_instance().remove_uds(pathname) {
++        return 0;
++    }
++
+     unsafe { crate::posix::chmod(pathname, 0o777) };

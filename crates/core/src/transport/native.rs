@@ -2,6 +2,7 @@ use super::Result;
 use crate::{Feedback, Request};
 use eframe::egui::Context;
 use iceoryx2::{
+    config::Config,
     node::{Node, NodeBuilder},
     port::{notifier::Notifier, publisher::Publisher, subscriber::Subscriber},
     service::{ipc, port_factory::publish_subscribe::PortFactory},
@@ -22,15 +23,73 @@ type Sender = Publisher<ipc::Service, [u8], ()>;
 type Receiver = Subscriber<ipc::Service, [u8], ()>;
 const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "/3");
 
+#[cfg(windows)]
+pub(crate) const IPC_DIRECTORY: &str = "COSMOL_VIEWER_IPC_DIRECTORY";
+
+#[cfg(windows)]
+pub(crate) struct IpcDirectory(std::path::PathBuf);
+
+#[cfg(windows)]
+impl IpcDirectory {
+    pub(crate) fn new(session: &str) -> std::io::Result<Self> {
+        use std::hash::{DefaultHasher, Hash, Hasher};
+
+        let config = Config::default();
+        let root = std::path::Path::new(config.global.root_path().as_str());
+        let parent = root
+            .parent()
+            .expect("iceoryx2 has a Windows IPC parent directory");
+        // Keep the full IPC paths short enough for Win32 Unix-domain sockets.
+        let mut hasher = DefaultHasher::new();
+        session.hash(&mut hasher);
+        let directory = parent.join(format!("cv-{:016x}", hasher.finish()));
+        std::fs::create_dir_all(parent)?;
+        std::fs::create_dir(&directory)?;
+        Ok(Self(directory))
+    }
+
+    pub(crate) fn path(&self) -> &std::path::Path {
+        &self.0
+    }
+}
+
+#[cfg(windows)]
+impl Drop for IpcDirectory {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+#[cfg(windows)]
+pub(crate) fn ipc_config(directory: &std::path::Path) -> std::io::Result<Config> {
+    use iceoryx2::prelude::{Path, SemanticString};
+
+    let path = directory
+        .to_str()
+        .and_then(|path| Path::new(path.as_bytes()).ok())
+        .ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "Invalid IPC directory")
+        })?;
+    let mut config = Config::default();
+    config.global.set_root_path(&path);
+    Ok(config)
+}
+
 fn services(
     name: &str,
+    config: Option<&Config>,
 ) -> (
     Node<ipc::Service>,
     PortFactory<ipc::Service, [u8], ()>,
     PortFactory<ipc::Service, [u8], ()>,
 ) {
     iceoryx2::prelude::set_log_level(iceoryx2::prelude::LogLevel::Error);
-    let node = NodeBuilder::new().create::<ipc::Service>().unwrap();
+    let builder = NodeBuilder::new();
+    let builder = match config {
+        Some(config) => builder.config(config),
+        None => builder,
+    };
+    let node = builder.create::<ipc::Service>().unwrap();
     let scenes = node
         .service_builder(&format!("{name}/scene-v2").as_str().try_into().unwrap())
         .publish_subscribe::<[u8]>()
@@ -84,7 +143,11 @@ pub struct ViewerTransport {
 
 impl ViewerTransport {
     pub fn connect(name: &str) -> Self {
-        let (_node, scenes, events) = services(name);
+        Self::connect_with_config(name, None)
+    }
+
+    pub(crate) fn connect_with_config(name: &str, config: Option<&Config>) -> Self {
+        let (_node, scenes, events) = services(name, config);
         let repaint = _node
             .service_builder(&format!("{name}/repaint-v1").as_str().try_into().unwrap())
             .event()
@@ -121,6 +184,7 @@ pub struct RendererTransport {
     rx: Receiver,
     tx: Sender,
     name: String,
+    config: Config,
     repaint_worker: RefCell<Option<RepaintWorker>>,
 }
 
@@ -140,9 +204,14 @@ impl Drop for RepaintWorker {
 
 impl RendererTransport {
     pub fn connect(name: &str) -> Self {
-        let (_node, scenes, events) = services(name);
+        Self::connect_with_config(name, None)
+    }
+
+    pub(crate) fn connect_with_config(name: &str, config: Option<&Config>) -> Self {
+        let (node, scenes, events) = services(name, config);
         Self {
             name: name.into(),
+            config: node.config().clone(),
             repaint_worker: RefCell::new(None),
             rx: scenes.subscriber_builder().create().unwrap(),
             tx: events
@@ -164,6 +233,7 @@ impl RendererTransport {
 
     pub fn attach_repaint(&self, ctx: Context) {
         let name = self.name.clone();
+        let config = self.config.clone();
         let stop = Arc::new(AtomicBool::new(false));
         let worker_stop = stop.clone();
         let worker_ctx = ctx.clone();
@@ -172,7 +242,10 @@ impl RendererTransport {
             .name("cosmol-viewer-repaint".into())
             .spawn(move || {
                 // Non-Send iceoryx handles are created and kept on this thread.
-                let node = NodeBuilder::new().create::<ipc::Service>().unwrap();
+                let node = NodeBuilder::new()
+                    .config(&config)
+                    .create::<ipc::Service>()
+                    .unwrap();
                 let event = node
                     .service_builder(&format!("{name}/repaint-v1").as_str().try_into().unwrap())
                     .event()

@@ -16,8 +16,8 @@ Component-specific instructions:
 Preview and then apply a release bump:
 
 ```bash
-python tools/bump_version.py 0.6.4-rc.1 --dry-run
-python tools/bump_version.py 0.6.4-rc.1
+python tools/bump_version.py 0.6.4-rc.2 --dry-run
+python tools/bump_version.py 0.6.4-rc.2
 ```
 
 The script accepts stable `X.Y.Z`, RC (`X.Y.ZrcN` or `X.Y.Z-rc.N`),
@@ -66,13 +66,14 @@ single gated job, and create a GitHub Release separately on demand.
   x86_64/aarch64. Each platform builds its native renderer once and reuses it
   across its wheels. Linux builds the renderer inside the manylinux container;
   wheel builds use maturin-action with sccache.
-- Windows wheel builds apply `tools/patches/surfman-0.14.0-quiet-wgl.patch`
-  to a temporary copy of surfman before building the renderer and extensions.
-  This removes only the direct stdout warning about missing GPU preference
-  exports in Python hosts; `warn!` and device selection are unchanged. The CI
-  checkout uses a temporary Cargo patch configuration and lockfile update;
-  Cargo's registry cache is untouched. Conda packages reuse these wheels.
-  Local builds, source distributions and Rust crates use the original crate.
+- Windows wheel builds patch temporary copies of surfman and iceoryx2-pal-posix
+  before building the renderer and extensions. The surfman patch removes the
+  direct stdout notice about GPU preference exports in Python hosts. The
+  iceoryx2 patch removes emulated Unix sockets through the Windows handle
+  translator before attempting filesystem operations. Conda packages reuse
+  these wheels. The CI checkout holds the temporary Cargo patch configuration
+  and lockfile update. Local builds, source distributions and Rust crates use
+  the original registry dependencies.
 - `release.yml` is manually dispatched on the selected commit/tag. It creates a
   Release only for one matching, unreleased `v*` tag; it never overwrites an
   existing Release. Select the intended tag ref when several pending tags point

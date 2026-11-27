@@ -4,6 +4,10 @@
     {
       "version": "latest",
       "url": "https://viewer.cosmol.org/"
+    },
+    {
+      "version": "0.6.3",
+      "url": "https://a628bcd1.cosmol-viewer-docs.pages.dev/"
     }
   ]
 }

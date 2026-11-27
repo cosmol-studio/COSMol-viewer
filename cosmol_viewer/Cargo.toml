@@ -2,7 +2,7 @@
 name = "cosmol_viewer"
 version.workspace = true
 edition.workspace = true
-authors = ["9028 <wjt@cosmol.org>"]
+authors = ["95028 <wjt@cosmol.org>"]
 homepage = "https://github.com/COSMol-repl/COSMol-viewer"
 keywords = ["molecular", "visualization"]
 readme = "../README.md"

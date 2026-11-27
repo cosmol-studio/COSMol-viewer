@@ -93,12 +93,15 @@ class ChildObserver:
             if not self.handle:
                 raise ctypes.WinError(ctypes.get_last_error())
 
+    def windows_exit_code(self):
+        code = ctypes.c_ulong()
+        if not self.kernel.GetExitCodeProcess(self.handle, ctypes.byref(code)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        return code.value
+
     def is_running(self):
         if os.name == "nt":
-            code = ctypes.c_ulong()
-            if not self.kernel.GetExitCodeProcess(self.handle, ctypes.byref(code)):
-                raise ctypes.WinError(ctypes.get_last_error())
-            return code.value == 259  # STILL_ACTIVE
+            return self.windows_exit_code() == 259  # STILL_ACTIVE
         try:
             os.kill(self.pid, 0)
         except ProcessLookupError:
@@ -175,6 +178,8 @@ class NativeViewerTests(unittest.TestCase):
                 ready = ready or (line.strip() == "READY" if mode.startswith("dynamic_")
                                  else "Press Enter to exit..." in line)
             self.assertTrue(child.is_running())
+            if os.name == "nt":
+                self.assertNotIn("< Win32 API error >", "".join(output))
             if mode in {"enter", "play"}:
                 process.stdin.write("\n")
                 process.stdin.flush()
@@ -189,6 +194,8 @@ class NativeViewerTests(unittest.TestCase):
                 reader.join(timeout=2)
             self.assertIn("DONE", "".join(output))
             self.assertFalse(child.is_running(), "Renderer child was orphaned")
+            if os.name == "nt" and mode in {"enter", "eof", "play", "window", "interrupt"}:
+                self.assertEqual(child.windows_exit_code(), 0, "".join(output))
             if mode == "interrupt":
                 self.assertIn("INTERRUPTED", "".join(output))
             if mode == "failure":

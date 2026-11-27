@@ -62,7 +62,7 @@ npm --prefix wasm/pkg pkg set 'type=module'
 npm --prefix wasm/pkg pkg set 'main=index.js'
 npm --prefix wasm/pkg pkg set 'types=index.d.ts'
 npm --prefix wasm/pkg pkg set 'sideEffects[]=./index.js'
-npm --prefix wasm/pkg pkg set 'dependencies.@cosmol-studio/cosmolkit=0.6.3'
+npm --prefix wasm/pkg pkg set 'dependencies.@cosmol-studio/cosmolkit=0.6.4'
 ```
 
 The CK dependency must match

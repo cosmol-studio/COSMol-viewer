@@ -16,7 +16,7 @@ uv sync --group dev
 cargo install pyo3-introspection --version 0.30.1 --locked
 npm ci --prefix docs --no-audit --no-fund
 wasm-pack build wasm --target web --dev --no-opt --out-dir pkg --out-name cosmol_viewer_wasm --locked
-npm install --prefix wasm/pkg --no-save --ignore-scripts --no-audit --no-fund --package-lock=false @cosmol-studio/cosmolkit@0.6.3
+npm install --prefix wasm/pkg --no-save --ignore-scripts --no-audit --no-fund --package-lock=false @cosmol-studio/cosmolkit@0.6.4
 .venv/bin/python python/build.py
 ```
 

@@ -30,7 +30,7 @@ the published COSMolKit runtime dependency (`cosmolkit`) into that environment.
 This does not install COSMol Viewer; the next section compiles and installs it.
 
 ```sh
-python -m pip install "maturin==1.15.0" uv basedpyright "cosmolkit==0.6.3"
+python -m pip install "maturin==1.15.0" uv basedpyright "cosmolkit==0.6.4"
 ```
 
 ## Build and install for development
