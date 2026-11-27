@@ -33,6 +33,38 @@ matching version section and release footer.
 
 ## [Unreleased]
 
+## [0.6.4] - 2026-11-27
+
+### Added
+
+- Add depth-based silhouettes for entire scenes and individual shapes or
+  displays in Rust, Python, and JavaScript. Silhouettes work with molecular
+  styles, protein cartoons, and surfaces, with configurable color and width.
+- Add opt-in Multishadow ambient occlusion for creases, overlapping ribbons, and
+  pockets. The direction count is configurable from 8 to 64, and camera motion
+  reuses the shadow maps.
+- Add `show_bond_order` / `showBondOrder` to Stick and BallAndStick styles.
+  Disabling bond-order rendering draws a single stick per bond, including
+  aromatic and multiple bonds.
+- Add Rust and Python examples for comparing protein representations, flat
+  lighting, and ligand binding-site illustrations. The browser example
+  demonstrates scene silhouettes and Multishadow.
+
+### Changed
+
+- Replace the molecular `outline` style method with `silhouettes`. Migrate
+  calls to `silhouettes(color, width)` and set the new width in output pixels.
+- Upgrade COSMolKit to 0.6.4 across Rust, Python, and JavaScript.
+- Add the published 0.6.3 documentation archive to the version switcher.
+
+### Fixed
+
+- Isolate Windows IPC directories per Viewer session and allow the renderer
+  process to exit cleanly. Windows wheels also correct simulated socket
+  removal to avoid spurious file-permission errors from iceoryx2.
+
+[Full comparison v0.6.3...v0.6.4](https://github.com/cosmol-studio/COSMol-viewer/compare/v0.6.3...v0.6.4)
+
 ## [0.6.3] - 2026-11-21
 
 ### Added

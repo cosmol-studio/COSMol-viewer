@@ -16,8 +16,8 @@ Component-specific instructions:
 Preview and then apply a release bump:
 
 ```bash
-python tools/bump_version.py 0.6.4-rc.2 --dry-run
-python tools/bump_version.py 0.6.4-rc.2
+python tools/bump_version.py 0.6.4 --dry-run
+python tools/bump_version.py 0.6.4
 ```
 
 The script accepts stable `X.Y.Z`, RC (`X.Y.ZrcN` or `X.Y.Z-rc.N`),

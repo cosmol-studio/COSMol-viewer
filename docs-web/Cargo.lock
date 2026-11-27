@@ -1034,7 +1034,7 @@ dependencies = [
 
 [[package]]
 name = "cosmol_viewer"
-version = "0.6.4-rc.2"
+version = "0.6.4"
 dependencies = [
  "cosmol_viewer_core",
  "cosmolkit",
@@ -1042,7 +1042,7 @@ dependencies = [
 
 [[package]]
 name = "cosmol_viewer_core"
-version = "0.6.4-rc.2"
+version = "0.6.4"
 dependencies = [
  "base64 0.23.1",
  "bytemuck",
@@ -1070,7 +1070,7 @@ dependencies = [
 
 [[package]]
 name = "cosmol_viewer_derive"
-version = "0.6.4-rc.2"
+version = "0.6.4"
 dependencies = [
  "proc-macro2",
  "quote",
